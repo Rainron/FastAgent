@@ -1,0 +1,81 @@
+{
+  "name": "fastagent-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FastAgent AI Workspace",
+  "license": "MIT",
+  "author": "lake",
+  "homepage": "https://github.com/Rainron/FastAgent",
+  "repository": { "type": "git", "url": "git+https://github.com/Rainron/FastAgent.git" },
+  "bugs": { "url": "https://github.com/Rainron/FastAgent/issues" },
+  "main": "out/main/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:native": "node scripts/build-native.mjs",
+    "fetch:runtime": "node scripts/fetch-runtime.mjs",
+    "package:win": "npm run build && npm run build:native && npm run fetch:runtime && electron-builder --win"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tanstack/react-query": "^5.66.8",
+    "better-sqlite3": "^13.0.3",
+    "fflate": "^0.8.3",
+    "lucide-react": "^0.468.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "shiki": "^4.4.3",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@electron/rebuild": "^3.7.1",
+    "@tailwindcss/vite": "^4.0.6",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "43.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^3.1.0",
+    "tailwindcss": "^4.0.6",
+    "typescript": "^6.0.0-dev.20260801",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "build": {
+    "appId": "com.fastagent.desktop",
+    "productName": "FastAgent",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "resources/sandbox", "to": "sandbox" },
+      { "from": "resources/runtime", "to": "runtime" }
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "FastAgent-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

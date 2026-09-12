@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#181817" />
+    <title>FastAgent</title>
+  </head>
+  <body>
+    <!-- 正文从首帧起就是透明的：窗口在主进程说「可以露脸」之前一直隐藏，
+         淡入动画要从窗口出现的那一刻才开始，不能在看不见的时候空放完。 -->
+    <div id="root" class="app-enter-pending"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+.model-connections { display: flex; gap: 24px; min-width: 0; margin-bottom: 28px; font-size: 13px; }
+.model-connection-list { display: flex; flex-direction: column; flex: 0 0 180px; gap: 4px; border-right: 1px solid var(--border); padding-right: 16px; }
+.model-connection-list button, .model-auth-methods button { padding: 12px; text-align: left; color: var(--text-primary); background: transparent; border: 1px solid transparent; border-radius: 6px; }
+.model-connection-list button:hover, .model-auth-methods button:hover { background: var(--hover); }
+.model-connection-list button[aria-current="true"], .model-auth-methods button[aria-pressed="true"] { background: var(--hover); border-color: var(--accent-tech); }
+.model-connection-list strong, .model-connection-list small, .model-auth-methods strong, .model-auth-methods small, .model-connection-models strong, .model-connection-models small { display: block; overflow-wrap: anywhere; }
+.model-connection-list small, .model-auth-methods small, .model-connection-models small { color: var(--text-secondary); margin-top: 4px; font-size: 11px; }
+.model-connection-detail { flex: 1; min-width: 0; }
+.model-connection-detail h3 { font-size: 15px; margin: 0 0 8px; }
+.model-connection-detail fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.model-connection-field { display: flex; flex-direction: column; gap: 7px; margin: 14px 0; color: var(--text-secondary); }
+.model-connection-field input, .model-connection-field select { width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--canvas); color: var(--text-primary); padding: 9px 10px; font: inherit; }
+.model-connection-field select:focus-visible { outline: 2px solid var(--accent-tech); outline-offset: 2px; }
+.model-auth-methods { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0; }
+.model-auth-methods button { border-color: var(--border); }
+.model-connection-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.model-connection-model-heading, .model-connection-add { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.model-connection-model-heading { margin-top: 20px; }
+.model-connection-model-heading h4 { margin: 0; }
+.model-connection-add .model-connection-field { flex: 1; }
+.model-connection-add > button { margin-top: 24px; }
+.model-connection-models { list-style: none; padding: 0; margin: 0 0 20px; }
+.model-connection-models li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.model-connection-models li > span { min-width: 0; flex: 1; }
+.model-login-status, .model-connection-delete { margin: 16px 0; padding: 12px; border-left: 2px solid var(--accent-tech); background: var(--hover); }
+.model-login-url { overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); }
+.model-connections-entry { flex-direction: column; margin: 0; }
+.model-connections-entry .model-connection-list { flex: auto; max-height: 150px; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 12px; }
+.auth-entry-tabs { display: flex; gap: 16px; margin-bottom: 22px; border-bottom: 1px solid var(--border); }
+.auth-entry-tabs button { background: transparent; color: var(--text-secondary); padding: 8px 0 12px; border-bottom: 2px solid transparent; }
+.auth-entry-tabs button[aria-pressed="true"] { border-color: var(--accent-tech); color: var(--text-primary); }
+.auth-model-services { max-height: calc(100vh - 150px); overflow-y: auto; }
+.auth-model-services > form { display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 1050px) { .model-connections { flex-direction: column; } .model-connection-list { flex-basis: auto; flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 12px; } .model-connection-list > button { flex: 0 0 150px; } }
+@media (max-width: 760px) { .model-auth-methods { grid-template-columns: 1fr; } .model-connection-models li { align-items: flex-start; flex-direction: column; } }

@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN" data-verbosity="minimal">
+  <head>
+    <meta charset="UTF-8" />
+    <title>FastAgent</title>
+    <!--
+      启动页刻意不引任何外部 CSS / JS / 字体 / 图片：它存在的意义就是比主界面先出来，
+      多一个请求就多一段它自己也画不出来的时间。样式、图标、脚本全部内联。
+    -->
+    <style>
+      :root {
+        --canvas: #fafaf8;
+        --border: #e5e5df;
+        --text: #20201e;
+        --muted: #696964;
+        --faint: #94948d;
+        --accent: #5f63d8;
+      }
+      :root[data-theme="dark"] {
+        --canvas: #181817;
+        --border: #30302e;
+        --text: #f1f1ed;
+        --muted: #a5a59e;
+        --faint: #74746e;
+      }
+      /* 主进程只在设置为显式 light / dark 时下发 data-theme；跟随系统时走这里。 */
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --canvas: #181817;
+          --border: #30302e;
+          --text: #f1f1ed;
+          --muted: #a5a59e;
+          --faint: #74746e;
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--canvas);
+        color: var(--text);
+        border: 1px solid var(--border);
+        font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
+        font-synthesis: none;
+        overflow: hidden;
+        user-select: none;
+        cursor: default;
+        /* 淡出由主进程在准备好主窗口时触发，两窗交叉过渡靠这一段完成。 */
+        opacity: 1;
+        transition: opacity 220ms ease-out;
+      }
+      body[data-leaving="1"] { opacity: 0; }
+
+      .stage { display: flex; flex-direction: column; align-items: center; }
+
+      .logo {
+        width: 40px;
+        height: 40px;
+        opacity: 0;
+        transform: translateY(4px) scale(.96);
+        filter: blur(3px);
+        animation: logo-in 200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+      }
+      @keyframes logo-in {
+        to { opacity: 1; transform: none; filter: blur(0); }
+      }
+
+      .name {
+        margin-top: 12px;
+        font-size: 13px;
+        font-weight: 500;
+        letter-spacing: .01em;
+        opacity: 0;
+        animation: name-in 200ms cubic-bezier(0.22, 1, 0.36, 1) 40ms forwards;
+      }
+      @keyframes name-in {
+        from { opacity: 0; transform: translateY(3px); }
+        to { opacity: 1; transform: none; }
+      }
+
+      /* 状态区高度写死：文案长短与档位切换都不允许把上面的 Logo 顶动。 */
+      .status { height: 18px; margin-top: 14px; display: flex; align-items: center; gap: 7px; }
+      .hint { height: 16px; display: flex; align-items: center; }
+
+      .dot {
+        width: 6px;
+        height: 6px;
+        flex: 0 0 6px;
+        border-radius: 50%;
+        background: var(--accent);
+        animation: dot-breathe 1.6s ease-in-out infinite;
+      }
+      @keyframes dot-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+      /*
+        文案切换用两层叠放做交叉过渡，直接替换 textContent 会出现瞬间跳变。
+        叠放走 grid 同格而不是绝对定位：绝对定位会让容器宽度塌成 0，
+        状态点和文字这一组就不再居中了。
+      */
+      .labels { display: grid; transition: opacity 140ms ease-out; }
+      .label {
+        grid-area: 1 / 1;
+        line-height: 18px;
+        white-space: nowrap;
+        font-size: 12px;
+        color: var(--muted);
+        transition: opacity 140ms ease-out, transform 140ms ease-out;
+      }
+      .label.current { opacity: 1; transform: none; }
+      .label.leaving { opacity: 0; transform: translateY(-3px); }
+      .label.entering { opacity: 0; transform: translateY(3px); }
+
+      .hint span { font-size: 11px; line-height: 16px; color: var(--faint); opacity: 0; transition: opacity 140ms ease-out; }
+
+      /*
+        档位由主进程判定后下发，启动页只负责显隐，不自己算时间。
+        没到档位时把宽度也收掉：留着占位的话状态点会被顶得偏离中线。
+      */
+      :root[data-verbosity="minimal"] .labels { opacity: 0; width: 0; overflow: hidden; }
+      :root[data-verbosity="slow"] .hint span { opacity: 1; }
+
+      .beam {
+        position: relative;
+        width: 132px;
+        height: 1px;
+        margin-top: 16px;
+        overflow: hidden;
+        background: var(--border);
+      }
+      .beam::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(90deg, transparent, var(--accent), transparent);
+        opacity: .5;
+        /* 只动 transform，保持在合成层，不触发 layout。 */
+        animation: beam-sweep 1.6s linear infinite;
+      }
+      @keyframes beam-sweep {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(100%); }
+      }
+
+      :root[data-state="ready"] .dot { animation: none; opacity: 1; }
+      :root[data-state="ready"] .beam::after { animation: none; opacity: 0; }
+
+      @media (prefers-reduced-motion: reduce) {
+        .logo { filter: none; transform: none; animation: logo-in-fade 160ms linear forwards; }
+        @keyframes logo-in-fade { to { opacity: 1; } }
+        .name { animation: logo-in-fade 160ms linear 40ms forwards; }
+        .label { transition: opacity 140ms linear; }
+        .label.leaving, .label.entering { transform: none; }
+        .dot { animation: none; opacity: 1; }
+        .beam::after { animation: none; opacity: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="stage">
+      <svg class="logo" viewBox="0 0 48 48" aria-hidden="true">
+        <rect width="48" height="48" rx="14" ry="14" fill="#5f63d8" />
+        <path fill="#ffffff" d="M22 9.2 Q22 22.4 35.2 22.4 Q22 22.4 22 35.6 Q22 22.4 8.8 22.4 Q22 22.4 22 9.2 Z" />
+        <path fill="#ffffff" d="M33.7 29.1 Q33.7 33.9 38.5 33.9 Q33.7 33.9 33.7 38.7 Q33.7 33.9 28.9 33.9 Q33.7 33.9 33.7 29.1 Z" />
+      </svg>
+      <div class="name">FastAgent</div>
+      <div class="status" role="status" aria-live="polite">
+        <span class="dot"></span>
+        <span class="labels" id="labels"></span>
+      </div>
+      <div class="hint"><span>初始化耗时较长，FastAgent 仍在运行</span></div>
+      <div class="beam"></div>
+    </div>
+    <script>
+      (function () {
+        var root = document.documentElement
+        var labels = document.getElementById('labels')
+        var current = null
+
+        function setLabel(text) {
+          if (!text || (current && current.textContent === text)) return
+          var next = document.createElement('span')
+          next.className = 'label entering'
+          next.textContent = text
+          labels.appendChild(next)
+          // 强制一次样式计算，否则同一帧内加上 current 不会产生过渡。
+          void next.offsetWidth
+          next.className = 'label current'
+          if (current) {
+            var previous = current
+            previous.className = 'label leaving'
+            setTimeout(function () { previous.remove() }, 160)
+          }
+          current = next
+        }
+
+        var api = window.fastAgentSplash
+        if (!api) return
+        api.onUpdate(function (update) {
+          if (update.theme) root.dataset.theme = update.theme
+          if (update.verbosity) root.dataset.verbosity = update.verbosity
+          setLabel(update.label)
+          if (update.phase === 'ready') {
+            root.dataset.state = 'ready'
+            document.body.dataset.leaving = '1'
+          }
+        })
+      })()
+    </script>
+  </body>
+</html>

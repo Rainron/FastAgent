@@ -1,0 +1,21 @@
+.context-health-popover { width: min(320px, calc(100vw - 24px)); max-height: min(620px, calc(100dvh - 100px)); overflow-y: auto; }
+.context-cache-trigger { padding-left: 6px; border-left: 1px solid var(--border); white-space: nowrap; }
+.context-cache { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.context-cache-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.context-cache-heading strong { color: var(--text-primary); font-size: 12px; }
+.context-cache-heading > span { color: var(--text-tertiary); font-size: 10px; }
+.context-cache-scopes { display: flex; gap: 3px; margin-top: 10px; padding: 3px; border-radius: 6px; background: var(--surface-soft); }
+.context-cache-scopes button { flex: 1; min-width: 0; min-height: 26px; border-radius: 4px; background: transparent; color: var(--text-tertiary); font-size: 10px; }
+.context-cache-scopes button[aria-pressed="true"] { background: var(--surface); color: var(--text-primary); box-shadow: 0 1px 3px #0001; }
+.context-cache-scopes button:hover { color: var(--text-primary); }
+.context-cache-scopes button:focus-visible { outline: 2px solid var(--accent-tech); outline-offset: 1px; }
+.context-cache-rate { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 13px 0 10px; }
+.context-cache-rate > span { color: var(--text-secondary); font-size: 11px; }
+.context-cache-rate > strong { color: var(--accent-tech); font: 600 22px "JetBrains Mono", Consolas, monospace; }
+.context-cache-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; margin: 0; }
+.context-cache-breakdown > div { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; min-width: 0; }
+.context-cache-breakdown dt { color: var(--text-tertiary); font-size: 10px; }
+.context-cache-breakdown dd { margin: 0; color: var(--text-secondary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.context-cache-note { margin: 9px 0 0; color: var(--text-tertiary); font-size: 10px; line-height: 1.6; }
+.context-cache-model { overflow-wrap: anywhere; }
+.context-cache-pending { margin: 9px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.6; }

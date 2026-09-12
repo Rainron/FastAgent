@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-electron
+out
+release
+resources
+native/target
+.vite
+logs
+*.log
+.idea
+.vscode
+.DS_Store
