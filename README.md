@@ -1,6 +1,6 @@
 # FastAgent
 
-FastAgent 是一个**本地优先**的 AI 编码工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
+FastAgent 是一个**本地优先**的 AI Agent工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
 
 - 引擎：内嵌 [pi coding-agent](https://github.com/earendil-works/pi) 运行时
 - 技术栈：Electron 43 + React 19 + TypeScript + Tailwind 4 + better-sqlite3
