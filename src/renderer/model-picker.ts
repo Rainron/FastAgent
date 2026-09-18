@@ -1,4 +1,6 @@
 import type { LocalModelSummary, ModelOption, ThinkingLevel } from '../shared/types'
+import { getSupportedThinkingLevels } from '../shared/thinking-level'
+export { normalizeThinkingLevel } from '../shared/thinking-level'
 
 export type ModelTabKey = 'all' | 'recent' | 'favorite'
 
@@ -26,21 +28,19 @@ export function conversationModelId(models: Array<Pick<ModelOption, 'id'>>, boun
   return models.find((model) => model.id === boundModelId)?.id ?? fallbackModelId
 }
 
-const levelOrder: ThinkingLevel[] = ['auto', 'minimal', 'low', 'medium', 'high', 'max', 'xhigh', 'ultra']
+const levelLabels: Record<string, string> = { auto: '默认', off: '关闭', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', max: 'Max', xhigh: 'XHigh' }
 
-const levelLabels: Record<string, string> = { auto: 'Auto', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', max: 'Max', xhigh: 'XHigh', ultra: 'Ultra' }
-
-const levelShortLabels: Record<string, string> = { auto: 'Auto', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', max: 'Max', xhigh: 'XHi', ultra: 'Ultra' }
+const levelShortLabels: Record<string, string> = { auto: '默认', off: '关闭', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', max: 'Max', xhigh: 'XHi' }
 
 const levelDescriptions: Record<string, string> = {
-  auto: '根据当前任务自动调整',
+  auto: '跟随模型默认设置，未配置时关闭思考',
+  off: '关闭思考，以普通模式回答',
   minimal: '几乎不推理，最快返回',
   low: '更快响应，适合简单任务',
   medium: '平衡速度与推理能力',
   high: '适合复杂任务、代码分析和深度推理',
   max: '尽可能深入推理，耗时最长',
-  xhigh: '超高强度推理，用于困难问题',
-  ultra: '最高强度推理，用于极端复杂任务'
+  xhigh: '超高强度推理，用于困难问题'
 }
 
 export function filterModelOptions(models: ModelOption[], query: string) {
@@ -49,7 +49,7 @@ export function filterModelOptions(models: ModelOption[], query: string) {
   return models.filter((model) => [model.name, model.model_name, model.provider, model.description].some((item) => item?.toLocaleLowerCase().includes(value)))
 }
 
-/** 收藏和最近为空时不占位。 */
+/** 收藏和最近为空时不占位，对应模型选择规范。 */
 export function modelTabs(models: ModelOption[], options: { favoriteIds?: number[]; recentIds?: number[] } = {}): ModelTab[] {
   const favorites = modelsForTab(models, 'favorite', options)
   const recent = modelsForTab(models, 'recent', options)
@@ -103,6 +103,73 @@ export function groupModelsByChannel(models: ModelOption[]): ModelGroup[] {
   return [...groups.entries()].map(([channel, items]) => ({ channel, models: items }))
 }
 
+export type ModelSectionKey = 'connection' | 'cloud'
+
+export interface ModelPickerGroup {
+  /** 分组唯一键：连接分区用 connectionId，云端分区用 provider，跨分区同名也不会合并。 */
+  id: string
+  label: string
+  /** 组头上的二级信息，连接重名时靠它区分账号与 API Key。 */
+  meta?: string
+  models: ModelOption[]
+}
+
+export interface ModelSection {
+  key: ModelSectionKey
+  label: string
+  groups: ModelPickerGroup[]
+  count: number
+}
+
+const SECTION_LABELS: Record<ModelSectionKey, string> = { connection: '我的模型服务', cloud: 'FastAgent 云端' }
+
+/** 设置页里自建的连接模型 id 取负，与云端下发的正整数天然隔离。 */
+export function isConnectionModel(model: ModelOption): boolean {
+  return model.source === 'local' || model.id < 0
+}
+
+function connectionGroupMeta(model: ModelOption): string | undefined {
+  const auth = model.authMode === 'oauth' ? '账号' : model.authMode === 'api-key' ? 'API Key' : null
+  if (!auth) return undefined
+  return model.name && model.name !== model.provider ? `${model.name} · ${auth}` : auth
+}
+
+/**
+ * 弹层的两级分类：先按来源分区（自建连接 / 云端），分区内再按连接或厂商分组。
+ * 分区与组内都保持传入顺序，避免每次打开列表都在跳。
+ */
+export function modelSections(models: ModelOption[]): ModelSection[] {
+  const buckets: Record<ModelSectionKey, Map<string, ModelPickerGroup>> = { connection: new Map(), cloud: new Map() }
+  for (const model of models) {
+    const key: ModelSectionKey = isConnectionModel(model) ? 'connection' : 'cloud'
+    const id = `${key}:${key === 'connection' ? model.connectionId ?? model.provider : model.provider}`
+    const group = buckets[key].get(id)
+    if (group) group.models.push(model)
+    else buckets[key].set(id, { id, label: model.provider, ...(key === 'connection' ? { meta: connectionGroupMeta(model) } : {}), models: [model] })
+  }
+  return (['connection', 'cloud'] as ModelSectionKey[])
+    .map((key) => ({ key, label: SECTION_LABELS[key], groups: [...buckets[key].values()], count: [...buckets[key].values()].reduce((total, group) => total + group.models.length, 0) }))
+    .filter((section) => section.groups.length > 0)
+}
+
+/** 打开时只展开当前所选模型所在的分组；没有所选模型时全部折叠。 */
+export function initialExpandedGroups(sections: ModelSection[], selectedModelId: number | null): string[] {
+  for (const section of sections) {
+    const owner = section.groups.find((group) => group.models.some((model) => model.id === selectedModelId))
+    if (owner) return [owner.id]
+  }
+  return []
+}
+
+/** 展开态下真正渲染出来的模型，顺序与列表一致，键盘上下键靠它定位。 */
+export function expandedSectionModels(sections: ModelSection[], expanded: ReadonlySet<string>): ModelOption[] {
+  return sections.flatMap((section) => section.groups.flatMap((group) => expanded.has(group.id) ? group.models : []))
+}
+
+export function allSectionGroupIds(sections: ModelSection[]): string[] {
+  return sections.flatMap((section) => section.groups.map((group) => group.id))
+}
+
 /** 打开时只展开当前所选模型所在的分组；没有所选模型时全部折叠。 */
 export function initialExpandedChannels(groups: ModelGroup[], selectedModelId: number | null): string[] {
   const owner = groups.find((group) => group.models.some((model) => model.id === selectedModelId))
@@ -122,15 +189,7 @@ export function stepModelIndex(count: number, index: number, direction: -1 | 1):
 
 export function thinkingLevelsForModel(model: ModelOption | null | undefined): ThinkingLevel[] {
   if (!model?.supports_thinking) return []
-  const configured = model.thinking_profiles && typeof model.thinking_profiles === 'object' ? Object.keys(model.thinking_profiles) : []
-  const values = configured.length ? configured : ['auto', 'low', 'medium', 'high']
-  if (model.thinking_default && !values.some((value) => value.toLowerCase() === model.thinking_default?.toLowerCase())) values.push(model.thinking_default)
-  const normalized = values.map((value) => value.toLowerCase() === 'off' ? 'auto' : value.toLowerCase()) as ThinkingLevel[]
-  return [...new Set(normalized)].sort((a, b) => (levelOrder.indexOf(a) === -1 ? 99 : levelOrder.indexOf(a)) - (levelOrder.indexOf(b) === -1 ? 99 : levelOrder.indexOf(b)))
-}
-
-export function normalizeThinkingLevel(value: string | null | undefined): ThinkingLevel {
-  return (value?.toLowerCase() === 'off' || !value ? 'auto' : value.toLowerCase()) as ThinkingLevel
+  return ['auto', ...getSupportedThinkingLevels(model)]
 }
 
 export function thinkingLevelLabel(level: ThinkingLevel) {
@@ -141,35 +200,44 @@ export function thinkingLevelShortLabel(level: ThinkingLevel) {
   return levelShortLabels[level] || levelLabels[level] || level
 }
 
-export function thinkingLevelDescription(level: ThinkingLevel) {
+export function thinkingLevelDescription(level: ThinkingLevel, model?: ModelOption | null) {
+  if (level === 'auto' && model?.supports_thinking && !getSupportedThinkingLevels(model).includes('off')) return '跟随模型默认设置；此模型始终启用思考'
   return levelDescriptions[level] || '由模型自行决定推理强度'
 }
 
 /**
- * 底栏只显示模型名，思考强度由独立控件承担。
+ * 底栏只显示模型名，思考强度由独立控件承担，对应底栏布局规范。
  */
 export function triggerModelLabel(model: ModelOption | null | undefined) {
   return model?.model_name ?? '选择模型'
 }
 
-/** 弹层里的二级信息：提供商名已经在分组头上，行内只留调用协议与是否支持推理。 */
+/** 弹层里的二级信息：提供商名已经在分组头上，行内只留认证方式或调用协议与是否支持推理。 */
 export function modelMetaLabel(model: ModelOption) {
-  return [model.protocol ?? model.provider, model.supports_thinking ? 'Reasoning' : null].filter(Boolean).join(' · ')
+  const auth = model.authMode === 'oauth' ? '账号' : model.authMode === 'api-key' ? 'API Key' : null
+  return [auth ?? model.protocol ?? model.provider, model.supports_thinking ? 'Reasoning' : null].filter(Boolean).join(' · ')
 }
 
 /** 本地模型转成 ModelOption：负数 id 天然与云端隔离，source 标记来源供 UI 区分。 */
 export function localModelToOption(local: LocalModelSummary): ModelOption {
   return {
     id: local.id,
+    // 连接归属与认证方式决定弹层里的分区和组头，缺任一个都会退化成一个模型一组。
+    ...(local.connectionId ? { connectionId: local.connectionId } : {}),
+    ...(local.authMode ? { authMode: local.authMode } : {}),
     name: local.provider,
     model_name: local.model_name,
     model_kind: local.model_kind,
-    provider: local.name,
+    // 连接内的 name 是模型别名，分组标题要用连接名；旧的本地模型没有连接，仍用 name 里的提供商名。
+    provider: local.connectionName ?? local.name,
     protocol: local.protocol ?? (local.provider === 'anthropic' || local.provider === 'openai-responses' || local.provider === 'openai' ? local.provider : 'openai'),
     description: `本地模型 · ${local.base_url}`,
     supports_thinking: local.supports_thinking,
     thinking_default: local.thinking_default,
     thinking_profiles: local.thinking_profiles,
+    thinking_level_map: local.thinking_level_map,
+    context_window: local.context_window,
+    max_tokens: local.max_tokens,
     source: 'local'
   }
 }

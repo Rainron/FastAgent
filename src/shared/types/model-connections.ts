@@ -1,4 +1,5 @@
 import type { LocalModelApi, LocalModelSummary, LocalModelTestResult } from './models'
+import type { ThinkingLevelMap } from './common'
 
 export type ModelConnectionAuthMode = 'api-key' | 'oauth'
 export interface DiscoveredConnectionModel {
@@ -8,6 +9,9 @@ export interface DiscoveredConnectionModel {
   contextWindow?: number
   maxTokens?: number
   reasoning?: boolean
+  thinkingLevelMap?: ThinkingLevelMap
+  thinkingDefault?: string
+  thinkingProfiles?: Record<string, unknown> | null
 }
 export interface ModelProviderPreset {
   id: string

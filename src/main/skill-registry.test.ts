@@ -112,6 +112,14 @@ describe('local skill registry', () => {
     })
   })
 
+  it('解析 YAML 折叠格式的多行 description', () => {
+    const registry = setup()
+    registry.installFiles({
+      'SKILL.md': '---\nname: multiline-skill\ndescription: >\n  第一行描述，\n  第二行描述。\nversion: 1.0.0\n---\n\n正文'
+    })
+    expect(registry.list()[0]?.description).toBe('第一行描述， 第二行描述。')
+  })
+
   it('installFiles 拒绝绝对路径、盘符与 .. 逃逸，且不留半成品', () => {
     const registry = setup()
     const manifest = '---\nname: safe-skill\ndescription: 安全校验。\n---\n\n正文'

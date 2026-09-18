@@ -53,9 +53,22 @@ function parseSkill(filePath: string, enabled: boolean): LocalSkillRecord | null
 
 /** YAML 允许字段值用引号包裹，取值时要剥掉，否则 name 会带上字面引号而通不过校验。 */
 function scalar(frontmatter: string, key: string) {
-  const raw = frontmatter.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'))?.[1]?.trim()
-  const quoted = raw?.match(/^"(.*)"$/) ?? raw?.match(/^'(.*)'$/)
-  return (quoted ? quoted[1] : raw)?.trim()
+  const lines = frontmatter.replace(/\r\n?/g, '\n').split('\n')
+  const index = lines.findIndex((line) => new RegExp(`^${key}:\\s*`).test(line))
+  if (index < 0) return undefined
+  const raw = lines[index].slice(key.length + 1).trim()
+  if (raw !== '>' && raw !== '>-' && raw !== '|' && raw !== '|-') {
+    const quoted = raw.match(/^"(.*)"$/) ?? raw.match(/^'(.*)'$/)
+    return (quoted ? quoted[1] : raw).trim()
+  }
+
+  const body: string[] = []
+  for (const line of lines.slice(index + 1)) {
+    if (line.trim() && !/^\s+/.test(line)) break
+    body.push(line.replace(/^\s{2}/, ''))
+  }
+  const value = raw.startsWith('>') ? body.join(' ').replace(/ +/g, ' ') : body.join('\n')
+  return value.trim()
 }
 
 function parseSkillContent(content: string, filePath: string, enabled: boolean): LocalSkillRecord | null {

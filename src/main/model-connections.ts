@@ -1,31 +1,39 @@
 import { randomUUID } from 'node:crypto'
 import { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { Api, CredentialStore, Model } from '@earendil-works/pi-ai'
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import type { DiscoveredConnectionModel, ModelConnectionDraft, ModelConnectionInput, ModelConnectionsApi, ModelLoginState } from '../shared/types'
 import { MODEL_PROVIDERS, modelProvider } from '../shared/model-providers'
 import type { ModelConnectionStore } from './local-store/model-connections'
 
-type LoginSession = { state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; answer?: (value: string) => void; reject?: (error: Error) => void }
-type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime> }
+type LoginSession = { state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; openedUrl?: string; answer?: (value: string) => void; reject?: (error: Error) => void }
+type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void }
+type RuntimeModelCapabilities = Model<Api> & { thinkingDefault?: string; thinkingProfiles?: Record<string, unknown> | null }
 
 export class ModelConnectionService implements ModelConnectionsApi {
   private readonly sessions = new Map<string, LoginSession>()
   private readonly runtimes = new Map<string, Promise<ModelRuntime>>()
+  private catalogRuntime?: Promise<ModelRuntime>
   private readonly fetch: typeof fetch
   private readonly buildRuntime: (credentials: CredentialStore) => Promise<ModelRuntime>
+  private readonly openExternal: (url: string) => unknown
+  private readonly onChanged: () => void
 
   constructor(private readonly store: ModelConnectionStore, dependencies: Dependencies = {}) {
     this.fetch = dependencies.fetch ?? globalThis.fetch
+    this.openExternal = dependencies.openExternal ?? (() => {})
+    this.onChanged = dependencies.onChanged ?? (() => {})
     this.buildRuntime = dependencies.createRuntime ?? ((credentials) => ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false }))
   }
 
   async providers() { return structuredClone(MODEL_PROVIDERS) }
   async list() { return this.store.list() }
-  async save(input: ModelConnectionInput) { const result = this.store.save(input); this.runtimes.delete(result.id); return result }
+  async save(input: ModelConnectionInput) { const result = this.store.save({ ...input, models: await this.enrichModels(input, input.models) }); this.runtimes.delete(result.id); this.onChanged(); return result }
   async remove(id: string) {
     for (const session of this.sessions.values()) if (session.state.connectionId === id) await this.cancelLogin(session.state.sessionId)
     this.runtimes.delete(id)
     this.store.remove(id)
+    this.onChanged()
   }
 
   private runtime(id: string): Promise<ModelRuntime> {
@@ -58,7 +66,10 @@ export class ModelConnectionService implements ModelConnectionsApi {
       const providerId = modelProvider(metadata.providerId).oauthProviderId
       if (!providerId) throw new Error('该厂商不支持账号登录')
       const runtime = await this.runtime(input.id)
-      return runtime.getModels(providerId).map((model) => ({ modelId: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning }))
+      return runtime.getModels(providerId).map((model) => {
+        const capabilities = model as RuntimeModelCapabilities
+        return { modelId: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning, thinkingLevelMap: model.thinkingLevelMap, thinkingDefault: capabilities.thinkingDefault, thinkingProfiles: capabilities.thinkingProfiles }
+      })
     }
     const { metadata, secrets } = this.store.resolve(input)
     const headers = this.headers(metadata.protocol, secrets)
@@ -68,8 +79,22 @@ export class ModelConnectionService implements ModelConnectionsApi {
       if (!response.ok) throw new Error('request failed')
       const body = await response.json() as { data?: { id?: unknown; display_name?: string; name?: string }[] }
       if (!Array.isArray(body.data)) throw new Error('invalid response')
-      return body.data.filter((item) => typeof item.id === 'string').map((item) => ({ modelId: item.id as string, name: item.display_name ?? item.name ?? item.id as string }))
+      return this.enrichModels(input, body.data.filter((item) => typeof item.id === 'string').map((item) => ({ modelId: item.id as string, name: item.display_name ?? item.name ?? item.id as string })))
     } catch { throw new Error('模型列表获取失败，可手动填写模型标识') }
+  }
+
+  private async enrichModels(input: ModelConnectionDraft, models: DiscoveredConnectionModel[]): Promise<DiscoveredConnectionModel[]> {
+    if (input.authMode !== 'api-key' || !models.length || input.providerId === 'custom') return models
+    // 只查随 pi 安装的静态目录，避免获取能力时读取个人凭据或发起外部请求。
+    this.catalogRuntime ??= this.buildRuntime(new InMemoryCredentialStore())
+    const runtime = await this.catalogRuntime
+    const providerIds: Record<string, string[]> = { zhipu: ['zai', 'zai-coding-cn'], kimi: ['moonshotai', 'moonshotai-cn'], gemini: ['google'], qwen: ['qwen-token-plan', 'qwen-token-plan-cn'], minimax: ['minimax', 'minimax-cn'] }
+    const providers = providerIds[input.providerId] ?? [input.providerId]
+    const catalog = runtime.getModels().filter((model) => providers.includes(model.provider)) as RuntimeModelCapabilities[]
+    return models.map((model) => {
+      const known = catalog.find((entry) => entry.id === model.modelId.trim())
+      return known ? { ...model, contextWindow: model.contextWindow ?? known.contextWindow, maxTokens: model.maxTokens ?? known.maxTokens, reasoning: known.reasoning, thinkingLevelMap: known.thinkingLevelMap, thinkingDefault: known.thinkingDefault, thinkingProfiles: known.thinkingProfiles } : model
+    })
   }
 
   private headers(protocol: string, secrets: { api_key?: string; headers?: Record<string, string> }): Record<string, string> {
@@ -130,8 +155,8 @@ export class ModelConnectionService implements ModelConnectionsApi {
         signal: session.abort.signal,
         notify: (event) => {
           if (session.abort.signal.aborted) return
-          if (event.type === 'auth_url') Object.assign(session.state, { url: event.url, message: event.instructions })
-          else if (event.type === 'device_code') Object.assign(session.state, { url: event.verificationUri, userCode: event.userCode })
+          if (event.type === 'auth_url') { Object.assign(session.state, { url: event.url, message: event.instructions }); this.openAuthUrl(session, event.url) }
+          else if (event.type === 'device_code') { Object.assign(session.state, { url: event.verificationUri, userCode: event.userCode }); this.openAuthUrl(session, event.verificationUri) }
           else session.state.message = event.message
         },
         prompt: (prompt) => new Promise<string>((resolve, reject) => {
@@ -147,7 +172,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
           if (prompt.signal?.aborted) aborted()
         })
       })
-      if (!session.abort.signal.aborted) { session.state.status = 'success'; clearTimeout(session.timer); this.runtimes.delete(id) }
+      if (!session.abort.signal.aborted) { session.state.status = 'success'; clearTimeout(session.timer); this.runtimes.delete(id); this.onChanged() }
     }).catch(() => {
       if (!session.abort.signal.aborted) {
         session.state.status = 'error'
@@ -157,6 +182,15 @@ export class ModelConnectionService implements ModelConnectionsApi {
       }
     })
     return structuredClone(session.state)
+  }
+
+  // 授权链接直接送进系统浏览器；同一链接只开一次，界面上的地址只作为打开失败时的兜底。
+  private openAuthUrl(session: LoginSession, url: string | undefined): void {
+    if (!url || session.openedUrl === url) return
+    session.openedUrl = url
+    try {
+      void Promise.resolve(this.openExternal(url)).catch(() => { /* 打不开浏览器不影响手动复制地址 */ })
+    } catch { /* 同上 */ }
   }
 
   async authState(sessionId: string): Promise<ModelLoginState> {
@@ -198,6 +232,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
     if (metadata.authMode !== 'oauth' || !providerId) throw new Error('该连接不是账号连接')
     await this.store.credentials(id).delete(providerId)
     this.runtimes.delete(id)
+    this.onChanged()
   }
 
   dispose(): void {

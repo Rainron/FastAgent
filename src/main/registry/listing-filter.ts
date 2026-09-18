@@ -1,4 +1,4 @@
-import type { HubQuery } from '../../shared/types'
+import type { HubInstallState, HubQuery } from '../../shared/types'
 import type { HubListingDraft } from './types'
 
 /** 关键词只在条目自带的文本字段里找；跨源统一实现，避免各 provider 各写一套匹配。 */
@@ -15,6 +15,17 @@ export function matchesHubQuery(listing: HubListingDraft, query: HubQuery = {}):
   if (query.category && !listing.categories.includes(query.category)) return false
   if (keyword && !matchesKeyword(listing, keyword)) return false
   return true
+}
+
+/**
+ * 安装态过滤。只能作用在 decorateListings 之后的条目上：
+ * installed / updateAvailable 都是拿本地能力库现算的，源本身不带这两个字段。
+ */
+export function filterByInstallState<T extends { installed: boolean; updateAvailable?: boolean }>(listings: T[], state: HubInstallState | undefined): T[] {
+  if (!state || state === 'all') return listings
+  if (state === 'installed') return listings.filter((listing) => listing.installed)
+  if (state === 'update_available') return listings.filter((listing) => Boolean(listing.updateAvailable))
+  return listings.filter((listing) => !listing.installed)
 }
 
 export function sortListings<T extends HubListingDraft>(listings: T[], sort: HubQuery['sort']): T[] {

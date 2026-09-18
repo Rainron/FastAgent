@@ -22,6 +22,7 @@ describe('MCP bridge', () => {
     let lastArgs: Record<string, unknown> | null = null
     const binding: McpToolBinding = {
       name: 'mcp__Docs__search',
+      serverId: 'docs-server',
       description: 'Search docs',
       inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
       risk: 'read',
@@ -31,10 +32,13 @@ describe('MCP bridge', () => {
       registerTool: (tool) => { tools.push(tool as ToolDefinition) }
     } as unknown as ExtensionAPI
 
-    createMcpBridgeExtension([binding])(pi)
+    const used: Array<[string, string]> = []
+    createMcpBridgeExtension([binding], (type, id) => used.push([type, id]))(pi)
     expect(tools).toHaveLength(1)
     expect(tools[0].name).toBe('mcp__Docs__search')
     await (tools[0].execute as unknown as (id: string, params: Record<string, unknown>, signal: AbortSignal) => Promise<{ content: unknown }>)('call-1', { query: 'pi' }, new AbortController().signal)
     expect(lastArgs).toEqual({ query: 'pi' })
+    // 转发前先记一次使用，能力页的「最近使用」靠它
+    expect(used).toEqual([['mcp', 'docs-server']])
   })
 })

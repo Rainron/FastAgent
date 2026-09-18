@@ -276,6 +276,18 @@ export class LocalStore {
     this.db.prepare('DELETE FROM ability_install_meta WHERE ability_type = ? AND ability_id = ?').run(abilityType, abilityId)
   }
 
+  /** 检查更新的结果落库，能力页与侧栏徽标据此判断有没有新版，不必再开 Hub。 */
+  setAbilityLatestVersion(abilityType: AbilityType, abilityId: string, version: string | null, checkedAt = new Date().toISOString()) {
+    this.db.prepare('UPDATE ability_install_meta SET latest_version = ?, latest_checked_at = ? WHERE ability_type = ? AND ability_id = ?')
+      .run(version, checkedAt, abilityType, abilityId)
+  }
+
+  /** 记一次「本轮用到了这个能力」。调用方负责按轮去重，这里不做频次控制。 */
+  touchAbilityUsage(abilityType: AbilityType, abilityId: string, usedAt = new Date().toISOString()) {
+    this.db.prepare('UPDATE ability_install_meta SET last_used_at = ?, use_count = use_count + 1 WHERE ability_type = ? AND ability_id = ?')
+      .run(usedAt, abilityType, abilityId)
+  }
+
   /** 目录/表里有、meta 表没有的能力补一条来源记录；无法区分新建与导入时按 imported 处理，风险更高的一侧优先。 */
   backfillAbilityMeta(entries: Array<{ abilityType: AbilityType; abilityId: string; installedAt?: string }>) {
     const known = new Set(this.listAbilityMeta().map((meta) => `${meta.abilityType}::${meta.abilityId}`))

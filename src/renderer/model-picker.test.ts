@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocalModelSummary, ModelOption } from '../shared/types'
-import { conversationModelId, expandedModels, filterModelOptions, groupModelsByChannel, initialExpandedChannels, initialSelectedModelId, localModelToOption, mergeModelOptions, modelMetaLabel, modelTabs, modelsForTab, providerOptions, stepModelIndex, thinkingLevelDescription, thinkingLevelShortLabel, thinkingLevelsForModel, triggerModelLabel, visibleModelOptions } from './model-picker'
+import { allSectionGroupIds, conversationModelId, expandedModels, expandedSectionModels, filterModelOptions, groupModelsByChannel, initialExpandedChannels, initialExpandedGroups, initialSelectedModelId, localModelToOption, mergeModelOptions, modelMetaLabel, modelSections, modelTabs, modelsForTab, providerOptions, stepModelIndex, thinkingLevelDescription, thinkingLevelShortLabel, thinkingLevelsForModel, triggerModelLabel, visibleModelOptions } from './model-picker'
 
 // 字段含义按后端实际返回：provider 是提供商，protocol 是调用协议。
 const models: ModelOption[] = [
@@ -49,9 +49,10 @@ describe('model picker helpers', () => {
   })
 
   it('只为支持思考的模型返回动态档位', () => {
-    expect(thinkingLevelsForModel(models[0])).toEqual(['auto', 'low', 'medium', 'high'])
+    expect(thinkingLevelsForModel(models[0])).toEqual(['auto', 'off', 'low', 'medium', 'high'])
     expect(thinkingLevelsForModel(models[2])).toEqual([])
-    expect(thinkingLevelsForModel({ ...models[0], thinking_default: 'ultra' })).toContain('ultra')
+    expect(thinkingLevelsForModel({ ...models[0], thinking_default: 'ultra' })).not.toContain('ultra')
+    expect(thinkingLevelsForModel({ ...models[1], thinking_level_map: { minimal: null, xhigh: 'xhigh', max: 'max' } })).toEqual(['auto', 'off', 'low', 'medium', 'high', 'xhigh', 'max'])
   })
 
   it('入口文案只显示模型名，思考强度单独描述', () => {
@@ -59,6 +60,7 @@ describe('model picker helpers', () => {
     expect(triggerModelLabel(null)).toBe('选择模型')
     expect(thinkingLevelShortLabel('medium')).toBe('Med')
     expect(thinkingLevelDescription('low')).toBe('更快响应，适合简单任务')
+    expect(thinkingLevelDescription('auto')).toBe('跟随模型默认设置，未配置时关闭思考')
     expect(modelMetaLabel(models[0])).toBe('anthropic · Reasoning')
     expect(modelMetaLabel(models[2])).toBe('openai')
   })
@@ -89,6 +91,45 @@ describe('模型分组与折叠', () => {
   })
 })
 
+describe('弹层来源分区', () => {
+  // provider 是分组标题（连接模型取连接名），name 是厂商名。
+  const connectionModels: ModelOption[] = [
+    { id: -1, name: 'OpenAI', model_name: 'gpt-5.1', model_kind: 'chat', provider: 'OpenAI', protocol: 'openai', source: 'local', connectionId: 'conn-a', authMode: 'oauth' },
+    { id: -2, name: 'OpenAI', model_name: 'gpt-5.1-codex', model_kind: 'chat', provider: 'OpenAI', protocol: 'openai', source: 'local', connectionId: 'conn-a', authMode: 'oauth' },
+    { id: -3, name: 'OpenAI', model_name: 'gpt-4.1', model_kind: 'chat', provider: 'OpenAI', protocol: 'openai', source: 'local', connectionId: 'conn-b', authMode: 'api-key' }
+  ]
+  const mixed = [...models, ...connectionModels]
+
+  it('先按来源分区再按连接/厂商分组，云端与同名连接不会合并', () => {
+    const sections = modelSections(mixed)
+    expect(sections.map((section) => [section.key, section.count])).toEqual([['connection', 3], ['cloud', 3]])
+    expect(sections[0].groups.map((group) => [group.id, group.label, group.meta, group.models.map((model) => model.id)]))
+      .toEqual([['connection:conn-a', 'OpenAI', '账号', [-1, -2]], ['connection:conn-b', 'OpenAI', 'API Key', [-3]]])
+    expect(sections[1].groups.map((group) => group.id)).toEqual(['cloud:MiniMax', 'cloud:Qwen'])
+  })
+
+  it('连接名与厂商名不同的组头带上厂商与认证方式', () => {
+    const [section] = modelSections([{ ...connectionModels[0], provider: '公司网关', connectionId: 'conn-c' }])
+    expect(section.groups[0].meta).toBe('OpenAI · 账号')
+  })
+
+  it('只有单一来源时仍返回一个分区，空列表返回空', () => {
+    expect(modelSections(models).map((section) => section.key)).toEqual(['cloud'])
+    expect(modelSections(connectionModels).map((section) => section.key)).toEqual(['connection'])
+    expect(modelSections([])).toEqual([])
+  })
+
+  it('默认只展开所选模型所在分组，键盘定位只算展开的组', () => {
+    const sections = modelSections(mixed)
+    expect(initialExpandedGroups(sections, 3)).toEqual(['cloud:Qwen'])
+    expect(initialExpandedGroups(sections, -3)).toEqual(['connection:conn-b'])
+    expect(initialExpandedGroups(sections, null)).toEqual([])
+    expect(expandedSectionModels(sections, new Set(['connection:conn-a', 'cloud:Qwen'])).map((model) => model.id)).toEqual([-1, -2, 3])
+    expect(expandedSectionModels(sections, new Set())).toEqual([])
+    expect(allSectionGroupIds(sections)).toEqual(['connection:conn-a', 'connection:conn-b', 'cloud:MiniMax', 'cloud:Qwen'])
+  })
+})
+
 describe('本地模型合并', () => {
   const local: LocalModelSummary[] = [
     { id: -1, name: 'Ollama', provider: 'Ollama', protocol: 'openai', model_name: 'qwen2.5:7b', model_kind: 'chat', base_url: 'http://127.0.0.1:11434/v1', hasApiKey: false, supports_thinking: true, thinking_default: 'medium', thinking_profiles: { low: {}, medium: {} }, updatedAt: '2026-01-01T00:00:00.000Z' },
@@ -109,6 +150,18 @@ describe('本地模型合并', () => {
     // 密钥字段绝不进入 ModelOption
     expect(option).not.toHaveProperty('hasApiKey')
     expect(option).not.toHaveProperty('base_url')
+  })
+
+  it('连接模型按连接名分组，并带上连接归属与认证方式', () => {
+    // 连接内的 name 是模型别名（默认等于模型标识），provider 是厂商名。
+    const option = localModelToOption({ ...local[1], name: 'deepseek-chat', provider: 'DeepSeek', connectionId: 'conn-a', connectionName: '公司网关', authMode: 'oauth' })
+    expect(option.connectionId).toBe('conn-a')
+    expect(option.authMode).toBe('oauth')
+    expect(option.provider).toBe('公司网关')
+    expect(option.name).toBe('DeepSeek')
+    expect(modelMetaLabel(option)).toBe('账号')
+    // 旧的本地模型没有连接，仍按提供商名分组
+    expect(localModelToOption(local[0]).provider).toBe('Ollama')
   })
 
   it('合并顺序：云端在前，本地在后，id 不冲突', () => {

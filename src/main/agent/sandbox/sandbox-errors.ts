@@ -8,6 +8,7 @@ export type SandboxErrorCode =
   | 'filesystem_denied'
   | 'network_denied'
   | 'process_limit'
+  | 'timeout'
   | 'runner_failed'
 
 interface SandboxErrorText {
@@ -53,6 +54,11 @@ const TEXTS: Record<SandboxErrorCode, SandboxErrorText> = {
     detail: 'Agent 启动的进程数量超过沙箱允许的上限，已终止本次执行。',
     actions: ['retry']
   },
+  timeout: {
+    title: '命令执行超时',
+    detail: '命令超过允许的执行时限，已被终止。',
+    actions: ['retry']
+  },
   runner_failed: {
     title: 'Agent 沙箱启动失败',
     detail: '沙箱执行器未能启动。为保护本机安全，本次 Agent 任务尚未启动。',
@@ -65,7 +71,7 @@ export class SandboxError extends Error {
   readonly target?: string
 
   constructor(code: SandboxErrorCode, options: { target?: string; cause?: unknown } = {}) {
-    super(TEXTS[code].title)
+    super(code === 'timeout' && options.target ? `${TEXTS[code].title}：${options.target}` : TEXTS[code].title)
     this.name = 'SandboxError'
     this.code = code
     this.target = options.target

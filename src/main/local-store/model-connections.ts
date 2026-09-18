@@ -99,7 +99,7 @@ export class ModelConnectionStore {
     return rows.map((row) => {
       const metadata = JSON.parse(row.connection_payload) as Metadata
       const payload = JSON.parse(row.payload) as Record<string, unknown>
-      return { ...payload, id: -row.id, connectionId: row.connection_id, provider: modelProvider(metadata.providerId).name, authMode: metadata.authMode, protocol: metadata.protocol, base_url: metadata.baseUrl, supports_thinking: typeof payload.supports_thinking === 'boolean' ? payload.supports_thinking : true, hasApiKey: Boolean(row.has_credentials), updatedAt: row.updated_at } as LocalModelSummary
+      return { ...payload, id: -row.id, connectionId: row.connection_id, connectionName: metadata.name, provider: modelProvider(metadata.providerId).name, authMode: metadata.authMode, protocol: metadata.protocol, base_url: metadata.baseUrl, supports_thinking: typeof payload.supports_thinking === 'boolean' ? payload.supports_thinking : true, hasApiKey: Boolean(row.has_credentials), updatedAt: row.updated_at } as LocalModelSummary
     })
   }
 
@@ -134,7 +134,8 @@ export class ModelConnectionStore {
       for (const model of input.models) {
         const old = model.id === undefined ? existing.find((m) => JSON.parse(m.payload).model_name === model.modelId) : existing.find((m) => m.id === -model.id!)
         if (model.id !== undefined && !old) throw new Error('模型不属于该连接')
-        const payload = { ...(old ? JSON.parse(old.payload) : {}), connectionId: id, name: model.name?.trim() || model.modelId.trim(), provider: modelProvider(metadata.providerId).name, protocol: metadata.protocol, model_name: model.modelId.trim(), model_kind: 'chat', base_url: metadata.baseUrl, context_window: model.contextWindow, max_tokens: model.maxTokens, supports_thinking: model.reasoning ?? true }
+        const previous = old ? JSON.parse(old.payload) : {}
+        const payload = { ...previous, connectionId: id, name: model.name?.trim() || model.modelId.trim(), provider: modelProvider(metadata.providerId).name, protocol: metadata.protocol, model_name: model.modelId.trim(), model_kind: 'chat', base_url: metadata.baseUrl, context_window: model.contextWindow ?? previous.context_window, max_tokens: model.maxTokens ?? previous.max_tokens, supports_thinking: model.reasoning ?? previous.supports_thinking ?? true, thinking_level_map: model.thinkingLevelMap ?? previous.thinking_level_map, thinking_default: model.thinkingDefault ?? previous.thinking_default, thinking_profiles: model.thinkingProfiles === undefined ? previous.thinking_profiles : model.thinkingProfiles }
         if (old) { this.db.prepare('UPDATE local_models SET payload=?,secrets=NULL,updated_at=? WHERE id=?').run(JSON.stringify(payload), now, old.id); kept.add(old.id) }
         else kept.add(Number(this.db.prepare('INSERT INTO local_models(payload,secrets,updated_at) VALUES(?,NULL,?)').run(JSON.stringify(payload), now).lastInsertRowid))
       }

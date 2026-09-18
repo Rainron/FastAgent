@@ -43,7 +43,7 @@ export function useAgentEvents(sinks: AgentEventSinks) {
     if (event.sequence !== undefined) eventSequenceRef.current.set(event.runId, event.sequence)
     // Agent 任何工具执行结束都可能改变工作区文件或分支，统一触发 Git 状态刷新（防抖合并）。
     if (event.type === 'tool_result') refreshGitState()
-    if (event.conversationId && (event.type === 'run_started' || event.type === 'approval_required' || event.type === 'question_required' || event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) {
+    if (event.conversationId && (event.type === 'run_started' || event.type === 'approval_required' || event.type === 'approval_resolved' || event.type === 'question_required' || event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) {
       const status = event.type === 'approval_required' || event.type === 'question_required' ? 'waiting_user' : event.type === 'completed' ? 'completed' : event.type === 'failed' ? 'failed' : event.type === 'cancelled' || event.type === 'interrupted' ? 'cancelled' : 'running'
       setRunStates((current) => ({ ...current, [event.conversationId!]: { conversationId: event.conversationId!, projectId: conversationItemsRef.current.find((item) => item.id === event.conversationId)?.projectId ?? current[event.conversationId!]?.projectId ?? null, status, hasUnreadResult: status === 'completed' || status === 'failed' || status === 'cancelled', updatedAt: Date.now() } }))
       if (event.conversationId === selectedConversationId && event.type === 'run_started') setContextHealth((current) => ({ ...current, usagePending: true }))
@@ -83,6 +83,9 @@ export function useAgentEvents(sinks: AgentEventSinks) {
       setApprovals((current) => current.some((item) => item.request.id === event.approval?.id)
         ? current
         : [...current, { request: event.approval!, runId: event.runId, conversationId: event.conversationId ?? null }])
+    }
+    if (event.type === 'approval_resolved' && event.approval) {
+      setApprovals((current) => current.filter((item) => item.runId !== event.runId || item.request.id !== event.approval!.id))
     }
     if (event.type === 'todo_changed' && event.todos) {
       const turnId = resolveEventTurnId(event, runTurnRef.current.get(event.runId), activeTurnRef.current)

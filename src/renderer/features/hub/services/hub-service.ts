@@ -1,4 +1,4 @@
-import type { HubInstallResult, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput } from '../../../../shared/types'
+import type { HubInstallResult, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../../../../shared/types'
 
 /** Hub 的 IPC 薄封装，页面不直接摸 window.fastAgent。 */
 export const hubService = {
@@ -9,5 +9,6 @@ export const hubService = {
   search: (query: HubQuery): Promise<HubSearchResult> => window.fastAgent.hub.search(query),
   detail: (sourceId: string, ref: string): Promise<HubListingDetail> => window.fastAgent.hub.detail(sourceId, ref),
   install: (sourceId: string, ref: string, config?: Record<string, string>): Promise<HubInstallResult> => window.fastAgent.hub.install(sourceId, ref, config),
-  categories: (): Promise<string[]> => window.fastAgent.hub.categories()
+  categories: (): Promise<string[]> => window.fastAgent.hub.categories(),
+  checkUpdates: (): Promise<HubUpdateCheckResult> => window.fastAgent.hub.checkUpdates()
 }

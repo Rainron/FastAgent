@@ -17,6 +17,22 @@ export interface ShellOperationsContext {
   hostEnv?: Record<string, string | undefined>
 }
 
+const MAX_TIMEOUT_MS = 2_147_483_647
+const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000
+
+/** Pi shell 的超时单位是秒，沙箱 runner 的协议单位是整数毫秒。 */
+export function resolveSandboxTimeoutMs(timeout: number | undefined): number | undefined {
+  if (timeout === undefined) return undefined
+  if (!Number.isFinite(timeout) || timeout <= 0) {
+    throw new Error('Invalid timeout: must be a finite number of seconds')
+  }
+  const timeoutMs = timeout * 1000
+  if (timeoutMs > MAX_TIMEOUT_MS) {
+    throw new Error(`Invalid timeout: maximum is ${MAX_TIMEOUT_SECONDS} seconds`)
+  }
+  return Math.max(1, Math.round(timeoutMs))
+}
+
 /**
  * 沙箱内的 bash 由 runner 自己解析：它按 PATH 找 bash.exe，而内置 bash 在 git/usr/bin 下、
  * 刻意不进 PATH（否则 PowerShell 会话里的 find/sort/date 会被 MSYS 版本遮蔽）。
@@ -25,6 +41,24 @@ export interface ShellOperationsContext {
 function withSandboxBash(env: Record<string, string>, context: ShellOperationsContext): Record<string, string> {
   if (context.shellToolName !== 'bash' || !context.bashPath) return env
   return { ...env, FASTAGENT_SANDBOX_BASH: context.bashPath }
+}
+
+/**
+ * 沙箱账户不是工作区属主，git 2.35+ 的 safe.directory 校验会对每条 git 命令报
+ * dubious ownership 并以 128 退出——沙箱内 git 全线不可用。
+ * 用 GIT_CONFIG_* 只在子进程里放行本次工作区，不去改用户的 gitconfig；
+ * Windows 路径连正斜杠写法一起登记（git 报错信息里用的就是正斜杠），避免形态不同导致校验落空。
+ */
+export function sandboxGitConfigEnv(workspacePath: string | null): Record<string, string> {
+  if (!workspacePath) return {}
+  const forward = workspacePath.replace(/\\/g, '/')
+  const paths = forward === workspacePath ? [workspacePath] : [workspacePath, forward]
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(paths.length) }
+  paths.forEach((path, index) => {
+    env[`GIT_CONFIG_KEY_${index}`] = 'safe.directory'
+    env[`GIT_CONFIG_VALUE_${index}`] = path
+  })
+  return env
 }
 
 /**
@@ -59,8 +93,11 @@ export function createShellOperations(source: ShellOperationsContext | (() => Sh
       const sandboxProcess = await context.manager.execute(context.session, {
         command,
         cwd,
-        env: withSandboxBash(env, context),
-        timeoutMs: options.timeout ?? context.session.policy.process.timeoutMs,
+        // git 配置放最后：调用方若带了自己的 GIT_CONFIG_COUNT，索引会和这里的键错位，宁可覆盖掉。
+        env: { ...withSandboxBash(env, context), ...sandboxGitConfigEnv(context.session.workspacePath) },
+        timeoutMs: options.timeout === undefined
+          ? context.session.policy.process.timeoutMs
+          : resolveSandboxTimeoutMs(options.timeout),
         signal: options.signal,
         onData: (chunk) => options.onData(chunk)
       })

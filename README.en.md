@@ -42,7 +42,15 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
 **Skills, MCP, and plugins**  
-Manage and validate local Skills, import MCP servers and test connectivity, export/import capability bundles, and check for updates from configured Hub sources.
+Manage and validate local Skills, import MCP servers and test connectivity, export/import capability bundles, and check for updates from configured Hub sources. The capability page and Hub discovery entry are now managed together.
+
+**Run state and model permissions**
+
+Run state can be reconciled after a reload, allowing in-progress tasks to be picked up again. Model configuration synchronization and permissions during execution are also more complete.
+
+**Motion and session experience**
+
+Session lists support pagination, while page transitions, message actions, and workspace interactions include more feedback and motion.
 
 **Context management and local workflow tools**  
 Provider-reported usage drives context accounting, with automatic summarization and manual compaction. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
@@ -114,7 +122,7 @@ The main process is organized as lifecycle → IPC → domain modules. The rende
 
 ## What is next
 
-Near-term work focuses on reconnecting tasks after the window closes and bringing capability management and the plugin marketplace together. Longer-term directions include GUI task automation, in-conversation search and model diagnostics, session export and usage reporting, long-term memory, a project knowledge base, and additional workspace tools.
+Future work will continue to improve task continuity, model connections, and the capability ecosystem. Areas include more detailed run-state recovery, model connectivity diagnostics, session and usage management, long-term cross-session memory, and a project knowledge base.
 
 These are directional goals, not dated commitments. Please open an issue if you have a particular use case you would like prioritized.
 

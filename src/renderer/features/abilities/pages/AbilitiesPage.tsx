@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Store } from 'lucide-react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Boxes, CircleCheck, LoaderCircle, Plus, Plug, RefreshCw, Wrench } from 'lucide-react'
 import type { Ability, McpAbility, SkillAbility } from '../../../../shared/types'
 import { pageOffset, resolvePage } from '../../../../shared/pagination'
 import { Pagination } from '../../../components/Pagination'
-import { OverviewTab } from './OverviewTab'
+import { abilityStats } from '../ability-view'
 import { SkillList } from '../../skills/components/SkillList'
 import { SkillCreateForm, type SkillFormMode } from '../../skills/components/SkillCreateForm'
 import { SkillDetailPanel } from '../../skills/components/SkillDetailPanel'
@@ -20,11 +20,16 @@ import { isMcp, isSkill } from '../ability-view'
 import { useAbilities } from '../hooks/useAbilities'
 import { useAsyncActions } from '../hooks/useAsyncAction'
 import { usePagination } from '../../../use-pagination'
+import { useEventCallback } from '../../../use-event-callback'
 import { abilitiesService } from '../services/abilities-service'
+import { hubService } from '../../hub/services/hub-service'
 import { mcpService } from '../../mcp/services/mcp-service'
 import type { SkillImportFormat } from '../../skills/services/skills-service'
 
-type AbilityTab = 'overview' | 'skills' | 'mcp'
+// 「发现」会发起多源网络请求，组件树也不小，不跟能力列表一起进首屏 chunk。
+const DiscoverTab = React.lazy(() => import('../../hub/pages/DiscoverTab').then(({ DiscoverTab }) => ({ default: DiscoverTab })))
+
+type AbilityTab = 'discover' | 'skills' | 'mcp'
 
 type Overlay =
   | { kind: 'skill-form'; form: SkillFormMode }
@@ -37,20 +42,16 @@ type Overlay =
   | null
 
 const TABS: Array<[AbilityTab, string]> = [
-  ['overview', '概览'],
+  ['discover', '发现能力'],
   ['skills', 'Skills'],
-  ['mcp', 'MCP Servers']
+  ['mcp', 'MCP']
 ]
 
-/** 「能力」一级页面：Agent 可用的扩展能力在这里管理、配置、启停与测试。 */
-export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocusHandled }: {
+/** 「能力」一级页面：安装与管理合并在这里，「发现」Tab 即原来的 Hub 页。 */
+export function AbilitiesPage({ onNotice }: {
   onNotice: (notice: string) => void
-  onOpenPlugins?: () => void
-  /** 从插件页安装完成后跳转过来时定位到的能力 */
-  focusAbilityId?: string | null
-  onFocusHandled?: () => void
 }) {
-  const [tab, setTab] = useState<AbilityTab>('overview')
+  const [tab, setTab] = useState<AbilityTab>('discover')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const { abilities, error, loading, refresh } = useAbilities()
   const { page: requestedPage, pageSize, setPage, setPageSize } = usePagination()
@@ -59,26 +60,54 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
   const skills = useMemo(() => (abilities ?? []).filter(isSkill), [abilities])
   const servers = useMemo(() => (abilities ?? []).filter(isMcp), [abilities])
 
-  // 每个 Tab 只对同类能力分页，Tab 上的计数仍取全量
-  const rows: Ability[] = tab === 'skills' ? skills : tab === 'mcp' ? servers : (abilities ?? [])
+  // 每个 Tab 只对同类能力分页，Tab 上的计数仍取全量；「发现」自带分页，不参与这里
+  const rows: Ability[] = tab === 'skills' ? skills : tab === 'mcp' ? servers : []
   const total = rows.length
   const page = resolvePage(requestedPage, total, pageSize)
   const visible = useMemo(() => rows.slice(pageOffset(page, pageSize), pageOffset(page, pageSize) + pageSize), [rows, page, pageSize])
   const visibleSkills = useMemo(() => visible.filter(isSkill), [visible])
   const visibleServers = useMemo(() => visible.filter(isMcp), [visible])
 
+  // 首次加载完成后，有已安装能力优先进入管理页；之后用户切回发现页不再被重置。
+  const initialTabResolved = React.useRef(false)
   useEffect(() => {
-    if (!focusAbilityId || !abilities) return
-    const target = abilities.find((ability) => ability.id === focusAbilityId)
+    if (initialTabResolved.current || !abilities) return
+    initialTabResolved.current = true
+    if (abilities.length > 0) setTab('skills')
+  }, [abilities])
+
+  // 「发现」Tab 装完能力后要跳回对应列表并打开详情，与外部深链走同一条路径。
+  const focusAbility = useEventCallback((ability: Ability) => {
+    setTab(ability.type === 'skill' ? 'skills' : 'mcp')
+    setOverlay(isSkill(ability) ? { kind: 'skill-detail', ability } : { kind: 'mcp-detail', ability: ability as McpAbility })
+  })
+
+  // 「发现」Tab 刚装完的能力还不在 abilities 里，先记下 id，等刷新回来再定位。
+  const [pendingFocusId, setPendingFocusId] = useState<string | null>(null)
+  const openAbilityById = useEventCallback((abilityId: string) => { setPendingFocusId(abilityId); void refresh() })
+
+  useEffect(() => {
+    if (!pendingFocusId || !abilities) return
+    const target = abilities.find((ability) => ability.id === pendingFocusId)
     if (!target) return
-    setTab(target.type === 'skill' ? 'skills' : 'mcp')
-    setOverlay(isSkill(target) ? { kind: 'skill-detail', ability: target } : { kind: 'mcp-detail', ability: target as McpAbility })
-    onFocusHandled?.()
-  }, [focusAbilityId, abilities, onFocusHandled])
+    focusAbility(target)
+    setPendingFocusId(null)
+  }, [pendingFocusId, abilities, focusAbility])
 
   async function importMcp() {
     const created = await actions.run('mcp-import', () => mcpService.import())
     if (created) onNotice(`已导入 ${created.length} 个 MCP Server`)
+    await refresh()
+  }
+
+  /** 对一遍已装 Hub 能力的远端版本；结果落库后能力状态与侧栏徽标才会显示「有更新」。 */
+  async function checkUpdates() {
+    const result = await actions.run('check-updates', () => hubService.checkUpdates())
+    if (!result) return
+    const failed = result.failures.length ? `，${result.failures.length} 个源未响应` : ''
+    onNotice(result.checked === 0
+      ? '没有来自 Hub 的已安装能力，无需检查'
+      : result.updated > 0 ? `${result.updated} 个能力有新版本${failed}` : `已是最新${failed}`)
     await refresh()
   }
 
@@ -90,12 +119,13 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
   return <div className="capabilities-page">
     <div className="capabilities-header">
       <div>
-        <span className="eyebrow">ABILITIES</span>
-        <h1>Agent 能力</h1>
-        <p>Skill 提供任务知识和工作流，MCP Server 提供外部工具与数据源；安装与启用分离，只有显式启用的能力 Agent 才可见。</p>
+        <h1>能力</h1>
+        <p>为对话与任务添加技能和工具。</p>
       </div>
       <div className="capabilities-actions">
-        {onOpenPlugins && <button className="quick-secondary" onClick={onOpenPlugins}><Store size={14} />从插件市场添加</button>}
+        <button className="quick-secondary" onClick={() => void checkUpdates()} disabled={actions.isPending('check-updates')}>
+          {actions.isPending('check-updates') ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}检查更新
+        </button>
         <AbilityMenu
           label="添加能力"
           trigger={<><Plus size={15} />添加能力</>}
@@ -121,16 +151,13 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
     </nav>
 
     <div className="capabilities-content">
+      {tab !== 'discover' && abilities && <AbilitySummary abilities={abilities} />}
       {actions.errorOf('mcp-import') && <AbilityErrorBlock title="导入失败" message={actions.errorOf('mcp-import') as string} />}
       {error ? <AbilityErrorBlock
         title="能力列表加载失败"
         message={error}
         actions={<button className="small-control" onClick={() => void refresh()}>重试</button>}
       /> : loading && !abilities ? <AbilityLoadingState /> : <>
-        {tab === 'overview' && <OverviewTab
-          abilities={visible}
-          onOpen={(ability) => setOverlay(isSkill(ability) ? { kind: 'skill-detail', ability } : { kind: 'mcp-detail', ability: ability as McpAbility })}
-        />}
         {tab === 'skills' && <SkillList
           skills={visibleSkills}
           onRefresh={refresh}
@@ -139,7 +166,7 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
           onImport={() => setOverlay({ kind: 'skill-import', format: 'directory' })}
           onEdit={(name) => setOverlay({ kind: 'skill-form', form: { mode: 'edit', name } })}
           onInspect={(ability) => setOverlay({ kind: 'skill-detail', ability })}
-          onOpenPlugins={onOpenPlugins}
+          onOpenPlugins={() => setTab('discover')}
         />}
         {tab === 'mcp' && <McpServerList
           servers={visibleServers}
@@ -149,9 +176,12 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
           onImport={() => void importMcp()}
           onEdit={(ability) => setOverlay({ kind: 'mcp-form', ability })}
           onInspect={(ability) => setOverlay({ kind: 'mcp-detail', ability })}
-          onOpenPlugins={onOpenPlugins}
+          onOpenPlugins={() => setTab('discover')}
         />}
-        <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />
+        {tab === 'discover' && <React.Suspense fallback={<AbilityLoadingState />}>
+          <DiscoverTab onNotice={onNotice} onOpenAbility={openAbilityById} />
+        </React.Suspense>}
+        {tab !== 'discover' && <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />}
       </>}
     </div>
 
@@ -191,5 +221,22 @@ export function AbilitiesPage({ onNotice, onOpenPlugins, focusAbilityId, onFocus
       onEdit={() => setOverlay({ kind: 'mcp-form', ability: overlay.ability })}
       onReconnect={() => { void mcpService.test(overlay.ability.id).then(() => refresh()).catch(() => onNotice('连接测试失败')) }}
     />}
+  </div>
+}
+
+function AbilitySummary({ abilities }: { abilities: Ability[] }) {
+  const stats = abilityStats(abilities)
+  const cards = [
+    { label: '已安装', value: stats.total, icon: <Boxes size={15} /> },
+    { label: '已启用', value: stats.enabled, icon: <CircleCheck size={15} />, tone: 'success' },
+    { label: '待处理', value: stats.attention, icon: <AlertTriangle size={15} />, tone: stats.attention ? 'warning' : 'muted' },
+    { label: '可更新', value: stats.updates, icon: <RefreshCw size={15} />, tone: stats.updates ? 'warning' : 'muted' },
+    { label: 'Skills', value: stats.skills, icon: <Wrench size={15} /> },
+    { label: 'MCP', value: stats.mcp, icon: <Plug size={15} /> }
+  ]
+  return <div className="cap-summary" aria-label="能力统计">
+    {cards.map((card) => <div className={`cap-summary-card ${card.tone ?? ''}`} key={card.label}>
+      <span className="cap-summary-icon">{card.icon}</span><span><strong>{card.value}</strong><small>{card.label}</small></span>
+    </div>)}
   </div>
 }

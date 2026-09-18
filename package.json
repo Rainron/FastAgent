@@ -1,13 +1,8 @@
 {
   "name": "fastagent-desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "FastAgent AI Workspace",
-  "license": "MIT",
-  "author": "lake",
-  "homepage": "https://github.com/Rainron/FastAgent",
-  "repository": { "type": "git", "url": "git+https://github.com/Rainron/FastAgent.git" },
-  "bugs": { "url": "https://github.com/Rainron/FastAgent/issues" },
   "main": "out/main/index.js",
   "type": "module",
   "scripts": {
@@ -65,8 +60,14 @@
       "package.json"
     ],
     "extraResources": [
-      { "from": "resources/sandbox", "to": "sandbox" },
-      { "from": "resources/runtime", "to": "runtime" }
+      {
+        "from": "resources/sandbox",
+        "to": "sandbox"
+      },
+      {
+        "from": "resources/runtime",
+        "to": "runtime"
+      }
     ],
     "win": {
       "target": "nsis",
@@ -77,5 +78,15 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true
     }
+  },
+  "license": "MIT",
+  "author": "lake",
+  "homepage": "https://github.com/Rainron/FastAgent",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Rainron/FastAgent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Rainron/FastAgent/issues"
   }
 }

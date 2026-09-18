@@ -21,4 +21,5 @@ export function registerHubIpc(handle: IpcRegistrar, hub: ReturnType<typeof crea
   handle('hub:install', (_event, sourceId: string, ref: string, config?: Record<string, string>) =>
     hub.install(sourceId, ref, config ?? {}, callSignal()))
   handle('hub:categories', () => hub.categories(callSignal()))
+  handle('hub:check-updates', () => hub.checkUpdates(callSignal()))
 }

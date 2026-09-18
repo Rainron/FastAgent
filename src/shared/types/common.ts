@@ -1,5 +1,7 @@
 export type ConversationMode = 'chat' | 'agent'
-export type ThinkingLevel = 'auto' | 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'xhigh' | 'ultra'
+export type ModelThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ThinkingLevel = 'auto' | ModelThinkingLevel
+export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>
 /**
  * 权限档位标识。内置三档是 'ask' | 'workspace' | 'full'，用户自定义档位是自己的 slug，
  * 所以这里是开放字符串；内置档的判定用 shared/permission-profiles 的 isBuiltinPreset。

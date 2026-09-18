@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { FolderOpen, X } from 'lucide-react'
 import type { AppSettings, ClientPreferences } from '../../shared/types'
 import { DEFAULT_PAGE_SIZE, normalizePageSize, PAGE_SIZE_OPTIONS } from '../../shared/pagination'
+import { notifyPaginationPageSizeChanged } from '../use-pagination'
 
 const rows: Array<{ key: 'startAtLogin' | 'showOnStartup' | 'closeToTray'; label: string; description: string }> = [
   { key: 'startAtLogin', label: '开机启动 FastAgent', description: '登录 Windows 后自动运行 FastAgent。' },
@@ -19,6 +20,7 @@ export function GeneralSettings({ settings, onChange }: { settings: AppSettings;
   function updatePageSize(value: number) {
     setPageSize(value)
     void window.fastAgent.preferences.update({ paginationPageSize: value } satisfies Partial<ClientPreferences>)
+    notifyPaginationPageSizeChanged(value)
   }
 
   function commitEditorPath() {
@@ -44,6 +46,14 @@ export function GeneralSettings({ settings, onChange }: { settings: AppSettings;
         <span className="switch-visual" />
       </label>
     </div>)}
+
+    <div className="settings-section-heading"><div><h2>界面动画</h2><p>控制页面切换、按钮反馈和状态动效；关闭后保留清晰的状态变化。</p></div></div>
+    <div className="settings-row">
+      <div><strong>界面动画</strong><span>跟随系统会响应系统的减少动态效果设置。</span></div>
+      <select value={settings.motionPreference} onChange={(event) => onChange({ motionPreference: event.target.value as AppSettings['motionPreference'] })} aria-label="界面动画">
+        <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
+      </select>
+    </div>
 
     <div className="settings-section-heading"><div><h2>列表分页</h2><p>控制会话、项目、插件和能力列表每次加载的数量。</p></div></div>
     <div className="settings-row">

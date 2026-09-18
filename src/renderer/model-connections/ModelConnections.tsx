@@ -10,8 +10,6 @@ type Provider = Awaited<ReturnType<Api['providers']>>[number]
 type Login = Awaited<ReturnType<Api['startLogin']>>
 type Input = Parameters<Api['save']>[0]
 
-export const MODEL_CONNECTIONS_CHANGED = 'fastagent:model-connections-changed'
-
 export function ModelConnections({ entering = false, selectedModelId, onSelectModel, onChanged }: {
   entering?: boolean
   selectedModelId?: number | null
@@ -48,7 +46,6 @@ export function ModelConnections({ entering = false, selectedModelId, onSelectMo
     if (id) setSelected(id)
     setAdding(false)
     setRevision((value) => value + 1)
-    window.dispatchEvent(new Event(MODEL_CONNECTIONS_CHANGED))
   }
 
   const current = adding ? null : connections.find((item) => item.id === selected) ?? null
@@ -80,7 +77,7 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, onSelec
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
   const [protocol, setProtocol] = useState<LocalModelApi>(initial?.protocol ?? 'openai')
   const [apiKey, setApiKey] = useState('')
-  const [models, setModels] = useState<Input['models']>(initial?.models.map((model) => ({ id: model.id, modelId: model.model_name, name: model.name, contextWindow: model.context_window ?? undefined, maxTokens: model.max_tokens ?? undefined, reasoning: model.supports_thinking })) ?? [])
+  const [models, setModels] = useState<Input['models']>(initial?.models.map((model) => ({ id: model.id, modelId: model.model_name, name: model.name, contextWindow: model.context_window ?? undefined, maxTokens: model.max_tokens ?? undefined, reasoning: model.supports_thinking, thinkingLevelMap: model.thinking_level_map, thinkingDefault: model.thinking_default, thinkingProfiles: model.thinking_profiles })) ?? [])
   const [modelId, setModelId] = useState('')
   const [discovered, setDiscovered] = useState<Awaited<ReturnType<Api['models']>>>([])
   const [login, setLogin] = useState<Login | null>(null)
@@ -169,8 +166,8 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, onSelec
         </div>}
       </fieldset>
       {login && <div className="model-login-status" role="status">
-        <p>{login.status === 'success' ? '账号授权成功，可以选择模型。' : login.error ?? login.message ?? (login.status === 'pending' ? '请在系统浏览器完成授权…' : login.status === 'cancelled' ? '已取消授权' : login.status === 'expired' ? '授权已过期，请重新登录' : '等待账号授权')}</p>
-        {login.url && <p className="model-login-url">授权地址：{login.url}</p>}
+        <p>{login.status === 'success' ? '账号授权成功，可以选择模型。' : login.error ?? login.message ?? (login.status === 'pending' ? '已在系统浏览器打开授权页，请完成授权…' : login.status === 'cancelled' ? '已取消授权' : login.status === 'expired' ? '授权已过期，请重新登录' : '等待账号授权')}</p>
+        {login.url && <p className="model-login-url">未自动打开可手动访问：{login.url}</p>}
         {login.userCode && <p>设备验证码：<strong>{login.userCode}</strong></p>}
         {login.status === 'input-required' && login.prompt?.options && <div className="model-connection-actions">{login.prompt.options.map((option) => <button type="button" className="small-control" disabled={busy} key={option.id} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, option.id); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>{option.label}</button>)}</div>}
         {login.status === 'input-required' && <label className="model-connection-field">{login.prompt?.message ?? '输入验证码'}<input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={login.prompt?.placeholder} /><button type="button" className="small-control" disabled={busy || (!answer.trim() && !login.prompt?.allowEmpty)} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, answer); setAnswer(''); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>提交验证码</button></label>}

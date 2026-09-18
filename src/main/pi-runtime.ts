@@ -13,7 +13,7 @@ import {
 } from '@earendil-works/pi-coding-agent'
 import type { Api, Message, Model } from '@earendil-works/pi-ai'
 import type { AgentEvent, ApprovalDecision, ApprovalRequest, Attachment, ConversationMode, ConversationTurn, ModelCredentials, PermissionPreset, QuestionAnswer, QuestionItem, ThinkingLevel } from '../shared/types'
-import type { PermissionRuleSet } from '../shared/permission-rules'
+import type { PermissionAction, PermissionRuleSet } from '../shared/permission-rules'
 import { buildModeRuntimePrompt } from '../renderer/mode-prompts'
 import { buildSummarySourceText } from './context-manager'
 import { mergeAgentContextFiles, readAgentContextFiles } from './agent-context'
@@ -30,6 +30,7 @@ import { stripThinkBlocks } from '../shared/think-blocks'
 import type { SubAgentToolContext } from './agent/tools/subagent'
 import { suggestReadOnlyDecomposition } from './agent/subagent/subagent-decomposer'
 import { createModelUsageCollector } from './model-usage'
+import { resolveThinkingLevel } from '../shared/thinking-level'
 
 const DEFAULT_CONTEXT_WINDOW = 128_000
 const DEFAULT_MAX_TOKENS = 8_192
@@ -61,6 +62,7 @@ function modelDefinition(provider: string, credentials: ModelCredentials) {
     api: apiForProtocol(protocol),
     baseUrl,
     reasoning: Boolean(credentials.supports_thinking),
+    thinkingLevelMap: credentials.thinking_level_map,
     input: ['text', ...(provider === 'multimodal' ? ['image'] : [])] as ('text' | 'image')[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: credentials.context_window || DEFAULT_CONTEXT_WINDOW,
@@ -196,12 +198,14 @@ export interface RuntimeRunOptions {
   /** 现取规则集：运行途中改权限档位要立刻生效，不能在 run 开始时定死。 */
   resolveRuleSet: () => PermissionRuleSet
   sessionOverrides: Map<string, ApprovalDecision>
-  requestApproval: (input: Omit<ApprovalRequest, 'id'>, signal: AbortSignal) => Promise<ApprovalDecision>
+  requestApproval: (input: Omit<ApprovalRequest, 'id'>, signal: AbortSignal, recheck?: () => PermissionAction) => Promise<ApprovalDecision>
   requestQuestion: (toolCallId: string, questions: QuestionItem[], signal: AbortSignal) => Promise<QuestionAnswer[]>
   /** 显式启用的本地 Skill 的 SKILL.md 路径列表 */
   skillPaths?: string[]
   /** 本地 MCP Server 发现并桥接进来的工具 */
   mcpBindings?: McpToolBinding[]
+  /** 本轮用到了哪些能力；调用方按轮去重后落库，供概览页「最近使用」 */
+  onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void
   /** Agent 命令执行的沙箱上下文；null 表示以当前用户身份执行 */
   sandbox?: { manager: SandboxManager | null; session: SandboxSession | null } | null
   /** FastAgent 显式读取的全局与项目指令，避免依赖 Pi 的磁盘自动发现。 */
@@ -360,7 +364,7 @@ export async function promptModelOnce(options: { credentials: ModelCredentials; 
   }
 }
 
-/** 调用会话所用模型生成结构化摘要。失败由调用方回退到本地启发式摘要。 */
+/** 调用会话所用模型生成结构化摘要格式。失败由调用方回退到本地启发式摘要。 */
 export async function summarizeTurns(options: { credentials: ModelCredentials; turns: ConversationTurn[]; previousSummary?: string | null; signal?: AbortSignal; agentDir?: string; createModelRuntime?: (credentials: ModelCredentials) => Promise<{ runtime: ModelRuntime; model: Model<Api> }> }): Promise<string> {
   const summary = await promptModelOnce({
     credentials: options.credentials,
@@ -374,7 +378,7 @@ export async function summarizeTurns(options: { credentials: ModelCredentials; t
 }
 
 /** 摘要生成与 agent 运行共用的隔离配置：只加载内联 tool-runtime 扩展，不读 pi CLI 的全局扩展/skills/prompts。 */
-export function createDesktopResourceLoader(options: { cwd: string; agentDir: string; settingsManager: SettingsManager; mode?: ConversationMode; toolRuntime?: ToolRuntimeContext | ToolRuntimeContextRef; skillPaths?: string[]; mcpBindings?: McpToolBinding[]; agentContextPrompt?: string }) {
+export function createDesktopResourceLoader(options: { cwd: string; agentDir: string; settingsManager: SettingsManager; mode?: ConversationMode; toolRuntime?: ToolRuntimeContext | ToolRuntimeContextRef; skillPaths?: string[]; mcpBindings?: McpToolBinding[]; agentContextPrompt?: string; onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void }) {
   const currentToolRuntime = options.toolRuntime && 'current' in options.toolRuntime ? options.toolRuntime.current : options.toolRuntime
   const mode = options.mode ?? currentToolRuntime?.mode ?? 'chat'
   const agentMode = mode === 'agent'
@@ -401,7 +405,7 @@ export function createDesktopResourceLoader(options: { cwd: string; agentDir: st
     extensionFactories: options.toolRuntime || options.mcpBindings?.length
       ? [
           ...(options.toolRuntime ? [{ name: 'fastagent-tool-runtime', factory: createToolRuntimeExtension(options.toolRuntime) }] : []),
-          ...(options.mcpBindings?.length ? [{ name: 'fastagent-mcp-bridge', factory: createMcpBridgeExtension(options.mcpBindings) }] : [])
+          ...(options.mcpBindings?.length ? [{ name: 'fastagent-mcp-bridge', factory: createMcpBridgeExtension(options.mcpBindings, options.onAbilityUsed) }] : [])
         ]
       : []
   })
@@ -430,7 +434,9 @@ function toolRuntimeContext(options: RuntimeRunOptions): ToolRuntimeContext {
     subAgent: options.subAgentExecution,
     subAgentMetadata: options.subAgentMetadata,
     customSubAgents: options.customSubAgents,
-    verificationCommands: options.verificationCommands
+    verificationCommands: options.verificationCommands,
+    skillManifestPaths: options.skillPaths,
+    onAbilityUsed: options.onAbilityUsed
   }
 }
 
@@ -492,6 +498,7 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     // 否则 chat 模式模型拿不到搜索等 MCP 工具。
     mcpBindings: options.mcpBindings,
     agentContextPrompt: options.agentContextPrompt,
+    onAbilityUsed: options.onAbilityUsed,
     toolRuntime: toolRuntimeRef ?? undefined
   })
   await resourceLoader.reload()
@@ -499,7 +506,7 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
   if (extensionErrors.length) {
     throw new Error(`Agent 工具扩展加载失败：${extensionErrors.map((item) => String(item.error)).join('；')}`)
   }
-  const effectiveThinkingLevel = options.thinkingLevel === 'auto' ? options.credentials.thinking_default || 'off' : options.thinkingLevel
+  const effectiveThinkingLevel = resolveThinkingLevel(options.thinkingLevel, options.credentials)
   const { session } = await createAgentSession({
     cwd,
     agentDir: options.agentDir,
@@ -509,9 +516,7 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     settingsManager,
     resourceLoader,
     tools,
-    thinkingLevel: options.credentials.supports_thinking
-      ? (effectiveThinkingLevel as never)
-      : 'off'
+    thinkingLevel: effectiveThinkingLevel
   })
   // print 模式：无对话框 UI（ctx.hasUI = false），审批/提问走 IPC 通道
   await session.bindExtensions({ mode: 'print', onError: (error) => console.error('[tool-runtime]', error.extensionPath, error.event, error.error) })
@@ -525,8 +530,8 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     toolRuntimeRef,
     async run(runOptions) {
       if (toolRuntimeRef) toolRuntimeRef.current = toolRuntimeContext(runOptions)
-      const nextThinkingLevel = runOptions.thinkingLevel === 'auto' ? runOptions.credentials.thinking_default || 'off' : runOptions.thinkingLevel
-      session.setThinkingLevel(runOptions.credentials.supports_thinking ? nextThinkingLevel as never : 'off')
+      const nextThinkingLevel = resolveThinkingLevel(runOptions.thinkingLevel, runOptions.credentials)
+      session.setThinkingLevel(nextThinkingLevel)
       await consumeSession(session, {
         ...runOptions,
         thinkingEnabled: Boolean(runOptions.credentials.supports_thinking && nextThinkingLevel !== 'off')
@@ -598,10 +603,8 @@ export async function runDirectChat(options: DirectChatOptions): Promise<DirectC
       })
   messages.push({ role: 'user', content: options.prompt, timestamp: Date.now() })
   // auto 解析到凭证默认档；不支持思考的模型强制 off，与运行时路径保持一致。
-  const reasoning = (!options.credentials.supports_thinking ? 'off'
-    : options.thinkingLevel === 'auto' ? options.credentials.thinking_default || 'off'
-    : options.thinkingLevel) as never
-  const stream = runtime.streamSimple(model, { messages }, { reasoning, signal: options.signal })
+  const reasoning = resolveThinkingLevel(options.thinkingLevel, options.credentials)
+  const stream = runtime.streamSimple(model, { messages }, { reasoning: reasoning === 'off' ? undefined : reasoning, signal: options.signal })
   let text = ''
   let thinking = ''
   // 与 Agent 路径同一套处理：正文里内联的 `<think>` 推理不能留在回答里。

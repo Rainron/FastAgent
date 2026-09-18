@@ -83,10 +83,14 @@ export interface HubListingDetail extends HubListing {
   contents: HubListingContent[]
 }
 
+export type HubInstallState = 'all' | 'not_installed' | 'installed' | 'update_available'
+
 export interface HubQuery {
   keyword?: string
   abilityType?: AbilityType
   category?: string
+  /** 按本地安装态过滤；装态由 decorateListings 现算，因此只能在聚合之后筛 */
+  installState?: HubInstallState
   /** 不传表示搜所有已启用的源 */
   sourceIds?: string[]
   sort?: 'featured' | 'trending' | 'latest' | 'name'
@@ -116,6 +120,13 @@ export interface HubInstalledAbility {
   abilityId: string
   abilityType: AbilityType
   status: 'installed' | 'config_required'
+}
+
+/** 检查更新结果：写回了多少条能力的最新版本，以及哪些源没回。 */
+export interface HubUpdateCheckResult {
+  checked: number
+  updated: number
+  failures: HubSourceFailure[]
 }
 
 /** 一条目录项可能是个包（一个插件带多个 Skill 和一台 MCP Server），安装结果因此是复数。 */

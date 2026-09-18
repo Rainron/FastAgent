@@ -65,7 +65,13 @@ pub enum Response {
     #[serde(rename = "stderr")]
     Stderr { id: String, data: String },
     #[serde(rename = "exited")]
-    Exited { id: String, #[serde(rename = "exitCode")] exit_code: Option<i32> },
+    Exited {
+        id: String,
+        #[serde(rename = "exitCode")]
+        exit_code: Option<i32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     #[serde(rename = "error")]
     Error {
         id: String,

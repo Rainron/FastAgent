@@ -2,10 +2,10 @@ import type { PermissionProfile, StoredPermissionProfile } from '../permission-p
 import type { PermissionAction } from '../permission-rules'
 import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpServerDetail, McpTestStatus, SkillDetail } from './abilities'
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
-import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput } from './hub'
+import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
 import type { AgentEvent, ToolCallRecord } from './agent-events'
 import type { AgentRunChanges } from './changes'
-import type { AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
+import type { ActiveRunInfo, AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
 import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
 import type { ApprovalDecision, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
 import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageSummary } from './context'
@@ -79,6 +79,7 @@ export interface FastAgentApi {
   }
   models: {
     localList(): Promise<LocalModelSummary[]>
+    onChanged(listener: () => void): () => void
     localCreate(input: LocalModelInput): Promise<LocalModelSummary>
     localUpdate(id: number, input: LocalModelInput): Promise<LocalModelSummary>
     localDelete(id: number): Promise<void>
@@ -150,6 +151,8 @@ export interface FastAgentApi {
     detail(sourceId: string, ref: string): Promise<HubListingDetail>
     install(sourceId: string, ref: string, config?: Record<string, string>): Promise<HubInstallResult>
     categories(): Promise<string[]>
+    /** 给已安装的 Hub 能力对一遍远端版本并落库，供能力页与侧栏徽标离线判断。 */
+    checkUpdates(): Promise<HubUpdateCheckResult>
   }
   bundle: {
     /** 弹保存对话框写出整包；用户取消时返回 null，否则返回落地路径。 */
@@ -178,11 +181,14 @@ export interface FastAgentApi {
     respondApproval(id: string, decision: ApprovalDecision, answer: string | undefined, runId: string): Promise<void>
     onEvent(listener: (event: AgentEvent) => void): () => void
     listStates(): Promise<ConversationRunState[]>
+    /** 主进程里仍在跑的 run；界面重载后靠它接回运行中的会话与回合。 */
+    listActive(): Promise<ActiveRunInfo[]>
     saveState(state: ConversationRunState): Promise<void>
     markRead(conversationId: string): Promise<void>
   }
   conversations: {
     list(): Promise<ConversationRecord[]>
+    get(conversationId: string): Promise<ConversationRecord | null>
     listPage(query?: ConversationPageQuery): Promise<PageResult<ConversationRecord>>
     listDetailed(): Promise<ConversationDetailed[]>
     listDetailedPage(query?: ConversationPageQuery): Promise<PageResult<ConversationDetailed>>

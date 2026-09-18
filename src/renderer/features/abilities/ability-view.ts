@@ -119,6 +119,14 @@ export function abilitiesNeedingAttention<T extends Ability>(abilities: T[]): T[
   return sortAbilities(abilities.filter((ability) => ability.status === 'error' || ability.status === 'config_required' || ability.status === 'update_available'), 'status')
 }
 
+/** 概览页的「最近使用」：没有 lastUsedAt 的不参与，否则会把从没用过的能力顶上来。 */
+export function recentlyUsedAbilities<T extends Ability>(abilities: T[], limit = 5): T[] {
+  return abilities
+    .filter((ability) => Boolean(ability.lastUsedAt))
+    .sort((a, b) => (b.lastUsedAt ?? '').localeCompare(a.lastUsedAt ?? ''))
+    .slice(0, limit)
+}
+
 /** 概览页的「最近安装」：没有 installedAt 的（内置能力）不参与排序，否则会顶在最前。 */
 export function recentlyInstalledAbilities<T extends Ability>(abilities: T[], limit = 5): T[] {
   return sortAbilities(abilities.filter((ability) => Boolean(ability.installedAt)), 'recent').slice(0, limit)
@@ -143,6 +151,8 @@ export interface AbilityStats {
   skills: number
   mcp: number
   enabled: number
+  attention: number
+  updates: number
   connectionOk: number
   connectionFailed: number
 }
@@ -154,6 +164,8 @@ export function abilityStats(abilities: Ability[]): AbilityStats {
     skills: abilities.filter((ability) => ability.type === 'skill').length,
     mcp: mcp.length,
     enabled: abilities.filter((ability) => ability.enabled).length,
+    attention: abilities.filter((ability) => ability.status === 'error' || ability.status === 'config_required').length,
+    updates: abilities.filter((ability) => ability.status === 'update_available').length,
     connectionOk: mcp.filter((ability) => ability.connection.state === 'connected').length,
     connectionFailed: mcp.filter((ability) => ability.connection.state === 'error').length
   }

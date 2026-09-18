@@ -12,7 +12,7 @@ export type RunnerResponse =
   | { type: 'started'; id: string; pid: number }
   | { type: 'stdout'; id: string; data: string }
   | { type: 'stderr'; id: string; data: string }
-  | { type: 'exited'; id: string; exitCode: number | null }
+  | { type: 'exited'; id: string; exitCode: number | null; reason?: 'completed' | 'cancelled' }
   | { type: 'error'; id: string; code: SandboxErrorCode; target?: string }
 
 const RESPONSE_TYPES = new Set(['ready', 'started', 'stdout', 'stderr', 'exited', 'error'])

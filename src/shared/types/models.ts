@@ -1,3 +1,5 @@
+import type { ThinkingLevelMap } from './common'
+
 /** 本地添加模型的接口协议：与 pi 运行时的 Api 类型对应。 */
 export type LocalModelApi = 'openai' | 'anthropic' | 'openai-responses'
 
@@ -16,6 +18,7 @@ export interface ModelOption {
   /** 服务端公开的模型能力上限；缺失时运行时按默认值处理。 */
   max_tokens?: number | null
   context_window?: number | null
+  thinking_level_map?: ThinkingLevelMap
   supports_thinking?: boolean
   thinking_default?: string
   thinking_profiles?: Record<string, unknown> | null
@@ -47,6 +50,7 @@ export interface ModelCredentials {
   extra_body?: Record<string, unknown> | null
   /** pi 模型定义的厂商兼容配置（thinkingFormat / maxTokensField 等），云端未下发时为空。 */
   compat?: Record<string, unknown> | null
+  thinking_level_map?: ThinkingLevelMap
   supports_thinking?: boolean
   thinking_default?: string
   thinking_profiles?: Record<string, unknown> | null
@@ -72,6 +76,7 @@ export interface LocalModelInput {
   timeout?: number
   max_retries?: number
   extra_body?: Record<string, unknown> | null
+  thinking_level_map?: ThinkingLevelMap
   supports_thinking?: boolean
   thinking_default?: string
   thinking_profiles?: Record<string, unknown> | null
@@ -81,6 +86,8 @@ export interface LocalModelInput {
 /** 本地模型对外只读形态：负数 id（与云端正整数隔离），不含任何密钥。 */
 export interface LocalModelSummary {
   connectionId?: string
+  /** 所属连接的显示名；模型弹层按连接分组时用作组标题。 */
+  connectionName?: string
   authMode?: 'api-key' | 'oauth'
   id: number
   /** 提供商名称，用于分组和展示。 */
@@ -98,6 +105,7 @@ export interface LocalModelSummary {
   timeout?: number
   max_retries?: number
   extra_body?: Record<string, unknown> | null
+  thinking_level_map?: ThinkingLevelMap
   supports_thinking?: boolean
   thinking_default?: string
   thinking_profiles?: Record<string, unknown> | null

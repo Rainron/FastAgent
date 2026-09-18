@@ -77,7 +77,7 @@ function listOrDash(items: string[]) {
   return unique.length ? unique.map((item) => `- ${item}`).join('\n') : '- —'
 }
 
-/** 摘要的七段格式。模型摘要不可用时的本地回退实现。 */
+/** 摘要格式的七个部分。模型摘要不可用时的本地回退实现。 */
 export function heuristicSummary(turns: ConversationTurn[], previousSummary?: string | null): string {
   const latest = turns.at(-1)
   const failed = turns.filter((turn) => turn.status === 'failed')

@@ -1,13 +1,15 @@
-import type { Ability, HubInstallResult, HubListing, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput } from '../../shared/types'
+import type { Ability, HubInstallResult, HubListing, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../../shared/types'
 import type { LocalStore } from '../local-store'
 import type { PluginCatalogProvider } from '../plugins/catalog'
 import { normalizePageSize, pageOffset, resolvePage } from '../../shared/pagination'
 import { decorateListings, searchProviders } from '../registry/aggregator'
+import { filterByInstallState } from '../registry/listing-filter'
 import { BUILTIN_SOURCE_ID, BuiltinRegistryProvider } from '../registry/providers/builtin'
 import { GitMarketplaceProvider } from '../registry/providers/git'
 import { McpRegistryProvider } from '../registry/providers/mcp-registry'
 import { SkillsMpProvider } from '../registry/providers/skillsmp'
-import { listingId, type RegistryProvider } from '../registry/types'
+import { listingId, parseListingId, type RegistryProvider } from '../registry/types'
+import { isNewerVersion } from '../plugins/semver'
 import type { LocalSkillRegistry } from '../skill-registry'
 import { installPayloads } from './payload-installer'
 
@@ -80,9 +82,11 @@ export function createHubService({ store, skillRegistry, catalogProvider, listAb
     // 总条数要覆盖全部结果，所以不让抓取上限截断各源返回
     const { items, failures } = await searchProviders(activeProviders(query.sourceIds), { ...query, limit: undefined }, signal)
     const decorated = decorateListings(items, await listAbilities()) as HubListing[]
-    const page = resolvePage(query.page, decorated.length, pageSize)
+    // 装态筛选必须夹在 decorate 与分页之间，否则 total 与页码都按未过滤的条数算。
+    const filtered = filterByInstallState(decorated, query.installState)
+    const page = resolvePage(query.page, filtered.length, pageSize)
     const offset = pageOffset(page, pageSize)
-    return { items: decorated.slice(offset, offset + pageSize), failures, total: decorated.length, page, pageSize }
+    return { items: filtered.slice(offset, offset + pageSize), failures, total: filtered.length, page, pageSize }
   }
 
   async function detail(sourceId: string, ref: string, signal: AbortSignal): Promise<HubListingDetail> {
@@ -104,6 +108,35 @@ export function createHubService({ store, skillRegistry, catalogProvider, listAb
       config
     }, { skills: skillRegistry(), store: store() })
     return { installed }
+  }
+
+  /**
+   * 给已安装的 Hub 能力对一遍远端最新版本并落库。
+   * 只看 marketplace 来源且带 pluginId 的行——pluginId 就是 listingId，能反解回源与 ref。
+   * 单条失败不打断其余，按源汇总进 failures，与搜索一致。
+   */
+  async function checkUpdates(signal: AbortSignal): Promise<HubUpdateCheckResult> {
+    const available = new Map(sources().filter((source) => source.enabled).map((source) => [source.id, source]))
+    const targets = store().listAbilityMeta().flatMap((meta) => {
+      if (meta.source !== 'marketplace' || !meta.pluginId) return []
+      const parsed = parseListingId(meta.pluginId)
+      const source = parsed && available.get(parsed.sourceId)
+      return source ? [{ meta, source, ref: parsed.ref }] : []
+    })
+    const failed = new Map<string, string>()
+    let updated = 0
+    // 逐条串行：能力条数是个位到几十，源侧限流比并发省事更重要。
+    for (const target of targets) {
+      if (failed.has(target.source.id)) continue
+      try {
+        const listing = await providerFor(target.source).detail(target.ref, signal)
+        store().setAbilityLatestVersion(target.meta.abilityType, target.meta.abilityId, listing.version ?? null)
+        if (isNewerVersion(listing.version, target.meta.version)) updated += 1
+      } catch (error) {
+        failed.set(target.source.id, error instanceof Error ? error.message : String(error))
+      }
+    }
+    return { checked: targets.length, updated, failures: [...failed].map(([sourceId, message]) => ({ sourceId, message })) }
   }
 
   function saveSource(input: HubSourceInput): HubSource {
@@ -143,5 +176,5 @@ export function createHubService({ store, skillRegistry, catalogProvider, listAb
     return [...new Set(lists.flat())].sort((a, b) => a.localeCompare(b))
   }
 
-  return { ensureBuiltinSource, sources, saveSource, removeSource, testSource, search, detail, install, categories }
+  return { ensureBuiltinSource, sources, saveSource, removeSource, testSource, search, detail, install, categories, checkUpdates }
 }

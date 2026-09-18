@@ -5,6 +5,9 @@ import { join } from 'node:path'
 import type { ToolCallEvent, ToolResultEvent, ToolDefinition } from '@earendil-works/pi-coding-agent'
 import type { AgentEvent, ApprovalDecision, ApprovalRequest, QuestionAnswer, QuestionItem, TodoItem } from '../../shared/types'
 import { presetRuleSet, type PermissionRuleSet } from '../../shared/permission-rules'
+import { createApprovalBridge, reevaluatePendingApprovals } from '../approval-bridge'
+import { builtinProfile } from '../../shared/permission-profiles'
+import { buildEffectiveRules } from './permission/effective-rules'
 import type { LocalStore } from '../local-store'
 import { changeStats, collectShellWriteTargets, createToolRuntimeExtension, modeSystemPrompt, toolAvailabilityNote } from './tool-runtime'
 
@@ -555,6 +558,31 @@ describe('落库失败不能中断运行', () => {
 })
 
 describe('运行途中改权限档位立刻生效', () => {
+  it('外部技能读取已挂起时，切为完全访问恢复同一次工具调用', async () => {
+    let preset: 'workspace' | 'full' = 'workspace'
+    const events: Array<Omit<AgentEvent, 'runId'>> = []
+    const bridge = createApprovalBridge('pending-skill-run', (event) => events.push(event), 'workspace')
+    const extension = createToolRuntimeExtension({
+      namespace: 'ns', conversationId: 'c1', turnId: 't1', runId: 'pending-skill-run',
+      cwd: makeWorkspace(), mode: 'agent', planMode: false, shellToolName: 'bash',
+      resolveRuleSet: () => buildEffectiveRules(builtinProfile(preset), [{ toolKey: 'external_directory', pattern: '*', action: 'ask' }]),
+      sessionOverrides: new Map(), store: fakeStore(), signal: new AbortController().signal,
+      emit: () => undefined, requestApproval: bridge.requestApproval,
+      requestQuestion: async () => [], mcpToolRisk: new Map()
+    })
+    let onToolCall: (event: ToolCallEvent) => Promise<unknown> = async () => undefined
+    extension({
+      on: (event: string, handler: unknown) => { if (event === 'tool_call') onToolCall = handler as typeof onToolCall },
+      registerTool: () => undefined
+    } as never)
+    const pending = onToolCall(toolCall({ toolCallId: 'skill-read', toolName: 'read', input: { path: '../.fa/skills/planning-with-files/SKILL.md' } }))
+    expect(events[0]).toMatchObject({ type: 'approval_required', approval: { kind: 'permission' } })
+    preset = 'full'
+    expect(reevaluatePendingApprovals('pending-skill-run')).toBe(1)
+    expect(await pending).toBeUndefined()
+    expect(events.at(-1)).toMatchObject({ type: 'approval_resolved' })
+  })
+
   it('规则集每次工具调用现取，不是 run 开始时定死的', async () => {
     // 先按逐次确认跑，工具会走审批；中途换成完全访问后同一个调用直接放行。
     let preset: 'ask' | 'full' = 'ask'

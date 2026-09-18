@@ -179,6 +179,9 @@ export interface AbilityInstallMeta {
   updatedAt: string
   lastUsedAt?: string
   useCount: number
+  /** 上次检查更新时远端的最新版本；未检查过时为空 */
+  latestVersion?: string
+  latestCheckedAt?: string
 }
 
 export type AgentAbilityMode = 'all_enabled' | 'selected'

@@ -9,6 +9,11 @@ import type { AgentEvent } from '../shared/types'
 import type { LocalStore } from './local-store'
 
 describe('model sampling parameters', () => {
+  it('模型能力映射透传到 pi 定义', async () => {
+    const thinking_level_map = { minimal: null, xhigh: 'xhigh', max: 'max' }
+    const { model } = await piRuntime.createModelRuntime({ id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test', supports_thinking: true, thinking_level_map } as never)
+    expect(model.thinkingLevelMap).toEqual(thinking_level_map)
+  })
   it('未设置 temperature 时仍保留 extra_body', async () => {
     const { model } = await piRuntime.createModelRuntime({ id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test', extra_body: { enable_thinking: false } } as never)
     expect(model.samplingParams).toMatchObject({ enable_thinking: false })
@@ -160,6 +165,7 @@ describe('resolveEnabledTools', () => {
     const tools = resolveEnabledTools('agent', 'bash', { subAgentEnabled: false, mcpToolNames: ['mcp__srv__search'], toolAllowlist: ['read'] })
     expect(tools).toEqual(['read', 'mcp__srv__search'])
   })
+
 })
 
 describe('Agent 结局分类（长任务异常停止修复）', () => {

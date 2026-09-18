@@ -70,7 +70,7 @@ export function alwaysAllowPatterns(toolKey: string, subject: string): string[] 
 /** 计划模式下仍放行的只读命令：只够用来看现状，不产生任何改动。 */
 export const PLAN_MODE_SHELL_ALLOW = ['git status', 'git status *', 'git diff', 'git diff *', 'git log', 'git log *', 'git show', 'git show *']
 
-/** 计划模式禁止的写入类逻辑工具，只留查询类。 */
+/** 计划模式禁止的写入类逻辑工具。 */
 const PLAN_MODE_DENY_KEYS = new Set(['edit', 'mcp_write', 'external_directory'])
 
 /**

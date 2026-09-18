@@ -17,6 +17,15 @@ function createStore() {
   return { db, store: new ModelConnectionStore(db) }
 }
 describe('模型连接存储', () => {
+  it('模型思考映射贯穿保存、摘要与运行时，编辑名称不会丢失能力', () => {
+    const { store } = createStore()
+    const thinkingLevelMap = { minimal: null, xhigh: 'xhigh', max: 'max' }
+    const connection = store.save({ providerId: 'openai', authMode: 'api-key', models: [{ modelId: 'advanced', reasoning: true, thinkingLevelMap }] })
+    expect(connection.models[0].thinking_level_map).toEqual(thinkingLevelMap)
+    expect(store.runtimeConfig(-connection.models[0].id)?.thinking_level_map).toEqual(thinkingLevelMap)
+    const edited = store.save({ id: connection.id, providerId: 'openai', authMode: 'api-key', models: [{ id: connection.models[0].id, modelId: 'advanced', name: '新名称' }] })
+    expect(edited.models[0].thinking_level_map).toEqual(thinkingLevelMap)
+  })
   it('同厂商多连接隔离密钥，一连接多模型且保留负数ID', () => {
     const { store } = createStore()
     const a = store.save({ providerId: 'openai', authMode: 'api-key', apiKey: 'secret-a', models: [{ modelId: 'gpt-a' }, { modelId: 'gpt-b' }] })

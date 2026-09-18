@@ -25,8 +25,11 @@ export function jsonSchemaToTypeBox(schema: Record<string, unknown> | undefined)
   return Type.Object(properties)
 }
 
-/** 内联 MCP 桥接扩展：把已连接并授权的 MCP 工具注册进 pi 工具集，调用时转发并传递取消信号。 */
-export function createMcpBridgeExtension(bindings: McpToolBinding[]): ExtensionFactory {
+/**
+ * 内联 MCP 桥接扩展：把已连接并授权的 MCP 工具注册进 pi 工具集，调用时转发并传递取消信号。
+ * onAbilityUsed 在转发前调用，用于记录「这一轮用到了哪台 Server」；调用方负责按轮去重。
+ */
+export function createMcpBridgeExtension(bindings: McpToolBinding[], onAbilityUsed?: (type: 'mcp', id: string) => void): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     for (const binding of bindings) {
       pi.registerTool({
@@ -35,6 +38,7 @@ export function createMcpBridgeExtension(bindings: McpToolBinding[]): ExtensionF
         description: binding.description,
         parameters: jsonSchemaToTypeBox(binding.inputSchema),
         async execute(_toolCallId, params, signal) {
+          onAbilityUsed?.('mcp', binding.serverId)
           return binding.execute(params as Record<string, unknown>, signal ?? new AbortController().signal)
         }
       })

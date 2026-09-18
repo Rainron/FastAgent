@@ -988,6 +988,36 @@ describe('LocalStore 能力元数据与 MCP 状态缓存', () => {
     store.close()
   })
 
+  it('记录使用时间与次数，重复调用累加', () => {
+    const store = makeStore()
+    store.upsertAbilityMeta({ abilityType: 'mcp', abilityId: 'docs', source: 'marketplace' })
+
+    store.touchAbilityUsage('mcp', 'docs', '2026-09-06T09:00:00.000Z')
+    expect(store.getAbilityMeta('mcp', 'docs')).toMatchObject({ lastUsedAt: '2026-09-06T09:00:00.000Z', useCount: 1 })
+
+    store.touchAbilityUsage('mcp', 'docs', '2026-09-06T10:00:00.000Z')
+    expect(store.getAbilityMeta('mcp', 'docs')).toMatchObject({ lastUsedAt: '2026-09-06T10:00:00.000Z', useCount: 2 })
+
+    // 没有 meta 行的能力不该被凭空创建
+    store.touchAbilityUsage('skill', 'missing', '2026-09-06T10:00:00.000Z')
+    expect(store.getAbilityMeta('skill', 'missing')).toBeNull()
+    store.close()
+  })
+
+  it('写回远端最新版本，供离线判断是否有更新', () => {
+    const store = makeStore()
+    store.upsertAbilityMeta({ abilityType: 'skill', abilityId: 'demo', source: 'marketplace', version: '1.0.0' })
+    expect(store.getAbilityMeta('skill', 'demo')?.latestVersion).toBeUndefined()
+
+    store.setAbilityLatestVersion('skill', 'demo', '1.2.0', '2026-09-06T09:00:00.000Z')
+    expect(store.getAbilityMeta('skill', 'demo')).toMatchObject({ latestVersion: '1.2.0', latestCheckedAt: '2026-09-06T09:00:00.000Z' })
+
+    // 装到最新之后再检查，记录的最新版本可以被清空
+    store.setAbilityLatestVersion('skill', 'demo', null, '2026-09-06T10:00:00.000Z')
+    expect(store.getAbilityMeta('skill', 'demo')?.latestVersion).toBeUndefined()
+    store.close()
+  })
+
   it('回填只补没有记录的能力，来源固定为 imported', () => {
     const store = makeStore()
     store.upsertAbilityMeta({ abilityType: 'skill', abilityId: 'known', source: 'created' })

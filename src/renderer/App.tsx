@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { AppSettings, AppTheme, AuthSnapshot } from '../shared/types'
 import { BootScreen, LoginScreen } from './auth/LoginScreen'
 import { WorkspaceShell } from './workspace/WorkspaceShell'
+import { shouldShowLoginScreen } from './startup-access'
 
 function App() {
   // react-query 只有主窗口的功能在用，provider 随 App chunk 加载，快速小窗入口不背这个包
@@ -13,10 +14,27 @@ function App() {
   // 下面那个 effect 会把 preload 写好的 data-theme 覆盖回浅色，等设置到位再翻回来，闪一下。
   const [theme, setTheme] = useState<AppTheme>(window.fastAgent.initialTheme)
   const [settings, setSettings] = useState<AppSettings | null>(null)
+  const [modelCount, setModelCount] = useState(0)
+  const [firstModelId, setFirstModelId] = useState<number | null>(null)
+  const [accessLoaded, setAccessLoaded] = useState(false)
+  const workspaceEntryRef = useRef(false)
 
   useEffect(() => {
+    let cancelled = false
     void window.fastAgent.auth.snapshot().then(setAuth).catch(() => undefined)
-    return window.fastAgent.onAuthState(setAuth)
+    const unsubscribe = window.fastAgent.onAuthState(setAuth)
+    void Promise.all([
+      window.fastAgent.modelConnections.list().then((connections) => connections.flatMap((connection) => connection.models.map((model) => model.id))).catch(() => []),
+      window.fastAgent.models.localList().then((models) => models.map((model) => model.id)).catch(() => [])
+    ]).then(([connectionModelIds, localModelIds]) => {
+      if (!cancelled) {
+        const modelIds = [...connectionModelIds, ...localModelIds]
+        setModelCount(modelIds.length)
+        setFirstModelId(modelIds[0] ?? null)
+        setAccessLoaded(true)
+      }
+    })
+    return () => { cancelled = true; unsubscribe() }
   }, [])
 
   useEffect(() => {
@@ -30,17 +48,38 @@ function App() {
     root.dataset.theme = dark ? 'dark' : 'light'
   }, [theme])
 
+  useEffect(() => {
+    const root = document.documentElement
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => {
+      const preference = settings?.motionPreference ?? 'system'
+      root.dataset.motion = preference
+      root.dataset.reducedMotion = query.matches ? 'true' : 'false'
+    }
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [settings?.motionPreference])
+
   // 登录界面没有首屏数据要等，画出来就算就绪；不报的话主窗口要一直等到 2.5 秒上限。
   useEffect(() => {
-    if (auth.state === 'restoring' || auth.state === 'ready') return
+    if (!accessLoaded || auth.state === 'restoring' || auth.state === 'ready' || modelCount === 0 || workspaceEntryRef.current) return
+    workspaceEntryRef.current = true
+    void window.fastAgent.auth.enterWorkspace(firstModelId ?? undefined).catch(() => { workspaceEntryRef.current = false })
+  }, [accessLoaded, auth.state, firstModelId, modelCount])
+
+  useEffect(() => {
+    if (!accessLoaded || auth.state === 'restoring' || auth.state === 'ready') return
     // 双 rAF：等这一帧真的绘制完再报，否则主窗口显示出来的仍是上一帧。
     let inner = 0
     const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => { void window.fastAgent.startup.ready() }) })
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner) }
-  }, [auth.state])
+  }, [accessLoaded, auth.state])
 
-  if (auth.state === 'restoring') return <BootScreen />
-  if (auth.state !== 'ready') return <LoginScreen />
+  if (auth.state === 'restoring' || !accessLoaded) return <BootScreen />
+  if (shouldShowLoginScreen(auth.state, modelCount)) return <LoginScreen />
+  // 有模型但账号尚未进入工作区时，先等待主进程完成工作区初始化，避免子组件抢先调用 requireNamespace。
+  if (auth.state !== 'ready') return <BootScreen />
   return <QueryClientProvider client={queryClient}>
     <WorkspaceShell
     auth={auth}

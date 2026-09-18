@@ -5,6 +5,7 @@ import type { AppSettings, ContextPolicy, ContextState, ConversationTurn } from 
 import { defaultSandboxSettings } from '../shared/sandbox'
 
 const settings: AppSettings = {
+  motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
   closeToTray: true,

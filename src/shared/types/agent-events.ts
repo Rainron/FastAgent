@@ -59,7 +59,7 @@ export interface AgentEvent {
   runId: string
   conversationId?: string
   turnId?: string
-  type: 'run_started' | 'run_phase' | 'token' | 'thinking' | 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'approval_required' | 'question_required' | 'permission_changed' | 'file_changed' | 'contextUpdated' | 'usageUpdated' | 'compactionCompleted' | 'todo_changed' | 'sandbox_blocked' | 'sandbox_degraded' | 'subagent_started' | 'subagent_update' | 'subagent_result' | 'subagent_failed' | 'subagent_cancelled' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  type: 'run_started' | 'run_phase' | 'token' | 'thinking' | 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'question_required' | 'permission_changed' | 'file_changed' | 'contextUpdated' | 'usageUpdated' | 'compactionCompleted' | 'todo_changed' | 'sandbox_blocked' | 'sandbox_degraded' | 'subagent_started' | 'subagent_update' | 'subagent_result' | 'subagent_failed' | 'subagent_cancelled' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   /** 不带子 Agent 全文：全文只经工具返回值交给模型，事件里放全文会被整轮 activity 反复序列化。 */
   subAgent?: { taskId: string; agentId: string; agentName: string; status: string; parentToolCallId?: string; parentRunId?: string; subAgentRunId?: string; detail?: string; handoff?: { goal: string; verified: string[]; unverified: string[]; findings: string[]; decisions: string[]; recommendations: string[]; remainingSteps: string[] } }
   phase?: 'queued' | 'compacting' | 'initializing' | 'preparing_attachments' | 'prompting' | 'waiting_first_token' | 'streaming' | 'cleanup'

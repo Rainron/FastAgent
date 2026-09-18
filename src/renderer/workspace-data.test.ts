@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { archiveWorkspaceItem, filterConversations, removeWorkspaceItem, renameWorkspaceItem, toggleBatchSelection, upsertRecentWorkspaceItem } from './workspace-data'
+import { archiveWorkspaceItem, filterConversations, removeWorkspaceItem, renameWorkspaceItem, toggleBatchPageSelection, toggleBatchSelection, upsertRecentWorkspaceItem } from './workspace-data'
 
 describe('workspace data actions', () => {
   const items = [
@@ -21,6 +21,11 @@ describe('workspace data actions', () => {
   it('toggles an item in a batch selection set', () => {
     expect(toggleBatchSelection(new Set(['one']), 'two')).toEqual(new Set(['one', 'two']))
     expect(toggleBatchSelection(new Set(['one', 'two']), 'one')).toEqual(new Set(['two']))
+  })
+
+  it('selects and clears only the current batch page', () => {
+    expect(toggleBatchPageSelection(new Set(['other-page']), ['one', 'two'])).toEqual(new Set(['other-page', 'one', 'two']))
+    expect(toggleBatchPageSelection(new Set(['other-page', 'one', 'two']), ['one', 'two'])).toEqual(new Set(['other-page']))
   })
 
   it('places a sent conversation first and removes its stale duplicate', () => {

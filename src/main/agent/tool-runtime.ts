@@ -20,6 +20,7 @@ import { createSubAgentTool } from './tools/subagent'
 import type { SubAgentToolContext } from './tools/subagent'
 import { createShellOperations } from './sandbox/shell-operations'
 import { isVerificationCommand, verificationPrompt, type VerificationCommand } from './verification'
+import { skillIdForPaths } from './skill-usage'
 import type { SandboxManager } from './sandbox/sandbox-manager'
 import type { SandboxSession } from './sandbox/sandbox-types'
 
@@ -47,7 +48,7 @@ export interface ToolRuntimeContext {
   emit: (event: Omit<AgentEvent, 'runId'>) => void
   /** run 级中止信号：取消时挂起的审批/提问全部结算为拒绝 */
   signal: AbortSignal
-  requestApproval: (input: Omit<ApprovalRequest, 'id'>, signal: AbortSignal) => Promise<ApprovalDecision>
+  requestApproval: (input: Omit<ApprovalRequest, 'id'>, signal: AbortSignal, recheck?: () => PermissionAction) => Promise<ApprovalDecision>
   requestQuestion: (toolCallId: string, questions: QuestionItem[], signal: AbortSignal) => Promise<QuestionAnswer[]>
   /** MCP 工具按服务器注解声明的风险档位 */
   mcpToolRisk: ReadonlyMap<string, 'read' | 'write'>
@@ -59,6 +60,10 @@ export interface ToolRuntimeContext {
   subAgentEnabled?: boolean
   /** 本项目探测到的验证命令；重复执行它们要豁免死循环守卫。 */
   verificationCommands?: readonly VerificationCommand[]
+  /** 已启用 Skill 的 SKILL.md 绝对路径；用来把 read 命中的路径反查成 Skill 名 */
+  skillManifestPaths?: readonly string[]
+  /** 记录「本轮用到了这个能力」；调用方负责按轮去重与落库 */
+  onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void
 }
 
 export interface ToolRuntimeContextRef {
@@ -73,15 +78,19 @@ function runtimeContext(source: ToolRuntimeContext | ToolRuntimeContextRef): Too
 export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 'planMode' | 'shellToolName' | 'sandbox' | 'verificationCommands'>): string {
   if (context.mode !== 'agent') return ''
   // 计划模式下写工具会被系统直接拒绝，提前说明，避免模型反复重试同一个写调用。
-  if (context.planMode) return `\n\n当前处于计划模式：只有 read、grep、find、ls、question、todowrite 与 git status / git diff / git log / git show 可用。edit、write、patch 以及其他 ${context.shellToolName} 命令会被系统直接拒绝，不要尝试。请阅读代码后输出分步实施计划（步骤、涉及文件、验证方式），等用户确认并退出计划模式再执行。`
+  if (context.planMode) return `\n\n当前处于计划模式（桌面控制同样被禁止）：只有 read、grep、find、ls、question、todowrite 与 git status / git diff / git log / git show 可用。edit、write、patch 以及其他 ${context.shellToolName} 命令会被系统直接拒绝，不要尝试。请阅读代码后输出分步实施计划（步骤、涉及文件、验证方式），等用户确认并退出计划模式再执行。`
   const sandboxed = context.sandbox?.session?.isolation === 'sandboxed'
   // 明确告知隔离状态，避免模型在被系统拒绝后反复重试同一条命令。
   const sandboxNote = sandboxed
     ? `\n${context.shellToolName} 命令运行在受限的系统沙箱账户下：只能写入当前工作区，工作区外与敏感目录会被操作系统拒绝，被拒绝时不要重试同一条命令。`
     : ''
+  // Windows PowerShell 5.1 的解析器不认 && 与 ||，模型按 bash 习惯写会让整条命令在执行前就解析失败。
+  const shellNote = context.shellToolName === 'powershell'
+    ? '\npowershell 工具是 Windows PowerShell 5.1：不支持 && 与 ||，顺序执行用 ;，条件执行写 if ($LASTEXITCODE -eq 0) { ... }。'
+    : ''
   // 验证说明只在 agent 模式且非计划模式下追加：计划模式本来就不许执行命令。
   const verifyNote = verificationPrompt(context.verificationCommands ?? [])
-  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${sandboxNote}${verifyNote}`
+  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${sandboxNote}${verifyNote}`
 }
 
 /** 会话级放行按模式匹配而不是原串相等，否则换个参数就要重新批一次。 */
@@ -343,8 +352,10 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       if (paths.length > 0) {
         let firstResolved: ResolvedToolPath | null = null
         let external = false
+        const resolvedPaths: string[] = []
         for (const rawPath of paths) {
           const resolved = resolveToolPath(rawPath, context.cwd)
+          resolvedPaths.push(resolved.absolutePath)
           if (!firstResolved) firstResolved = resolved
           if (resolved.external) external = true
           const classified = classifySecretPath(resolved.relativePath) ?? classifySecretPath(resolved.absolutePath)
@@ -353,6 +364,11 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
         }
         if (firstResolved) subject = firstResolved.relativePath
         if (external) toolKey = 'external_directory'
+        // Skill 的正文是模型自己 read 出来的，读到哪个 Skill 目录就算用到了哪个 Skill。
+        if (context.onAbilityUsed && context.skillManifestPaths?.length) {
+          const skillId = skillIdForPaths(resolvedPaths, context.skillManifestPaths)
+          if (skillId) context.onAbilityUsed('skill', skillId)
+        }
       } else if (SHELL_TOOLS.has(toolName) && typeof input.command === 'string') {
         toolKey = 'shell'
         subject = input.command
@@ -371,16 +387,16 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
         && typeof input.command === 'string'
         && isVerificationCommand(input.command, context.verificationCommands ?? [])
       const doom = verifying ? { hash: '', triggered: false } : doomLoop.check(toolName, input)
-      const ruleSet = context.resolveRuleSet()
-      const actions: Array<import('../../shared/permission-rules').PermissionAction> = [resolvePermission(toolKey, subject, ruleSet)]
-      if (secret) actions.push(resolvePermission('secret_file', secretSubject || subject, ruleSet))
+      const evaluatePermission = (): PermissionAction => {
+        const ruleSet = context.resolveRuleSet()
+        const actions: PermissionAction[] = [resolvePermission(toolKey, subject, ruleSet)]
+        if (secret) actions.push(resolvePermission('secret_file', secretSubject || subject, ruleSet))
+        if (secret === 'deny' || actions.includes('deny') || (context.planMode && planModeAction(toolKey, subject) === 'deny')) return 'deny'
+        return actions.includes('ask') ? 'ask' : 'allow'
+      }
       // 私钥的 deny 是所有档位的硬底线，不经规则集：守卫按 basename/路径片段分类，比规则模式鲁棒。
       // 其余密钥文件（.env、.aws/credentials 等）由 secret_file 规则决定，full 档下不再逐次确认。
-      let action: PermissionAction = actions.includes('deny') || secret === 'deny'
-        ? 'deny'
-        : actions.includes('ask')
-          ? 'ask'
-          : 'allow'
+      let action = evaluatePermission()
       // 会话内已批准的模式优先放行（包括对显式 deny 的覆盖）。
       if (hasSessionOverride(context.sessionOverrides, toolKey, subject)) {
         action = 'allow'
@@ -432,12 +448,11 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
             tool: toolName,
             subject,
             cwd: context.cwd,
-            risk: toolKey === 'shell' || toolKey === 'edit' || toolKey === 'external_directory' || toolKey === 'mcp_write' || secret !== null || doom.triggered,
+            risk: toolKey === 'shell' || toolKey === 'edit' || toolKey === 'external_directory' || toolKey === 'mcp_write' || secret !== null || doom.triggered
+             ,
             scopePatterns: patterns,
-            options: doom.triggered
-              ? { message: 'Agent 连续 3 次重复同一操作，可能陷入了循环。' }
-              : undefined
-          }, context.signal)
+            options: doom.triggered ? { message: 'Agent 连续 3 次重复同一操作，可能陷入了循环。' } : undefined
+          }, context.signal, doom.triggered ? undefined : evaluatePermission)
           decision = result
           if (result === 'reject') {
             action = 'deny'

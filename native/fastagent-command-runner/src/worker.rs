@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
+use std::thread::JoinHandle;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use sandbox_core::wide::to_wide;
 use sandbox_core::{Result, SandboxCoreError};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_TIMEOUT};
@@ -28,6 +31,7 @@ const STARTF_USESTDHANDLES: STARTUPINFOW_FLAGS = STARTUPINFOW_FLAGS(0x0000_0100)
 struct RunningProcess {
     job: HANDLE,
     stdin: Arc<OwnedHandle>,
+    cancelled: Arc<AtomicBool>,
 }
 
 unsafe impl Send for RunningProcess {}
@@ -93,6 +97,7 @@ pub fn run(payload: &str) -> Result<()> {
             Request::Cancel { id } => {
                 if let Ok(map) = registry.lock() {
                     if let Some(entry) = map.get(&id) {
+                        entry.cancelled.store(true, Ordering::Release);
                         // 终止整个 Job：Agent 派生的孙进程一并结束，不留后台残留。
                         unsafe { let _ = TerminateJobObject(entry.job, 1); }
                     }
@@ -219,11 +224,26 @@ fn resolve_bash(env: &BTreeMap<String, String>) -> Option<String> {
 /// 命令行拼装：沙箱内不复用 Host 的 shell 解析，按会话声明的 shell 明确构造。
 fn build_command_line(session: &SessionArgs, command: &str, env: &BTreeMap<String, String>) -> Result<Vec<u16>> {
     if session.shell == "powershell" {
+        // 命令用 base64 传递而不是内联拼接：内联时整段脚本要先通过 PowerShell 解析器，
+        // 命令里一个 `&&`（5.1 不支持）就让 OutputEncoding 那句还没执行就整体解析失败，
+        // 错误按控制台代码页写出去，Host 按 UTF-8 读到的是乱码甚至空输出。
+        // 走 Invoke-Expression 后外层脚本恒定可解析，编码先生效，命令自身的语法错误
+        // 变成可读的运行期错误。顺带绕开了命令内引号与反斜杠的转义问题。
+        //
+        // 退出码要自己收敛：Invoke-Expression 成功执行了一条失败的命令，自身仍算成功，
+        // 不显式 exit 的话失败命令会报 0，Host 侧变成静默成功。
+        // 按 LASTEXITCODE（原生程序真实退出码）→ $? → $Error 计数（cmdlet 的非终止错误）逐级判定。
+        let encoded = STANDARD.encode(command.as_bytes());
         // 显式设成 UTF-8：PowerShell 5.1 在管道重定向下默认输出 UTF-16，Host 侧会读成乱码。
         return Ok(to_wide(&format!(
             "powershell.exe -NoLogo -NoProfile -NonInteractive -Command {}",
             quote(&format!(
-                "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Continue'; {command}"
+                "[Console]::OutputEncoding=[Text.Encoding]::UTF8; \
+                 $ErrorActionPreference='Continue'; $global:LASTEXITCODE=0; $Error.Clear(); \
+                 try {{ Invoke-Expression ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded}'))); $faOk=$? }} \
+                 catch {{ [Console]::Error.WriteLine(($_ | Out-String)); exit 1 }}; \
+                 if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; \
+                 if (-not $faOk -or $Error.Count -gt 0) {{ exit 1 }}; exit 0"
             ))
         )));
     }
@@ -329,13 +349,14 @@ fn spawn_command(
     drop(stdin_read);
 
     let stdin_handle = Arc::new(stdin_write);
+    let cancelled = Arc::new(AtomicBool::new(false));
     if let Ok(mut map) = registry.lock() {
-        map.insert(id.clone(), RunningProcess { job, stdin: stdin_handle.clone() });
+        map.insert(id.clone(), RunningProcess { job, stdin: stdin_handle.clone(), cancelled: cancelled.clone() });
     }
     writer.send(&Response::Started { id: id.clone(), pid: information.dwProcessId });
 
-    spawn_pump(writer.clone(), id.clone(), stdout_read, "stdout");
-    spawn_pump(writer.clone(), id.clone(), stderr_read, "stderr");
+    let stdout_pump = spawn_pump(writer.clone(), id.clone(), stdout_read, "stdout");
+    let stderr_pump = spawn_pump(writer.clone(), id.clone(), stderr_read, "stderr");
 
     let process = SendHandle(information.hProcess);
     let job_handle = SendHandle(job);
@@ -346,7 +367,8 @@ fn spawn_command(
         let job = job_handle.get();
         let wait = if timeout_ms == 0 { INFINITE } else { timeout_ms as u32 };
         let status = unsafe { WaitForSingleObject(process, wait) };
-        if status == WAIT_TIMEOUT {
+        let timed_out = status == WAIT_TIMEOUT;
+        if timed_out {
             unsafe { let _ = TerminateJobObject(job, 1); }
             unsafe { WaitForSingleObject(process, 5_000) };
         }
@@ -360,15 +382,23 @@ fn spawn_command(
             // 关闭 Job 句柄触发 KILL_ON_JOB_CLOSE，回收命令派生的后台进程。
             let _ = CloseHandle(job);
         }
-        writer_for_wait.send(&Response::Exited { id, exit_code });
+        // 先等待输出管道读完，再发结束帧，避免调用方看到退出后仍丢失尾部输出。
+        let _ = stdout_pump.join();
+        let _ = stderr_pump.join();
+        if timed_out {
+            writer_for_wait.send(&Response::Error { id, code: "timeout".into(), target: Some(format!("{timeout_ms}ms")) });
+        } else {
+            let reason = if cancelled.load(Ordering::Acquire) { "cancelled" } else { "completed" };
+            writer_for_wait.send(&Response::Exited { id, exit_code, reason: Some(reason.into()) });
+        }
     });
     Ok(())
 }
 
-fn spawn_pump(writer: Arc<Writer>, id: String, handle: OwnedHandle, stream: &'static str) {
+fn spawn_pump(writer: Arc<Writer>, id: String, handle: OwnedHandle, stream: &'static str) -> JoinHandle<()> {
     std::thread::spawn(move || {
         pump(&handle, |chunk| writer.chunk(&id, stream, chunk));
-    });
+    })
 }
 
 fn create_job(max_processes: u32) -> Result<HANDLE> {

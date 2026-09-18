@@ -30,11 +30,11 @@ export function PluginCard({ plugin, pending, onOpen, onPrimary }: {
         <strong>{plugin.displayName}</strong>
         <AbilityStatusBadge status={pluginStatusPresentation(status)} />
       </div>
-      <small>{plugin.description}</small>
+      <small>{plugin.description || '暂无简介'}</small>
       <div className="ability-row-meta">
         <span>{TYPE_LABELS[plugin.abilityType]}</span>
-        <span>{plugin.author ?? '未标注作者'}</span>
-        <span>v{plugin.version}</span>
+        {plugin.author && <span>{plugin.author}</span>}
+        {plugin.version && <span>v{plugin.version}</span>}
         {plugin.downloadCount !== undefined && <span><Download size={10} /> {plugin.downloadCount}</span>}
         {plugin.categories.map((category) => <span key={category}>{category}</span>)}
       </div>

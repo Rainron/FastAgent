@@ -89,7 +89,10 @@ export interface RendererErrorReport {
   afterPaint?: boolean
 }
 
+export type MotionPreference = 'system' | 'on' | 'off'
+
 export interface AppSettings {
+  motionPreference: MotionPreference
   startAtLogin: boolean
   showOnStartup: boolean
   closeToTray: boolean

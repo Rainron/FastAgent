@@ -36,6 +36,8 @@ export interface McpClientFacade {
 
 export interface McpToolBinding {
   name: string
+  /** 工具所属的 MCP Server id，用于记「这一轮用到了哪个能力」 */
+  serverId: string
   description: string
   inputSchema: Record<string, unknown>
   risk: 'read' | 'write'
@@ -156,6 +158,7 @@ export class LocalMcpManager {
         for (const tool of listed.tools) {
           bindings.push({
             name: mcpToolName(config.name, tool.name),
+            serverId: config.id,
             description: tool.description || `${config.name} 提供的 ${tool.name}`,
             inputSchema: tool.inputSchema,
             risk: tool.annotations?.readOnlyHint && !tool.annotations?.destructiveHint ? 'read' : 'write',

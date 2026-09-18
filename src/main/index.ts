@@ -6,9 +6,11 @@ import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { ApiClient, ApiError } from './api-client'
 import { createAbilitiesService } from './abilities-service'
-import { createApprovalBridge, respondPendingApproval, settlePendingRequests } from './approval-bridge'
+import { createApprovalBridge, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
+import { buildEffectiveRules } from './agent/permission/effective-rules'
 import { LocalStore } from './local-store'
 import { ModelConnectionService } from './model-connections'
+import { listLocalModelCatalog } from './model-catalog'
 import { normalizeModelUsage } from './model-usage'
 import { WORKSPACE_NAMESPACE } from './local-store/shared-workspace'
 import { migrateConversationSessions } from './session-layout-migration'
@@ -57,9 +59,11 @@ import { isExternalHttpUrl } from '../renderer/ai-response/sanitize-url'
 import type { Ability, AbilityType, AgentEvent, AppRuntimeInfo, AppSettings, ApprovalDecision, ArtifactQuery, AuthSnapshot, ConversationPageQuery, ConversationTurn, DoctorCheck, GitStatusEntry, GitWorkspaceState, LocalMcpServerInput, LocalModelInput, LocalModelTestResult, McpAbility, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PermissionPreset, PluginQuery, RendererErrorReport, SandboxSessionInfo, SkillAbility, SkillDetail, StartupPhase, StartupWarning, StartupWarnings, WorkspaceSnapshot } from '../shared/types'
 import type { PermissionAction, PermissionRuleSet } from '../shared/permission-rules'
 import type { StoredPermissionProfile } from '../shared/permission-profiles'
-import { effectiveRuleSet, findProfile, mergeProfiles, sanitizeOverrides, validateProfileDraft } from '../shared/permission-profiles'
+import { findProfile, mergeProfiles, sanitizeOverrides, validateProfileDraft } from '../shared/permission-profiles'
 import { defaultSandboxSettings, normalizeSandboxSettings } from '../shared/sandbox'
 import { normalizePageSize, pageOffset, resolvePage } from '../shared/pagination'
+import { RUN_CONFLICT_MESSAGE } from '../shared/active-runs'
+import { staleRunStates } from './run-state-reconcile'
 import { SandboxManager } from './agent/sandbox/sandbox-manager'
 import { buildSandboxPolicy } from './agent/sandbox/sandbox-policy'
 import { describeSandboxError, SANDBOX_DEGRADED_NOTICE } from './agent/sandbox/sandbox-errors'
@@ -89,6 +93,11 @@ import { DEFAULT_RECALL } from './agent/memory/memory-rank'
 const loadPiRuntime = createLazyModuleLoader(() => import('./pi-runtime'))
 const loadMcpRuntime = createLazyModuleLoader(() => import('./mcp-manager'))
 
+type AbilityUsageSink = (type: 'skill' | 'mcp', id: string) => void
+
+/** 当前这一轮的能力使用记录入口。跨轮复用的运行时扩展只认这个转发点，见 runLocalRun。 */
+let abilityUsageSink: AbilityUsageSink | null = null
+
 let mainWindow: BrowserWindow | null = null
 let appPaths: AppPaths
 let store: LocalStore
@@ -100,7 +109,30 @@ let userId: string | null = null
 let refreshToken: string | null = null
 let authState: AuthSnapshot = { state: 'signed_out', user: null, backendUrl: null }
 let workspaceRoot: string | null = null
-const activeRuns = new Map<string, AbortController>()
+/** 活跃 run 的归属信息：界面重载后要靠它接回运行，也用来挡同一会话的第二个 run。 */
+interface ActiveRun {
+  controller: AbortController
+  namespace: string
+  conversationId: string
+  turnId: string
+}
+const activeRuns = new Map<string, ActiveRun>()
+
+/** 同一账户下该会话是否已有 run 在跑。 */
+function hasActiveRun(namespace: string, conversationId: string): boolean {
+  for (const run of activeRuns.values()) {
+    if (run.namespace === namespace && run.conversationId === conversationId) return true
+  }
+  return false
+}
+
+function liveRunConversationIds(namespace: string): Set<string> {
+  const ids = new Set<string>()
+  for (const run of activeRuns.values()) {
+    if (run.namespace === namespace) ids.add(run.conversationId)
+  }
+  return ids
+}
 let settings: AppSettings
 /** 随包工具名 → 绝对路径；启动时同步一次，doctor 用它按真实路径探测（内置工具不在 PATH 上）。 */
 let bundledTools: Record<string, string> = {}
@@ -154,11 +186,7 @@ let startupFallbackTimer: ReturnType<typeof setTimeout> | null = null
 function buildRuleSet(namespace: string, permission: PermissionPreset | null, allowSubAgent = true): PermissionRuleSet {
   // 档位可能已被删除（历史会话存的是旧 id），findProfile 会回落到第一档而不是让运行时 fail。
   const profile = findProfile(mergeProfiles(store.listPermissionProfiles(namespace)), permission)
-  const merged: PermissionRuleSet = {}
-  for (const [key, rules] of Object.entries(effectiveRuleSet(profile))) merged[key] = [...rules]
-  for (const rule of store.listPermissionRules(namespace)) {
-    merged[rule.toolKey] = [...(merged[rule.toolKey] ?? []), { pattern: rule.pattern, action: rule.action }]
-  }
+  const merged = buildEffectiveRules(profile, store.listPermissionRules(namespace))
   merged.subagent = [{ pattern: '*', action: allowSubAgent ? 'allow' : 'deny' }]
   return merged
 }
@@ -206,6 +234,7 @@ function scheduleDeferredStartupTasks() {
 }
 
 const defaultSettings: AppSettings = {
+  motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
   closeToTray: true,
@@ -272,6 +301,12 @@ function broadcastAuth(snapshot: AuthSnapshot) {
 /** Git 元数据变化（checkout/commit 等）时通知渲染进程重新拉取工作区状态。 */
 function broadcastGitChanged() {
   mainWindow?.webContents.send('git:changed')
+}
+
+function broadcastModelsChanged() {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('models:changed')
+  }
 }
 
 // .git 元数据监听器：工作区切换时重建，回调统一走广播，渲染进程自行拉取最新状态。
@@ -946,7 +981,7 @@ function enableAutomaticRefresh(target: ApiClient) {
 }
 
 async function lockAccount(nextState: AuthSnapshot['state'] = 'locked') {
-  for (const controller of activeRuns.values()) controller.abort()
+  for (const run of activeRuns.values()) run.controller.abort()
   activeRuns.clear()
   await conversationRuntimeCache.disposeAll()
   if (backendUrl && userId) {
@@ -978,7 +1013,7 @@ async function confirmInterruptRuns(action: '重启' | '退出') {
 }
 
 function stopActiveWork() {
-  for (const controller of activeRuns.values()) controller.abort()
+  for (const run of activeRuns.values()) run.controller.abort()
   activeRuns.clear()
   settlePendingRequests(new DOMException('应用正在退出', 'AbortError'))
   void conversationRuntimeCache.disposeAll().catch((error) => console.error('[runtime-cache] disposeAll 失败:', error))
@@ -1111,7 +1146,7 @@ function registerIpc() {
     if (result.canceled || !result.filePaths[0]) return { moved: false, cancelled: true }
     const targetRoot = result.filePaths[0]
     if (targetRoot === appPaths.dataRoot) return { moved: false }
-    for (const controller of activeRuns.values()) controller.abort()
+    for (const run of activeRuns.values()) run.controller.abort()
     activeRuns.clear()
     settlePendingRequests(new DOMException('数据目录正在迁移', 'AbortError'))
     store.close()
@@ -1389,14 +1424,7 @@ function registerIpc() {
     try {
       if (!client || authState.state !== 'ready') {
         if (authState.state !== 'ready') throw new Error('当前工作区未就绪')
-        const models = store.modelConnections().listModels().map((model) => ({
-          id: model.id, name: model.name, model_name: model.model_name, model_kind: model.model_kind,
-          provider: model.provider, protocol: model.protocol, base_url: model.base_url,
-          context_window: model.context_window ?? null, max_tokens: model.max_tokens ?? null,
-          supports_thinking: model.supports_thinking, source: 'local' as const,
-          connectionId: model.connectionId, authMode: model.authMode
-        }))
-        return { user: authState.user ?? { id: 'local', username: '本地工作区' }, models, default_model_id: models[0]?.id ?? null, default_thinking_level: null, schema_version: 'desktop-local' }
+        return { user: authState.user ?? { id: 'local', username: '本地工作区' }, models: [], default_model_id: null, default_thinking_level: null, schema_version: 'desktop-local' }
       }
       const { model_credentials: credentials = [], ...bootstrapped } = await requireClient().bootstrap()
       const sourceNamespace = accountNamespace()
@@ -1433,27 +1461,30 @@ function registerIpc() {
       throw error
     }
   })
-  handle('models:localList', () => store.listLocalModels().filter((model) => !model.connectionId))
+  handle('models:localList', () => listLocalModelCatalog(store))
   handle('models:localCreate', (_event, input: LocalModelInput) => {
     const summary = store.saveLocalModel(null, input)
     modelContextWindows.delete(summary.id)
+    broadcastModelsChanged()
     return summary
   })
   handle('models:localUpdate', (_event, id: number, input: LocalModelInput) => {
     const summary = store.saveLocalModel(-id, input)
     modelContextWindows.delete(id)
+    broadcastModelsChanged()
     return summary
   })
   handle('models:localDelete', (_event, id: number) => {
     store.removeLocalModel(-id)
     modelContextWindows.delete(id)
+    broadcastModelsChanged()
   })
   handle('models:localTest', (_event, id: number) => testLocalModel(id))
   handle('run-states:list', () => {
     const namespace = requireNamespace()
     const states = store.listRunStates(namespace)
-    for (const state of states) {
-      if (state.status !== 'running') continue
+    // 界面重载不重启主进程：还在 activeRuns 里的 run 仍然活着，不能跟着标失败。
+    for (const state of staleRunStates(states, liveRunConversationIds(namespace))) {
       const conversation = store.getConversation(namespace, state.conversationId)
       const turn = conversation ? store.listTurns(namespace, state.conversationId).find((item) => item.status === 'working') : null
       if (turn?.activity?.execution) {
@@ -1466,11 +1497,20 @@ function registerIpc() {
   })
   handle('run-states:save', (_event, state) => store.saveRunState(requireNamespace(), state))
   handle('run-states:read', (_event, conversationId: string) => store.markRunRead(requireNamespace(), conversationId))
+  /** 界面重载后靠这个把 runId 与回合接回来：主进程还留着这些 run。 */
+  handle('chat:list-active', () => {
+    const namespace = requireNamespace()
+    return [...activeRuns.entries()]
+      .filter(([, run]) => run.namespace === namespace)
+      .map(([runId, run]) => ({ runId, conversationId: run.conversationId, turnId: run.turnId }))
+  })
 
   handle('chat:send', async (_event, input) => {
     const sendStartedAt = Date.now()
     const namespace = requireNamespace()
     if (!store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
+    // 守卫放在建 turn 之前：先建后拒会留下一条永远 working 的孤儿回合。
+    if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: store.getConversationRoot(namespace, input.conversationId) }
     const turn = input.turnId
@@ -1482,7 +1522,7 @@ function registerIpc() {
     const runId = randomUUID()
     store.saveRunState(namespace, { conversationId: input.conversationId, projectId: store.getConversation(namespace, input.conversationId)?.projectId ?? null, status: 'running', hasUnreadResult: false, updatedAt: Date.now() })
     const controller = new AbortController()
-    activeRuns.set(runId, controller)
+    activeRuns.set(runId, { controller, namespace, conversationId: input.conversationId, turnId: turn.id })
     breadcrumb('run', `start ${runId} conv=${input.conversationId} model=${input.modelId ?? 'default'}`)
     const acceptedAt = Date.now()
     console.info('[run-timing]', { runId, conversationId: input.conversationId, turnId: turn.id, phase: 'ack', sendMs: acceptedAt - sendStartedAt })
@@ -1504,13 +1544,14 @@ function registerIpc() {
     const sendStartedAt = Date.now()
     const namespace = requireNamespace()
     if (!store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
+    if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: 'chat' as const, permission: null }
     const turn = store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments: [], runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
     const runId = randomUUID()
     store.saveRunState(namespace, { conversationId: input.conversationId, projectId: store.getConversation(namespace, input.conversationId)?.projectId ?? null, status: 'running', hasUnreadResult: false, updatedAt: Date.now() })
     const controller = new AbortController()
-    activeRuns.set(runId, controller)
+    activeRuns.set(runId, { controller, namespace, conversationId: input.conversationId, turnId: turn.id })
     breadcrumb('run', `quick-start ${runId} conv=${input.conversationId} model=${input.modelId ?? 'default'}`)
     const acceptedAt = Date.now()
     // 下一事件循环才进入执行，保证 invoke ACK 先回到渲染层（与 chat:send 一致）。
@@ -1531,7 +1572,7 @@ function registerIpc() {
     breadcrumb('run', `cancel ${runId}`)
     activeRunCancels.get(runId)?.()
     activeRunCancels.delete(runId)
-    activeRuns.get(runId)?.abort()
+    activeRuns.get(runId)?.controller.abort()
     activeRuns.delete(runId)
   })
   handle('chat:approval-respond', (_event, input: { id: string; decision: ApprovalDecision; answer?: string; runId: string }) => {
@@ -1742,6 +1783,8 @@ function registerIpc() {
     }
   })
   handle('conversations:list', () => store.listConversations(requireNamespace()))
+  // 重载后恢复上次会话用：目标可能不在最近列表第一页，只靠分页结果找不到。
+  handle('conversations:get', (_event, conversationId: string) => store.getConversation(requireNamespace(), conversationId))
   handle('conversations:list-page', (_event, query: ConversationPageQuery = {}) => store.listConversationsPage(requireNamespace(), query, Boolean(query.includeArchived)))
   handle('conversations:history', (_event, conversationId: string) => store.listTurns(requireNamespace(), conversationId))
   handle('turns:create', (_event, input) => {
@@ -1799,8 +1842,13 @@ function registerIpc() {
   })
   handle('chat:set-permission', (_event, runId: string, preset: import('../shared/types').PermissionPreset | null) => {
     // 只对还在跑的 run 生效；已结束的 run 写进去只会变成永不清理的残留。
-    if (!activeRuns.has(runId)) return false
+    const run = activeRuns.get(runId)
+    if (!run) return false
+    if (run.namespace !== requireNamespace()) throw new Error('运行不属于当前工作区')
+    if (preset === null || !mergeProfiles(store.listPermissionProfiles(run.namespace)).some((profile) => profile.id === preset)) throw new Error('权限档位不存在')
+    store.updateTurn(run.namespace, run.turnId, { runtimeConfig: { permission: preset } })
     runPermissionOverrides.set(runId, preset)
+    reevaluatePendingApprovals(runId)
     breadcrumb('run', `permission ${runId} -> ${preset ?? 'default'}`)
     return true
   })
@@ -1983,6 +2031,20 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
   // 再按思考轮次切一份：执行轨迹上每个 Thinked 组要能展开自己那一轮，靠全文只有第一个组有内容
   const thinkingSegments: string[] = []
   let sequence = 0
+  // 使用统计按「本轮用没用到」计一次，不是调用次数：better-sqlite3 是同步的，
+  // 每次工具调用都写一行会直接顶在 IPC 前面。
+  const usedAbilities = new Set<string>()
+  const onAbilityUsed: AbilityUsageSink = (type, id) => {
+    const key = `${type}::${id}`
+    if (usedAbilities.has(key)) return
+    usedAbilities.add(key)
+    try {
+      store.touchAbilityUsage(type, id)
+    } catch {
+      // 统计写失败不该影响这轮对话。
+    }
+  }
+  abilityUsageSink = onAbilityUsed
   let execution = createExecutionState(runId, store.listTodos(namespace, conversationId))
   let firstTokenAt: number | null = null
   // 本轮结束后从 Pi 当前有效消息树生成快照；总量用 provider usage，分类按真实 session 消息校准。
@@ -2276,6 +2338,9 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
           agentContextPrompt,
           skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
           mcpBindings,
+          // MCP 桥接扩展随运行时创建一次并跨轮复用，必须经由 sink 转发到当前这一轮的
+          // 去重窗口，直接捕获闭包会永远记在首轮上。
+          onAbilityUsed: (type, id) => abilityUsageSink?.(type, id),
           onSessionFile: (path) => store.setConversationSessionFile(namespace, conversationId, path),
           onEvent: emit,
           onCompaction: recordRuntimeCompaction,
@@ -2341,6 +2406,7 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
         agentContextPrompt,
         skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
         mcpBindings: cached.value.mcpBindings,
+        onAbilityUsed,
         onSessionFile: (path) => store.setConversationSessionFile(namespace, conversationId, path),
         onEvent: emit,
         onCompaction: recordRuntimeCompaction,
@@ -2395,8 +2461,10 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
     }
   } finally {
     breadcrumb('run', `finish ${runId}`)
-    await conversationRuntimeCache.release(conversationRuntimeKey(namespace, conversationId))
+    // 先摘牌再做清理：终态事件已经发给界面了，界面收到后可能马上发下一条，
+    // 而清理里有 await；留在表里会让那一条撞上「该会话已有任务在运行」。
     activeRuns.delete(runId)
+    await conversationRuntimeCache.release(conversationRuntimeKey(namespace, conversationId))
     runPermissionOverrides.delete(runId)
     emit({ type: 'run_phase', phase: 'cleanup', detail: '运行清理完成', status: 'completed' })
     // 一轮结束后重算并广播上下文用量：优先用 pi 会话基于 provider usage 的数字，
@@ -2603,7 +2671,10 @@ app.whenReady().then(async () => {
     migrateLegacyData(appPaths)
     writeDataRootLocator(appPaths.platformUserDataDir, appPaths.dataRoot)
     store = new LocalStore(appPaths.databasePath)
-    modelConnectionService = new ModelConnectionService(store.modelConnections())
+    modelConnectionService = new ModelConnectionService(store.modelConnections(), {
+      openExternal: (url) => isExternalHttpUrl(url) ? shell.openExternal(url) : undefined,
+      onChanged: broadcastModelsChanged
+    })
     skillRegistry = new LocalSkillRegistry(appPaths.skillsDir, store)
     pluginInstaller = new PluginInstaller(catalogProvider, skillRegistry, store)
   } catch (error) {

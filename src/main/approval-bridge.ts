@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentEvent, ApprovalDecision, ApprovalRequest, QuestionAnswer, QuestionItem } from '../shared/types'
+import type { PermissionAction } from '../shared/permission-rules'
 
 interface PendingRequest {
   runId: string
@@ -7,9 +8,20 @@ interface PendingRequest {
   resolve: (decision: ApprovalDecision, answer?: string) => void
   reject: (reason: unknown) => void
   cleanup: () => void
+  recheck?: () => PermissionAction
 }
 
 const pendingRequests = new Map<string, PendingRequest>()
+
+export function reevaluatePendingApprovals(runId: string): number {
+  let settled = 0
+  for (const pending of pendingRequests.values()) {
+    if (pending.runId !== runId || pending.request.kind !== 'permission' || pending.recheck?.() !== 'allow') continue
+    pending.resolve('once')
+    settled += 1
+  }
+  return settled
+}
 
 /** 渲染进程的审批答复入口：id 不存在时静默忽略（run 可能已经结束）。 */
 export function respondPendingApproval(input: { id: string; decision: ApprovalDecision; answer?: string; runId: string }) {
@@ -30,7 +42,7 @@ export function settlePendingRequests(reason: unknown) {
 }
 
 export function createApprovalBridge(runId: string, emit: (event: Omit<AgentEvent, 'runId'>) => void, workspaceRoot: string | null) {
-  const requestApproval = (input: Omit<ApprovalRequest, 'id'>, waitSignal: AbortSignal): Promise<ApprovalDecision> => {
+  const requestApproval = (input: Omit<ApprovalRequest, 'id'>, waitSignal: AbortSignal, recheck?: () => PermissionAction): Promise<ApprovalDecision> => {
     const id = `approval-${randomUUID()}`
     return new Promise((resolve, reject) => {
       const request: ApprovalRequest = { ...input, id }
@@ -41,9 +53,11 @@ export function createApprovalBridge(runId: string, emit: (event: Omit<AgentEven
       const pending: PendingRequest = {
         runId,
         request,
+        recheck,
         resolve: (decision) => {
           pendingRequests.delete(id)
           waitSignal.removeEventListener('abort', onAbort)
+          emit({ type: 'approval_resolved', approval: request, permissionResult: decision })
           resolve(decision)
         },
         reject: (reason) => {

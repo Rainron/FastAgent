@@ -11,6 +11,7 @@ import {
   isSkill,
   pendingPresentation,
   recentlyInstalledAbilities,
+  recentlyUsedAbilities,
   SOURCE_LABELS,
   sortAbilities,
   transportLabel
@@ -134,7 +135,7 @@ describe('统计与守卫', () => {
       mcp({ id: 'm1' }),
       mcp({ id: 'm2', connection: { state: 'error', error: 'x', toolCount: 0, resourceCount: 0, promptCount: 0, tools: [] } })
     ])
-    expect(stats).toEqual({ total: 4, skills: 2, mcp: 2, enabled: 3, connectionOk: 1, connectionFailed: 1 })
+    expect(stats).toEqual({ total: 4, skills: 2, mcp: 2, enabled: 3, attention: 0, updates: 0, connectionOk: 1, connectionFailed: 1 })
   })
 
   it('类型守卫与内置能力不可卸载', () => {
@@ -164,6 +165,23 @@ describe('概览页派生列表', () => {
       mcp({ id: 'new', installedAt: '2026-08-01T00:00:00.000Z' })
     ])
     expect(list.map((item) => item.id)).toEqual(['new', 'old'])
+  })
+
+  it('最近使用按时间倒序，从没用过的不参与', () => {
+    const list = recentlyUsedAbilities([
+      skill({ id: 'never' }),
+      skill({ id: 'yesterday', lastUsedAt: '2026-09-05T10:00:00.000Z' }),
+      mcp({ id: 'today', lastUsedAt: '2026-09-06T09:00:00.000Z' })
+    ])
+    expect(list.map((item) => item.id)).toEqual(['today', 'yesterday'])
+  })
+
+  it('最近使用受 limit 约束', () => {
+    const list = recentlyUsedAbilities(
+      ['a', 'b', 'c'].map((id, index) => skill({ id, lastUsedAt: `2026-0${index + 1}-01T00:00:00.000Z` })),
+      2
+    )
+    expect(list.map((item) => item.id)).toEqual(['c', 'b'])
   })
 
   it('最近安装受 limit 约束', () => {

@@ -133,6 +133,8 @@ export const SCHEMA_SQL = `
         updated_at   TEXT NOT NULL,
         last_used_at TEXT,
         use_count    INTEGER NOT NULL DEFAULT 0,
+        latest_version TEXT,
+        latest_checked_at TEXT,
         PRIMARY KEY(ability_type, ability_id)
       );
       CREATE TABLE IF NOT EXISTS mcp_status_cache (
@@ -453,6 +455,14 @@ function ensureAbilityMetaSourceColumn(db: Database.Database) {
   db.exec('ALTER TABLE ability_install_meta ADD COLUMN source_id TEXT')
 }
 
+// 能力要在不打开 Hub 的情况下也知道有没有新版，旧库的 ability_install_meta 建于这两列之前。
+function ensureAbilityMetaLatestColumns(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(ability_install_meta)').all() as Array<{ name: string }>
+  for (const column of ['latest_version', 'latest_checked_at']) {
+    if (!columns.some((item) => item.name === column)) db.exec(`ALTER TABLE ability_install_meta ADD COLUMN ${column} TEXT`)
+  }
+}
+
 function ensureToolCallSubAgentColumns(db: Database.Database) {
   const columns = db.prepare('PRAGMA table_info(tool_calls)').all() as Array<{ name: string }>
   for (const column of ['parent_tool_call_id', 'sub_agent_id', 'sub_agent_run_id']) {
@@ -741,6 +751,7 @@ export function applyMigrations(db: Database.Database) {
   ensureToolCallSubAgentColumns(db)
   ensureToolCallSourceColumn(db)
   ensureAbilityMetaSourceColumn(db)
+  ensureAbilityMetaLatestColumns(db)
   ensureTurnStatusInterrupted(db)
   // 补列必须在整表重建之前：重建时按列名搬数据，列不存在会直接报错。
   ensureTodoPlanColumns(db)

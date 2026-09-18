@@ -32,10 +32,19 @@ function deriveStatus(input: { enabled: boolean; configRequired?: boolean; faile
   return 'ready'
 }
 
+/**
+ * 有没有新版：内置 catalog 的版本只覆盖内置目录，Hub 装的能力靠「检查更新」写回的
+ * latestVersion。两者任一比本地新就算有更新。
+ */
+function hasUpdate(source: AbilitySource, meta: AbilityInstallMeta | undefined, version: string | undefined, catalogVersion: string | undefined): boolean {
+  if (source !== 'marketplace') return false
+  return isNewerVersion(catalogVersion, version) || isNewerVersion(meta?.latestVersion, version)
+}
+
 export function buildSkillAbility(record: LocalSkillRecord, meta: AbilityInstallMeta | undefined, catalogVersion?: string): SkillAbility {
   const source = meta?.source ?? FALLBACK_SOURCE
   const version = record.version ?? meta?.version
-  const updateAvailable = source === 'marketplace' && isNewerVersion(catalogVersion, version)
+  const updateAvailable = hasUpdate(source, meta, version, catalogVersion)
   return {
     id: record.name,
     name: record.name,
@@ -67,7 +76,7 @@ export function buildMcpAbility(
   const source = meta?.source ?? FALLBACK_SOURCE
   const connection = snapshot ?? emptyConnection()
   const failed = connection.state === 'error'
-  const updateAvailable = source === 'marketplace' && isNewerVersion(catalogVersion, meta?.version)
+  const updateAvailable = hasUpdate(source, meta, meta?.version, catalogVersion)
   const status = deriveStatus({ enabled: server.enabled, configRequired: missingRequiredConfig, failed, updateAvailable })
   return {
     id: server.id,

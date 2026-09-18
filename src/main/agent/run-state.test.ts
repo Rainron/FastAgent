@@ -5,7 +5,7 @@ import { createExecutionState, reduceExecutionState } from './execution-state'
 
 const ALL_EVENT_TYPES: AgentEvent['type'][] = [
   'run_started', 'run_phase', 'token', 'thinking', 'thinking_started', 'thinking_ended',
-  'tool_started', 'tool_result', 'approval_required', 'question_required', 'permission_changed',
+  'tool_started', 'tool_result', 'approval_required', 'approval_resolved', 'question_required', 'permission_changed',
   'file_changed', 'contextUpdated', 'compactionCompleted', 'todo_changed', 'sandbox_blocked',
   'sandbox_degraded', 'subagent_started', 'subagent_update', 'subagent_result', 'subagent_failed',
   'subagent_cancelled', 'completed', 'failed', 'cancelled', 'interrupted'
@@ -14,6 +14,9 @@ const ALL_EVENT_TYPES: AgentEvent['type'][] = [
 const TERMINAL_TYPES: AgentEvent['type'][] = ['completed', 'failed', 'cancelled', 'interrupted']
 
 describe('projectRunState', () => {
+  it('审批结算后恢复运行状态，不结束回合', () => {
+    expect(projectRunState('approval_resolved')).toMatchObject({ runStatus: 'running', terminal: null, turnStatus: 'working' })
+  })
   it('终态事件四处状态一次算齐', () => {
     expect(projectRunState('completed')).toEqual<RunStateProjection>({
       terminal: 'completed', runStatus: 'completed', ledgerStatus: 'completed',
@@ -53,7 +56,7 @@ describe('projectRunState', () => {
   })
 
   it('其余事件既不写会话列表也不结算台账', () => {
-    const passive = ALL_EVENT_TYPES.filter((type) => ![...TERMINAL_TYPES, 'run_started', 'approval_required', 'question_required'].includes(type))
+    const passive = ALL_EVENT_TYPES.filter((type) => ![...TERMINAL_TYPES, 'run_started', 'approval_required', 'approval_resolved', 'question_required'].includes(type))
     for (const type of passive) {
       const projection = projectRunState(type)
       expect(projection, type).toMatchObject({ runStatus: null, ledgerStatus: null, terminal: null, turnStatus: 'working', activityStatus: 'working', hasUnreadResult: false })

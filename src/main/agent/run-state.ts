@@ -40,6 +40,7 @@ const WORKING: RunStateProjection = {
 const PROJECTIONS: Partial<Record<AgentEvent['type'], RunStateProjection>> = {
   run_started: { ...WORKING, runStatus: 'running' },
   approval_required: { ...WORKING, runStatus: 'waiting_user' },
+  approval_resolved: { ...WORKING, runStatus: 'running' },
   question_required: { ...WORKING, runStatus: 'waiting_user' },
   completed: { terminal: 'completed', runStatus: 'completed', ledgerStatus: 'completed', turnStatus: 'completed', activityStatus: 'done', hasUnreadResult: true },
   failed: { terminal: 'failed', runStatus: 'failed', ledgerStatus: 'failed', turnStatus: 'failed', activityStatus: 'failed', hasUnreadResult: true },

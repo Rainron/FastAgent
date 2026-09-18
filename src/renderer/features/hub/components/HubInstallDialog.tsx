@@ -17,11 +17,13 @@ type Phase = 'review' | 'done'
  * 一条目录项可能带多个能力，安装前把它们逐条列出来。
  * 与其它安装路径一致：装完一律停用，启用是另一个动作。
  */
-export function HubInstallDialog({ listing, contents, sourceName, onClose, onInstalled, onOpenAbility }: {
+export function HubInstallDialog({ listing, contents, sourceName, mode = 'install', onClose, onInstalled, onOpenAbility }: {
   listing: HubListing
   /** 详情里解析出的子能力清单；还没取到详情时为空数组 */
   contents: HubListingContent[]
   sourceName: string
+  /** 只影响文案：安装逻辑本身对同 pluginId 就是覆盖式写入，重装即更新 */
+  mode?: 'install' | 'update'
   onClose: () => void
   onInstalled: () => void
   onOpenAbility: (abilityId: string) => void
@@ -53,13 +55,17 @@ export function HubInstallDialog({ listing, contents, sourceName, onClose, onIns
 
   const enableable = installed.filter((item) => item.status !== 'config_required')
 
+  const updating = mode === 'update'
+
   return <CapabilityDrawer
-    title={phase === 'done' ? '安装完成' : `安装 ${listing.displayName}`}
-    subtitle={phase === 'done' ? '能力已注册到能力库，默认停用' : `${sourceName} · v${listing.version}`}
+    title={phase === 'done' ? (updating ? '更新完成' : '安装完成') : `${updating ? '更新' : '安装'} ${listing.displayName}`}
+    subtitle={phase === 'done'
+      ? (updating ? `已更新到 v${listing.version}` : '能力已注册到能力库，默认停用')
+      : `${sourceName} · v${listing.version}`}
     onClose={onClose}
     footer={phase === 'done' ? <button className="quick-secondary" onClick={onClose}>完成</button> : <>
       <button className="primary-button" onClick={() => void install()} disabled={installing || missing.length > 0}>
-        {installing && <LoaderCircle size={14} className="spin" />}{installing ? '安装中…' : '安装'}
+        {installing && <LoaderCircle size={14} className="spin" />}{installing ? (updating ? '更新中…' : '安装中…') : (updating ? `更新到 v${listing.version}` : '安装')}
       </button>
       <button className="quick-secondary" onClick={onClose}>取消</button>
     </>}
@@ -83,8 +89,9 @@ export function HubInstallDialog({ listing, contents, sourceName, onClose, onIns
       <p className="settings-hint">安装后能力保持停用状态，必须显式启用后 Agent 才能发现。</p>
     </div> : <div className="ability-detail-body">
       <div className="plugin-install-done"><CircleCheck size={18} /><div>
-        <strong>已安装 {installed.length} 项能力</strong>
-        <span>全部处于停用状态。</span>
+        <strong>{updating ? '已更新' : '已安装'} {installed.length} 项能力</strong>
+        {/* 覆盖式重装会把 Skill 与 MCP Server 都写回停用，更新完同样需要重新启用。 */}
+        <span>{updating ? `已更新到 v${listing.version}，能力被重置为停用状态。` : '全部处于停用状态。'}</span>
       </div></div>
       <ul className="hub-contents-list">
         {installed.map((item) => <li key={`${item.abilityType}-${item.abilityId}`}>

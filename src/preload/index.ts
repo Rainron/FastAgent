@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, InitProjectResult, LocalMcpServerInput, LocalModelInput, LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SkillDetail, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, InitProjectResult, LocalMcpServerInput, LocalModelInput, LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SkillDetail, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -79,6 +79,11 @@ const api: FastAgentApi = {
   },
   models: {
     localList: (): Promise<LocalModelSummary[]> => ipcRenderer.invoke('models:localList'),
+    onChanged: (listener) => {
+      const handler = () => listener()
+      ipcRenderer.on('models:changed', handler)
+      return () => ipcRenderer.removeListener('models:changed', handler)
+    },
     localCreate: (input: LocalModelInput) => ipcRenderer.invoke('models:localCreate', input),
     localUpdate: (id: number, input: LocalModelInput) => ipcRenderer.invoke('models:localUpdate', id, input),
     localDelete: (id: number) => ipcRenderer.invoke('models:localDelete', id),
@@ -145,7 +150,8 @@ const api: FastAgentApi = {
     search: (query?: HubQuery): Promise<HubSearchResult> => ipcRenderer.invoke('hub:search', query ?? {}),
     detail: (sourceId: string, ref: string): Promise<HubListingDetail> => ipcRenderer.invoke('hub:detail', sourceId, ref),
     install: (sourceId: string, ref: string, config?: Record<string, string>): Promise<HubInstallResult> => ipcRenderer.invoke('hub:install', sourceId, ref, config),
-    categories: (): Promise<string[]> => ipcRenderer.invoke('hub:categories')
+    categories: (): Promise<string[]> => ipcRenderer.invoke('hub:categories'),
+    checkUpdates: (): Promise<HubUpdateCheckResult> => ipcRenderer.invoke('hub:check-updates')
   },
   bundle: {
     export: (options: BundleExportOptions): Promise<string | null> => ipcRenderer.invoke('bundle:export', options),
@@ -174,11 +180,13 @@ const api: FastAgentApi = {
       return () => ipcRenderer.removeListener('chat:event', handler)
     },
     listStates: () => ipcRenderer.invoke('run-states:list'),
+    listActive: () => ipcRenderer.invoke('chat:list-active'),
     saveState: (state) => ipcRenderer.invoke('run-states:save', state),
     markRead: (conversationId: string) => ipcRenderer.invoke('run-states:read', conversationId)
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
+    get: (conversationId: string) => ipcRenderer.invoke('conversations:get', conversationId),
     listPage: (query?: ConversationPageQuery) => ipcRenderer.invoke('conversations:list-page', query ?? {}),
     listDetailed: () => ipcRenderer.invoke('conversation:listDetailed'),
     listDetailedPage: (query?: ConversationPageQuery) => ipcRenderer.invoke('conversation:listDetailed-page', query ?? {}),

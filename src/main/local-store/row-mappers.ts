@@ -15,6 +15,7 @@ export interface ConversationRecord {
 }
 
 export const defaultSettings: AppSettings = {
+  motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
   closeToTray: true,
@@ -83,6 +84,8 @@ export interface AbilityMetaRow {
   updated_at: string
   last_used_at: string | null
   use_count: number
+  latest_version: string | null
+  latest_checked_at: string | null
 }
 
 export function mapAbilityMeta(row: AbilityMetaRow): AbilityInstallMeta {
@@ -96,7 +99,9 @@ export function mapAbilityMeta(row: AbilityMetaRow): AbilityInstallMeta {
     installedAt: row.installed_at,
     updatedAt: row.updated_at,
     lastUsedAt: row.last_used_at ?? undefined,
-    useCount: row.use_count
+    useCount: row.use_count,
+    latestVersion: row.latest_version ?? undefined,
+    latestCheckedAt: row.latest_checked_at ?? undefined
   }
 }
 

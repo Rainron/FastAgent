@@ -61,6 +61,21 @@ describe('ability 聚合', () => {
     expect(ready.status).toBe('ready')
   })
 
+  it('检查更新写回的最新版本也能推出「有更新」，与内置 catalog 无关', () => {
+    const outdated = buildSkillAbility(skill, meta({ latestVersion: '2.0.0' }))
+    expect(outdated.status).toBe('update_available')
+
+    const current = buildSkillAbility(skill, meta({ latestVersion: '1.0.0' }))
+    expect(current.status).toBe('ready')
+
+    // 非 marketplace 来源不参与更新判断：本地创建的能力没有远端可对
+    const created = buildSkillAbility(skill, meta({ source: 'created', latestVersion: '2.0.0' }))
+    expect(created.status).toBe('ready')
+
+    const mcpOutdated = buildMcpAbility(server, meta({ abilityType: 'mcp', version: '1.0.0', latestVersion: '1.5.0' }), connection({ state: 'connected' }), false)
+    expect(mcpOutdated.status).toBe('update_available')
+  })
+
   it('非 marketplace 来源不提示更新', () => {
     const created = buildSkillAbility(skill, meta({ abilityId: 'code-review', source: 'created' }), '9.9.9')
     expect(created.status).toBe('ready')

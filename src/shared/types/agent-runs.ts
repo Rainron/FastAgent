@@ -29,6 +29,13 @@ export interface AgentRunRecord {
   retryCount: number
 }
 
+/** 主进程当前仍持有的 run；界面重载后按它重建 runId 与回合的对应关系。 */
+export interface ActiveRunInfo {
+  runId: string
+  conversationId: string
+  turnId: string
+}
+
 export interface AgentTaskRecord {
   taskId: string
   runId: string

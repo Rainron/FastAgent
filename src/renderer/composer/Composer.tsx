@@ -210,14 +210,12 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
           const restored = previousPermission.current ?? 'ask'
           previousPermission.current = null
           onPermissionChange(restored)
-          onNotice('已退出完全访问权限')
           return
         }
         previousPermission.current = permission
         // 直接切 full 并跳过二次确认：/pass 本身就是明确的放权意图。
         setRiskConfirmed(true)
         onPermissionChange('full')
-        onNotice('已切换为完全访问权限，执行不再询问；再次输入 /pass 退出')
         return
       case 'new':
         onNewChat()
@@ -569,8 +567,8 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       <button className="composer-chip mode-chip" onClick={() => agentAvailable && setMode(nextConversationMode(mode))} disabled={!agentAvailable} title={agentAvailable ? `当前模式：${modeLabel}` : '快速对话仅支持 Chat，项目会话可用 Agent'}><span className={`mode-mark ${mode}`} />{modeLabel}<ChevronDown size={13} /></button>
       {permission && !overflowed && <PermissionSelector value={permission} profiles={permissionProfiles} onChange={choosePermission} density={density} onOpenAdvanced={onOpenPermissionSettings} />}
       <ModelSelector model={model} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} open={pickerOpen} onOpenChange={setPickerOpen} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavorite} onManageModels={onManageModels} />
-      {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} />}
-      {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} />}
+      {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} model={model} />}
+      {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} model={model} />}
       {runId ? <>
         {Boolean(text.trim()) && <button className="send-button queue" disabled={compaction?.status === 'running'} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={17} /></button>}
         <button className="send-button stop" onClick={onCancel} disabled={compaction?.status === 'running'} aria-label="停止生成" title="停止生成"><SquareIcon /></button>

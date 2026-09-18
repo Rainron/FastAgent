@@ -3,9 +3,11 @@ import { Check, ChevronDown, CornerDownLeft, Eraser, Loader2, Minus, Sparkles } 
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import type { AgentEvent, AuthSnapshot, BootstrapData, ConversationTurn, LocalModelSummary, ModelOption, ThinkingLevel } from '../../shared/types'
-import { mergeModelOptions, modelMetaLabel, normalizeThinkingLevel, thinkingLevelDescription, thinkingLevelLabel, thinkingLevelsForModel, triggerModelLabel } from '../model-picker'
+import { initialSelectedModelId, mergeModelOptions, modelMetaLabel, normalizeThinkingLevel, thinkingLevelsForModel, triggerModelLabel } from '../model-picker'
+import { subscribeLocalModels } from '../local-model-sync'
 import { useDismiss } from '../use-dismiss'
 import { createStreamBuffer } from '../ai-response/stream-buffer'
+import { ReasoningOptions } from '../composer/ComposerSelectors'
 
 // markdown 渲染链路体积大且第一条回答出现前用不到：异步加载，小窗首屏不背这包
 const LazyMarkdown = lazy(() => import('react-markdown'))
@@ -43,6 +45,8 @@ export function QuickChat() {
   const [auth, setAuth] = useState<AuthSnapshot | null>(null)
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null)
   const [localModels, setLocalModels] = useState<LocalModelSummary[]>([])
+  const [bootstrapLoaded, setBootstrapLoaded] = useState(false)
+  const [localModelsLoaded, setLocalModelsLoaded] = useState(false)
   const models = useMemo(() => mergeModelOptions(bootstrap?.models ?? [], localModels), [bootstrap, localModels])
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<QuickMessage[]>([])
@@ -50,8 +54,8 @@ export function QuickChat() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 模型与思考级别：localStorage 记住上次选择，其次回退默认模型；与主窗口互不干扰。
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('auto')
+  const [selectedModelId, setSelectedModelId] = useState<number | null>(() => Number(readQuickPreference('fastagent.quick.modelId')) || null)
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() => (readQuickPreference('fastagent.quick.thinking') || 'auto') as ThinkingLevel)
   const [configOpen, setConfigOpen] = useState(false)
   const configRef = useRef<HTMLDivElement>(null)
   // 清空历史的两段式确认：误触会直接丢掉持久会话的上下文，第一次点击只进入确认态
@@ -77,30 +81,20 @@ export function QuickChat() {
   // 初始化：登录态、模型、快速对话会话与历史
   useEffect(() => {
     let disposed = false
+    const modelSync = subscribeLocalModels(window.fastAgent.models, setLocalModels, () => setError('本地模型加载失败'))
+    void modelSync.ready.finally(() => { if (!disposed) setLocalModelsLoaded(true) })
     void (async () => {
       const snapshot = await window.fastAgent.auth.snapshot()
       if (disposed) return
       setAuth(snapshot)
       if (snapshot.state !== 'ready') return
-      // bootstrap / 本地模型 / 会话列表互不依赖，并行拉取
-      const [data, conversations, local] = await Promise.all([
-        window.fastAgent.resources.bootstrap().catch(() => null),
-        window.fastAgent.conversations.list().catch(() => []),
-        window.fastAgent.models.localList().catch(() => [] as LocalModelSummary[])
-      ])
+      // 本地模型订阅独立于云端请求，云端不可用也能继续更新目录。
+      void window.fastAgent.resources.bootstrap()
+        .then((data) => { if (!disposed) setBootstrap(data) })
+        .catch(() => { if (!disposed) setError('云端模型加载失败') })
+        .finally(() => { if (!disposed) setBootstrapLoaded(true) })
+      const conversations = await window.fastAgent.conversations.list().catch(() => [])
       if (disposed) return
-      setBootstrap(data)
-      setLocalModels(local)
-      const list = mergeModelOptions(data?.models ?? [], local)
-      // 偏好优先：localStorage 里存的模型还在列表里就用它，否则回退默认模型
-      const storedModelId = Number(readQuickPreference('fastagent.quick.modelId')) || null
-      const initialModel = list.find((model) => model.id === storedModelId) ?? list.find((model) => model.id === data?.default_model_id) ?? list[0] ?? null
-      setSelectedModelId(initialModel?.id ?? null)
-      const levels = thinkingLevelsForModel(initialModel)
-      const storedThinking = readQuickPreference('fastagent.quick.thinking')
-      setThinkingLevel(levels.includes(storedThinking as ThinkingLevel)
-        ? storedThinking as ThinkingLevel
-        : normalizeThinkingLevel(data?.default_thinking_level ?? initialModel?.thinking_default))
       const existing = conversations.find((item) => item.title === QUICK_CONVERSATION_TITLE && !item.archived)
       const targetId = existing?.id ?? (await window.fastAgent.conversations.create({ title: QUICK_CONVERSATION_TITLE })).id
       if (disposed) return
@@ -110,8 +104,16 @@ export function QuickChat() {
       // 小窗只展示最近 6 条消息，避免历史过长拖慢唤起
       setMessages(turnsToMessages(turns.slice(-6)))
     })().catch((cause) => { if (!disposed) setError(cause instanceof Error ? cause.message : String(cause)) })
-    return () => { disposed = true }
+    return () => { disposed = true; modelSync.dispose() }
   }, [])
+
+  useEffect(() => {
+    if (!bootstrapLoaded || !localModelsLoaded) return
+    const next = initialSelectedModelId(models, bootstrap?.default_model_id, selectedModelId)
+    if (next !== selectedModelId) setSelectedModelId(next)
+    const model = models.find((item) => item.id === next)
+    setThinkingLevel((current) => normalizeThinkingLevel(current, model))
+  }, [bootstrap, bootstrapLoaded, localModelsLoaded, models, selectedModelId])
 
   const appendText = useCallback((turnId: string, text: string) => {
     setMessages((current) => {
@@ -186,8 +188,7 @@ export function QuickChat() {
     writeQuickPreference('fastagent.quick.modelId', String(modelId))
     const next = models.find((model) => model.id === modelId)
     setThinkingLevel((current) => {
-      const levels = thinkingLevelsForModel(next)
-      const nextLevel = levels.includes(current) ? current : normalizeThinkingLevel(bootstrap?.default_thinking_level ?? next?.thinking_default)
+      const nextLevel = normalizeThinkingLevel(current, next)
       writeQuickPreference('fastagent.quick.thinking', nextLevel)
       return nextLevel
     })
@@ -296,10 +297,7 @@ function QuickConfigPopover({ models, selectedModelId, onSelectModel, thinkingLe
   return <div className="quick-config-popover popover-card" role="dialog" aria-label="模型与思考配置">
     {levels.length > 0 && <div className="quick-config-section">
       <div className="popover-heading">思考强度</div>
-      <div className="reasoning-segmented" role="group" aria-label="思考强度" style={{ gridTemplateColumns: `repeat(${levels.length}, minmax(0, 1fr))` }}>
-        {levels.map((level) => <button key={level} className={activeThinking === level ? 'active' : ''} onClick={() => onThinkingLevelChange(level)} aria-pressed={activeThinking === level}>{thinkingLevelLabel(level)}</button>)}
-      </div>
-      <p className="reasoning-description">{thinkingLevelDescription(activeThinking)}</p>
+      <ReasoningOptions levels={levels} value={activeThinking} model={selected} onSelect={onThinkingLevelChange} />
     </div>}
     <div className="quick-config-section">
       <div className="popover-heading">模型</div>

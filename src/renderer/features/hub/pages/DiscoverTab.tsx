@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Search, Settings2, TriangleAlert } from 'lucide-react'
-import type { AbilityType, HubListing, HubListingDetail, HubQuery, HubSource, HubSourceFailure } from '../../../../shared/types'
+import type { AbilityType, HubInstallState, HubListing, HubListingDetail, HubQuery, HubSource, HubSourceFailure } from '../../../../shared/types'
 import { AbilityEmptyState, AbilityLoadingState } from '../../abilities/components/AbilityEmptyState'
 import { AbilityErrorBlock } from '../../abilities/components/AbilityErrorBlock'
 import { PluginCard } from '../../plugins/components/PluginCard'
 import { primaryAction, pluginStatus, SORT_OPTIONS } from '../../plugins/plugin-view'
+import { HubDetailDrawer } from '../components/HubDetailDrawer'
 import { HubInstallDialog } from '../components/HubInstallDialog'
 import { SourceManagerDialog } from '../components/SourceManagerDialog'
 import { failureSummary } from '../hub-view'
@@ -19,12 +20,24 @@ const TYPE_FILTERS: Array<[AbilityType | 'all', string]> = [
   ['cli', 'CLI 工具']
 ]
 
-/** Hub：多源发现与安装入口。安装后的能力进入「能力」页管理。 */
-export function HubPage({ onNotice, onOpenAbility }: {
+const INSTALL_FILTERS: Array<[HubInstallState, string]> = [
+  ['all', '全部'],
+  ['not_installed', '未安装'],
+  ['installed', '已安装'],
+  ['update_available', '有更新']
+]
+
+/** 搜索输入的停顿时长。每次触发都是全源并发抓取，单源超时 15s，不能跟着每个字符走。 */
+const SEARCH_DEBOUNCE_MS = 300
+
+/** 能力页的「发现」Tab：多源发现与安装，装完的能力回到同页的 Skills / MCP 列表管理。 */
+export function DiscoverTab({ onNotice, onOpenAbility }: {
   onNotice: (notice: string) => void
   onOpenAbility?: (abilityId: string) => void
 }) {
   const [keyword, setKeyword] = useState('')
+  const [debouncedKeyword, setDebouncedKeyword] = useState('')
+  const [installState, setInstallState] = useState<HubInstallState>('all')
   const [abilityType, setAbilityType] = useState<AbilityType | 'all'>('all')
   const [category, setCategory] = useState('all')
   const [sourceId, setSourceId] = useState('all')
@@ -37,8 +50,10 @@ export function HubPage({ onNotice, onOpenAbility }: {
   const [sources, setSources] = useState<HubSource[]>([])
   const [categories, setCategories] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [installing, setInstalling] = useState<{ listing: HubListing; detail: HubListingDetail | null } | null>(null)
+  const [installing, setInstalling] = useState<{ listing: HubListing; detail: HubListingDetail | null; mode: 'install' | 'update' } | null>(null)
+  const [detail, setDetail] = useState<{ listing: HubListing; detail: HubListingDetail | null; loading: boolean; error: string | null } | null>(null)
   const [managingSources, setManagingSources] = useState(false)
+  const requestIdRef = useRef(0)
 
   const loadSources = useCallback(async () => {
     try {
@@ -48,16 +63,25 @@ export function HubPage({ onNotice, onOpenAbility }: {
     }
   }, [])
 
+  // 输入停下来才发请求；分页重置仍绑在 onChange 上，翻页不会等这 300ms。
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedKeyword(keyword), SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [keyword])
+
   const refresh = useCallback(async () => {
+    const requestId = ++requestIdRef.current
     setLoading(true)
     try {
       const result = await hubService.search({
-        keyword: keyword.trim() || undefined,
+        keyword: debouncedKeyword.trim() || undefined,
         abilityType: abilityType === 'all' ? undefined : abilityType,
         category: category === 'all' ? undefined : category,
+        installState: installState === 'all' ? undefined : installState,
         sourceIds: sourceId === 'all' ? undefined : [sourceId],
         sort, page, pageSize
       })
+      if (requestId !== requestIdRef.current) return
       setListings(result.items)
       setTotal(result.total)
       // 源返回的条数会变，服务端夹回页码后本地要同步
@@ -69,7 +93,7 @@ export function HubPage({ onNotice, onOpenAbility }: {
     } finally {
       setLoading(false)
     }
-  }, [keyword, abilityType, category, sourceId, sort, page, pageSize, setPage])
+  }, [debouncedKeyword, abilityType, category, installState, sourceId, sort, page, pageSize, setPage])
 
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => { void loadSources() }, [loadSources])
@@ -85,26 +109,32 @@ export function HubPage({ onNotice, onOpenAbility }: {
       return
     }
     // 子能力清单与准确的权限告示都只在详情里有；取不到时退回搜索结果那份。
-    const detail = await hubService.detail(listing.sourceId, listing.ref).catch(() => null)
-    setInstalling({ listing, detail })
+    const fetched = await hubService.detail(listing.sourceId, listing.ref).catch(() => null)
+    setInstalling({ listing, detail: fetched, mode: action.kind === 'update' ? 'update' : 'install' })
   }
 
-  return <div className="plugins-page">
-    <div className="capabilities-header">
-      <div>
-        <span className="eyebrow">HUB</span>
-        <h1>能力 Hub</h1>
-        <p>从内置目录与你添加的第三方源获取能力。安装后的 Skill 与 MCP Server 会进入「能力」页，默认停用，需要显式启用后 Agent 才可见。</p>
-      </div>
-      <div className="capabilities-actions">
-        <button className="quick-secondary" onClick={() => setManagingSources(true)}><Settings2 size={14} />管理来源（{sources.filter((source) => source.enabled).length}）</button>
-      </div>
-    </div>
+  /** 「详情」与「安装」不再是同一个动作：详情先开抽屉，README 与子能力都在里面。 */
+  async function openDetail(listing: HubListing) {
+    setDetail({ listing, detail: null, loading: true, error: null })
+    try {
+      const fetched = await hubService.detail(listing.sourceId, listing.ref)
+      setDetail((current) => current?.listing.id === listing.id ? { ...current, detail: fetched, loading: false } : current)
+    } catch (cause) {
+      // 详情取不到也要能看基本信息与权限，不让整个抽屉打不开。
+      setDetail((current) => current?.listing.id === listing.id
+        ? { ...current, loading: false, error: cause instanceof Error ? cause.message : '详情加载失败' }
+        : current)
+    }
+  }
 
+  return <div className="cap-tab-content">
     <div className="cap-toolbar">
       <div className="cap-search"><Search size={14} /><input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1) }} placeholder="搜索能力、作者或分类…" aria-label="搜索能力" /></div>
       <div className="settings-shell-segmented" role="group" aria-label="能力类型">
         {TYPE_FILTERS.map(([key, label]) => <button key={key} className={abilityType === key ? 'active' : ''} onClick={() => { setAbilityType(key); setPage(1) }}>{label}</button>)}
+      </div>
+      <div className="settings-shell-segmented" role="group" aria-label="安装状态">
+        {INSTALL_FILTERS.map(([key, label]) => <button key={key} className={installState === key ? 'active' : ''} onClick={() => { setInstallState(key); setPage(1) }}>{label}</button>)}
       </div>
       <div className="settings-shell-segmented" role="group" aria-label="排序">
         {SORT_OPTIONS.map(([key, label]) => <button key={key} className={sort === key ? 'active' : ''} onClick={() => { setSort(key); setPage(1) }}>{label}</button>)}
@@ -121,6 +151,7 @@ export function HubPage({ onNotice, onOpenAbility }: {
           {categories.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
+      <button className="quick-secondary" onClick={() => setManagingSources(true)}><Settings2 size={14} />管理来源（{sources.filter((source) => source.enabled).length}）</button>
     </div>
 
     <div className="capabilities-content">
@@ -136,19 +167,33 @@ export function HubPage({ onNotice, onOpenAbility }: {
             {listings.map((listing) => <PluginCard
               key={listing.id}
               plugin={listing}
-              onOpen={() => void startPrimary(listing)}
+              onOpen={() => void openDetail(listing)}
               onPrimary={() => void startPrimary(listing)}
             />)}
           </div>}
       {!error && listings && <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />}
     </div>
 
+    {detail && <HubDetailDrawer
+      listing={detail.listing}
+      detail={detail.detail}
+      sourceName={sourceNameOf(detail.listing.sourceId)}
+      loading={detail.loading}
+      error={detail.error}
+      onClose={() => setDetail(null)}
+      // 抽屉不叠抽屉：关掉自己，安装弹层由这一层渲染。
+      onPrimary={() => { const target = detail.listing; setDetail(null); void startPrimary(target) }}
+      onOpenAbility={(abilityId) => { setDetail(null); onOpenAbility?.(abilityId) }}
+      onUninstalled={() => void refresh()}
+      onNotice={onNotice}
+    />}
     {installing && <HubInstallDialog
       listing={installing.detail ?? installing.listing}
       contents={installing.detail?.contents ?? []}
       sourceName={sourceNameOf(installing.listing.sourceId)}
+      mode={installing.mode}
       onClose={() => setInstalling(null)}
-      onInstalled={() => { onNotice('安装完成，能力已进入能力库（默认停用）'); void refresh() }}
+      onInstalled={() => { onNotice(installing.mode === 'update' ? `已更新到 v${installing.listing.version}` : '安装完成，能力已进入能力库（默认停用）'); void refresh() }}
       onOpenAbility={(abilityId) => { setInstalling(null); onOpenAbility?.(abilityId) }}
     />}
     {managingSources && <SourceManagerDialog

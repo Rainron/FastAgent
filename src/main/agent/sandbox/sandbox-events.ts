@@ -1,7 +1,7 @@
 import type { AgentEvent, SandboxNotice } from '../../../shared/types'
 import type { SandboxSession } from './sandbox-types'
 
-/** 沙箱事件名；当前用于主进程日志与后续审计日志。 */
+/** 沙箱事件定义的事件名；当前用于主进程日志与后续审计日志。 */
 export const SANDBOX_EVENTS = {
   sessionCreated: 'sandbox.session.created',
   commandStarted: 'sandbox.command.started',

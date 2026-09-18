@@ -110,4 +110,22 @@ describe('RunnerClient', () => {
     fake.emit(`{"type":"exited","id":"${process.id}","exitCode":null}\n`)
     await expect(process.exit).resolves.toEqual({ exitCode: null })
   })
+
+  it('runner 报告超时时以 timeout 错误结束并保留实际时限', async () => {
+    const fake = fakeHandle()
+    const client = new RunnerClient(fake.handle)
+    const process = await client.exec({ command: 'sleep 100', cwd: '.', env: {}, timeoutMs: 10_000, onData: () => undefined })
+    fake.emit(`{"type":"error","id":"${process.id}","code":"timeout","target":"10000ms"}\n`)
+    await expect(process.exit).rejects.toSatisfy(
+      (error: unknown) => isSandboxError(error) && error.code === 'timeout' && error.target === '10000ms'
+    )
+  })
+
+  it('exited 帧保留取消与正常退出的区别', async () => {
+    const fake = fakeHandle()
+    const client = new RunnerClient(fake.handle)
+    const process = await client.exec({ command: 'echo hi', cwd: '.', env: {}, onData: () => undefined })
+    fake.emit(`{"type":"exited","id":"${process.id}","exitCode":0,"reason":"completed"}\n`)
+    await expect(process.exit).resolves.toEqual({ exitCode: 0 })
+  })
 })
