@@ -3,6 +3,8 @@
 [![CI](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+[English documentation](README.en.md)
+
 FastAgent 是一个**本地优先**的 AI Agent 工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
 
 - 引擎：内嵌 [pi coding-agent](https://github.com/earendil-works/pi) 运行时
@@ -145,7 +147,9 @@ npm run package:win
 
 不承诺时间点，做完一块发一块。想优先看到哪个，欢迎提 issue。
 
-## 第三方组件
+## 第三方组件与致谢
+
+感谢以下开源项目的维护者和贡献者。FastAgent 使用这些项目并遵守其各自的许可证：
 
 | 组件 | 用途 | 许可 |
 | --- | --- | --- |
@@ -154,6 +158,8 @@ npm run package:win
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | 本地数据库 | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | 全局键鼠钩子 | MIT |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | 内置工具链，构建时按固定版本下载 | 各自原许可，随包落到 `resources/runtime/*/licenses/` |
+
+打包应用会在适用情况下随对应工具分发原始许可证文件。感谢所有上游维护者和贡献者，他们的工作让 FastAgent 成为可能。
 
 ## 参与贡献
 
