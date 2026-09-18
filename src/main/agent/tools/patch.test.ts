@@ -1,5 +1,5 @@
 import { describe, expect, it, afterEach } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyPatchToContent, applyPatchToWorkspace, parseUnifiedPatch, PatchApplyError } from './patch'
@@ -100,7 +100,7 @@ describe('patch tool - apply', () => {
     const root = makeRoot()
     const patch = '--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1,2 @@\n+line1\n+line2'
     const plans = applyPatchToWorkspace(patch, root)
-    expect(plans).toEqual([{ path: join(root, 'new.ts'), additions: 2, deletions: 0 }])
+    expect(plans).toEqual([{ path: join(realpathSync.native(root), 'new.ts'), additions: 2, deletions: 0 }])
     expect(readFileSync(join(root, 'new.ts'), 'utf8')).toBe('line1\nline2\n')
   })
 

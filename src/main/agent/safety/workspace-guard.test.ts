@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveToolPath } from './workspace-guard'
@@ -29,7 +29,7 @@ describe('workspace guard', () => {
     const result = resolveToolPath('src/index.ts', root)
     expect(result.external).toBe(false)
     expect(result.relativePath).toBe(join('src', 'index.ts'))
-    expect(result.absolutePath).toBe(join(root, 'src', 'index.ts'))
+    expect(result.absolutePath).toBe(join(realpathSync.native(root), 'src', 'index.ts'))
   })
 
   it('../ 越界判为外部', () => {
@@ -51,7 +51,7 @@ describe('workspace guard', () => {
     const result = resolveToolPath('src/deep/new-file.ts', root)
     expect(result.external).toBe(false)
     expect(result.relativePath).toBe(join('src', 'deep', 'new-file.ts'))
-    expect(result.absolutePath).toBe(join(root, 'src', 'deep', 'new-file.ts'))
+    expect(result.absolutePath).toBe(join(realpathSync.native(root), 'src', 'deep', 'new-file.ts'))
   })
 
   it('symlink/junction 指向工作区外时判为外部', (context) => {
