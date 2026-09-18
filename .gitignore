@@ -12,3 +12,4 @@ logs
 .vscode
 .DS_Store
 RELEASE-INTERNAL.md
+tasks/

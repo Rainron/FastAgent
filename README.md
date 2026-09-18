@@ -1,11 +1,20 @@
 # FastAgent
 
-FastAgent 是一个**本地优先**的 AI Agent工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
+[![CI](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+FastAgent 是一个**本地优先**的 AI Agent 工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
 
 - 引擎：内嵌 [pi coding-agent](https://github.com/earendil-works/pi) 运行时
 - 技术栈：Electron 43 + React 19 + TypeScript + Tailwind 4 + better-sqlite3
 - 平台：Windows（沙箱与内置工具链目前只做了 Windows）
 - 许可：MIT
+
+## 项目状态
+
+FastAgent 当前处于早期公开版本，优先保证 Windows 本地开发体验与安全边界。项目欢迎围绕文档、测试、兼容性和安全性的真实反馈；功能路线不承诺固定时间表，重大变更会记录在 [CHANGELOG.md](CHANGELOG.md) 中。
+
+如果你准备提交代码，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；发现潜在安全问题，请按照 [SECURITY.md](SECURITY.md) 中的方式报告，不要直接创建公开 Issue。
 
 ## 截图
 
@@ -145,6 +154,10 @@ npm run package:win
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | 本地数据库 | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | 全局键鼠钩子 | MIT |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | 内置工具链，构建时按固定版本下载 | 各自原许可，随包落到 `resources/runtime/*/licenses/` |
+
+## 参与贡献
+
+欢迎提交文档改进、测试补充、兼容性修复和安全性改进。请先查看 [贡献指南](CONTRIBUTING.md) 与现有 Issue，较大的改动建议先开 Issue 讨论范围。
 
 ## License
 
