@@ -3,6 +3,8 @@ import { Check, ChevronRight, Circle, FileDiff, LoaderCircle } from 'lucide-reac
 import type { AgentFileChange } from '../../shared/types'
 import { useResponseActions } from '../ai-response/response-context'
 import { useDismiss } from '../use-dismiss'
+import { useDelayedUnmount } from '../use-delayed-unmount'
+import { MOTION_DURATIONS } from '../motion'
 import { compositionLabel, currentFileLabel, OPERATION_LABEL, OPERATION_MARK, runBarLabel, shouldShowRunBar, sortForList } from './run-changes'
 import { useRunChanges } from './use-run-changes'
 
@@ -69,6 +71,7 @@ export const AgentRunBar = React.memo(function AgentRunBar({ turnId, running }: 
   const panelRef = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
   useDismiss(open, close, panelRef)
+  const panelMounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
 
   // 切轮时收起：上一轮的文件清单挂在新一轮上会看错
   useEffect(() => {
@@ -88,7 +91,7 @@ export const AgentRunBar = React.memo(function AgentRunBar({ turnId, running }: 
   // 输入框的宽度就是这两层算出来的，照抄才能真正对齐，不能只写死一个百分比。
   return <div className="run-bar-wrap">
     <div className="conversation-content run-bar-inner" ref={panelRef}>
-    {open && hasChanges && <div className="run-bar-panel">
+    {panelMounted && hasChanges && <div className={`run-bar-panel${open ? '' : ' closing'}`}>
       <div className="run-bar-panel-head">
         <strong>Changes this run</strong>
         <span>{changes.changedFiles} {changes.changedFiles === 1 ? 'file' : 'files'}</span>

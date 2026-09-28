@@ -48,11 +48,13 @@ describe('model picker helpers', () => {
     expect(stepModelIndex(0, 0, 1)).toBe(-1)
   })
 
-  it('只为支持思考的模型返回动态档位', () => {
-    expect(thinkingLevelsForModel(models[0])).toEqual(['auto', 'off', 'low', 'medium', 'high'])
+  it('只为支持思考的模型返回动态档位，UI 不再提供关闭档', () => {
+    expect(thinkingLevelsForModel(models[0])).toEqual(['auto', 'low', 'medium', 'high'])
     expect(thinkingLevelsForModel(models[2])).toEqual([])
     expect(thinkingLevelsForModel({ ...models[0], thinking_default: 'ultra' })).not.toContain('ultra')
-    expect(thinkingLevelsForModel({ ...models[1], thinking_level_map: { minimal: null, xhigh: 'xhigh', max: 'max' } })).toEqual(['auto', 'off', 'low', 'medium', 'high', 'xhigh', 'max'])
+    expect(thinkingLevelsForModel({ ...models[1], thinking_level_map: { minimal: null, xhigh: 'xhigh', max: 'max' } })).toEqual(['auto', 'low', 'medium', 'high', 'xhigh', 'max'])
+    const withOff = { ...models[0], thinking_profiles: { off: {}, low: {}, medium: {}, high: {} } }
+    expect(thinkingLevelsForModel(withOff)).toEqual(['auto', 'low', 'medium', 'high'])
   })
 
   it('入口文案只显示模型名，思考强度单独描述', () => {
@@ -60,7 +62,7 @@ describe('model picker helpers', () => {
     expect(triggerModelLabel(null)).toBe('选择模型')
     expect(thinkingLevelShortLabel('medium')).toBe('Med')
     expect(thinkingLevelDescription('low')).toBe('更快响应，适合简单任务')
-    expect(thinkingLevelDescription('auto')).toBe('跟随模型默认设置，未配置时关闭思考')
+    expect(thinkingLevelDescription('auto')).toBe('跟随模型默认设置，未配置时选择最低思考档')
     expect(modelMetaLabel(models[0])).toBe('anthropic · Reasoning')
     expect(modelMetaLabel(models[2])).toBe('openai')
   })

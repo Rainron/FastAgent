@@ -18,7 +18,7 @@ const STATUS_FILTERS: Array<[McpStatusFilter, string]> = [
   ['disabled', '已禁用']
 ]
 
-export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit, onCreate, onImport, onOpenPlugins }: {
+export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit, onCreate, onImport, onOpenPlugins, embedded = false }: {
   servers: McpAbility[]
   onRefresh: () => Promise<void>
   onNotice: (notice: string) => void
@@ -27,12 +27,15 @@ export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit,
   onCreate: () => void
   onImport: () => void
   onOpenPlugins?: () => void
+  /** 嵌入「我的能力」时：搜索、筛选与新建入口由外层统一负责，这里只渲染行。 */
+  embedded?: boolean
 }) {
   const [keyword, setKeyword] = useState('')
   const [filter, setFilter] = useState<McpStatusFilter>('all')
   const actions = useAsyncActions()
 
-  const visible = useMemo(() => filterMcpAbilities(servers, filter, keyword), [servers, filter, keyword])
+  // 嵌入模式下行集由外层分页算好，这里不能再过滤，否则页码条和可见行对不上
+  const visible = useMemo(() => embedded ? servers : filterMcpAbilities(servers, filter, keyword), [embedded, servers, filter, keyword])
 
   async function test(ability: McpAbility) {
     const status = await actions.run(`test:${ability.id}`, () => mcpService.test(ability.id))
@@ -59,7 +62,7 @@ export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit,
   }
 
   return <div className="cap-tab-content">
-    <div className="cap-toolbar">
+    {!embedded && <div className="cap-toolbar">
       <div className="cap-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索 MCP Server…" aria-label="搜索 MCP Server" /></div>
       <div className="settings-shell-segmented" role="group" aria-label="MCP 状态筛选">
         {STATUS_FILTERS.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} onClick={() => setFilter(key)}>{label}</button>)}
@@ -67,9 +70,11 @@ export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit,
       <div className="cap-toolbar-spacer" />
       <button className="quick-secondary" onClick={onImport}>导入配置</button>
       <button className="primary-button" onClick={onCreate}>添加 Server</button>
-    </div>
+    </div>}
 
-    {visible.length === 0 ? (
+    {embedded && servers.length === 0 ? (
+      <p className="cap-empty-note">本页没有匹配的 MCP Server</p>
+    ) : !embedded && visible.length === 0 ? (
       servers.length === 0
         ? <AbilityEmptyState
             title="还没有 MCP Server"
@@ -88,7 +93,7 @@ export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit,
           const busy = testing || actions.isPending(`toggle:${ability.id}`) || actions.isPending(`remove:${ability.id}`)
           const actionError = actions.errorOf(`test:${ability.id}`) ?? actions.errorOf(`toggle:${ability.id}`) ?? actions.errorOf(`remove:${ability.id}`)
           const failed = ability.connection.state === 'error'
-          return <div className="ability-row" key={ability.id}>
+          return <div className="ability-row ability-card" key={ability.id} role="button" tabIndex={0} onClick={() => onInspect(ability)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onInspect(ability) } }}>
             <div className="ability-row-main">
               <div className="ability-row-title">
                 <span className="cap-row-icon"><span className={`cap-status-dot ${ability.connection.state === 'connected' ? 'online' : failed ? 'offline' : 'idle'}`} /></span>
@@ -115,7 +120,7 @@ export function McpServerList({ servers, onRefresh, onNotice, onInspect, onEdit,
               />}
               {actionError && <AbilityErrorBlock message={actionError} actions={<button className="small-control" onClick={() => void onRefresh()}><RefreshCw size={13} />重试</button>} />}
             </div>
-            <div className="ability-row-actions">
+            <div className="ability-row-actions" onClick={(event) => event.stopPropagation()}>
               <button className="small-control" onClick={() => void test(ability)} disabled={testing} title={failed ? '上次连接失败，点击重新连接' : `连接测试：${ability.name}`}>
                 {testing ? <LoaderCircle size={13} className="spin" /> : <Plug size={13} />}{testing ? '测试中…' : failed ? '重新连接' : '测试连接'}
               </button>

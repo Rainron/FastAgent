@@ -255,6 +255,25 @@ export async function readWorkspaceImage(root: string | null, requested: string)
   return { path: requested, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
 }
 
+/**
+ * 读取任意本地附件图片并转 data URL，供消息缩略图与大图预览。
+ * 与 readWorkspaceImage 不同：附件由用户显式添加，允许来自工作区之外；
+ * 失败一律返回 null，避免历史会话里失效路径打断渲染。
+ */
+export async function readAttachmentImage(requested: string): Promise<string | null> {
+  try {
+    const extension = requested.split('.').pop()?.toLowerCase() ?? ''
+    const mime = IMAGE_EXTENSIONS[extension]
+    if (!mime || extension === 'svg') return null
+    const info = await stat(requested)
+    if (!info.isFile() || info.size > MAX_IMAGE_PREVIEW_BYTES) return null
+    const buffer = await readFile(requested)
+    return `data:${mime};base64,${buffer.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
 export interface WorkspaceDeleteResult {
   ok: boolean
   error?: string

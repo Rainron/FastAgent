@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Search, Settings2, TriangleAlert } from 'lucide-react'
+import { Search, Settings2, SlidersHorizontal, TriangleAlert } from 'lucide-react'
 import type { AbilityType, HubInstallState, HubListing, HubListingDetail, HubQuery, HubSource, HubSourceFailure } from '../../../../shared/types'
 import { AbilityEmptyState, AbilityLoadingState } from '../../abilities/components/AbilityEmptyState'
 import { AbilityErrorBlock } from '../../abilities/components/AbilityErrorBlock'
@@ -53,6 +53,8 @@ export function DiscoverTab({ onNotice, onOpenAbility }: {
   const [installing, setInstalling] = useState<{ listing: HubListing; detail: HubListingDetail | null; mode: 'install' | 'update' } | null>(null)
   const [detail, setDetail] = useState<{ listing: HubListing; detail: HubListingDetail | null; loading: boolean; error: string | null } | null>(null)
   const [managingSources, setManagingSources] = useState(false)
+  // 低频筛选收进折叠区：默认收起，记住本次会话内的展开习惯
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const requestIdRef = useRef(0)
 
   const loadSources = useCallback(async () => {
@@ -101,6 +103,8 @@ export function DiscoverTab({ onNotice, onOpenAbility }: {
 
   const failureNotice = useMemo(() => failureSummary(failures, sources), [failures, sources])
   const sourceNameOf = useCallback((id: string) => sources.find((source) => source.id === id)?.name ?? id, [sources])
+  // 折叠时靠角标提醒还有几个低频筛选在生效，否则用户找不到列表为什么变短
+  const activeMoreFilterCount = (sourceId !== 'all' ? 1 : 0) + (category !== 'all' ? 1 : 0) + (installState !== 'all' ? 1 : 0)
 
   async function startPrimary(listing: HubListing) {
     const action = primaryAction(listing, pluginStatus(listing))
@@ -130,14 +134,24 @@ export function DiscoverTab({ onNotice, onOpenAbility }: {
   return <div className="cap-tab-content">
     <div className="cap-toolbar">
       <div className="cap-search"><Search size={14} /><input value={keyword} onChange={(event) => { setKeyword(event.target.value); setPage(1) }} placeholder="搜索能力、作者或分类…" aria-label="搜索能力" /></div>
-      <div className="settings-shell-segmented" role="group" aria-label="能力类型">
-        {TYPE_FILTERS.map(([key, label]) => <button key={key} className={abilityType === key ? 'active' : ''} onClick={() => { setAbilityType(key); setPage(1) }}>{label}</button>)}
-      </div>
+      <label className="ability-select"><span>类型</span>
+        <select value={abilityType} onChange={(event) => { setAbilityType(event.target.value as AbilityType | 'all'); setPage(1) }}>
+          {TYPE_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </select>
+      </label>
+      <label className="ability-select"><span>排序</span>
+        <select value={sort} onChange={(event) => { setSort(event.target.value as NonNullable<HubQuery['sort']>); setPage(1) }}>
+          {SORT_OPTIONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+        </select>
+      </label>
+      <div className="cap-toolbar-spacer" />
+      <button className="quick-secondary" aria-expanded={showMoreFilters} onClick={() => setShowMoreFilters((open) => !open)}>
+        <SlidersHorizontal size={14} />更多筛选{activeMoreFilterCount > 0 ? `（${activeMoreFilterCount}）` : ''}
+      </button>
+    </div>
+    {showMoreFilters && <div className="cap-toolbar cap-more-filters">
       <div className="settings-shell-segmented" role="group" aria-label="安装状态">
         {INSTALL_FILTERS.map(([key, label]) => <button key={key} className={installState === key ? 'active' : ''} onClick={() => { setInstallState(key); setPage(1) }}>{label}</button>)}
-      </div>
-      <div className="settings-shell-segmented" role="group" aria-label="排序">
-        {SORT_OPTIONS.map(([key, label]) => <button key={key} className={sort === key ? 'active' : ''} onClick={() => { setSort(key); setPage(1) }}>{label}</button>)}
       </div>
       <label className="ability-select"><span>来源</span>
         <select value={sourceId} onChange={(event) => { setSourceId(event.target.value); setPage(1) }}>
@@ -151,8 +165,9 @@ export function DiscoverTab({ onNotice, onOpenAbility }: {
           {categories.map((item) => <option key={item} value={item}>{item}</option>)}
         </select>
       </label>
+      <div className="cap-toolbar-spacer" />
       <button className="quick-secondary" onClick={() => setManagingSources(true)}><Settings2 size={14} />管理来源（{sources.filter((source) => source.enabled).length}）</button>
-    </div>
+    </div>}
 
     <div className="capabilities-content">
       {failureNotice && <div className="hub-failure-banner"><TriangleAlert size={14} />{failureNotice}</div>}
@@ -167,6 +182,7 @@ export function DiscoverTab({ onNotice, onOpenAbility }: {
             {listings.map((listing) => <PluginCard
               key={listing.id}
               plugin={listing}
+              sourceName={sourceNameOf(listing.sourceId)}
               onOpen={() => void openDetail(listing)}
               onPrimary={() => void startPrimary(listing)}
             />)}

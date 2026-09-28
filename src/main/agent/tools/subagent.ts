@@ -1,9 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { defineTool } from '@earendil-works/pi-coding-agent'
 import { Type } from 'typebox'
 import { describeSubAgentRoster, resolveSubAgentConfig, SUBAGENT_HANDOFF_PROMPT, validateSubAgentTask } from '../subagent/subagent-config'
 import type { AgentEvent } from '../../../shared/types'
 import { SUBAGENT_LIMITS, type SubAgentConfig, type SubAgentResult } from '../subagent/subagent-types'
-import { runSubAgentTasks, type ScheduledSubAgentTask } from '../subagent/subagent-scheduler'
+import { runSubAgentTask, runSubAgentTasks, type ScheduledSubAgentTask } from '../subagent/subagent-scheduler'
 
 export interface SubAgentToolContext {
   execute: (task: ScheduledSubAgentTask, signal: AbortSignal, parentToolCallId: string) => Promise<SubAgentResult>
@@ -63,12 +64,13 @@ export function createSubAgentTool(context: SubAgentToolBindings) {
       // 本轮的取消信号与自定义 Sub-agent 列表在调用时刻现取，不能用注册时的闭包。
       const signal = context.resolveSignal()
       const customAgents = context.resolveCustomAgents()
-      const tasks = rawTasks.map((item, index) => {
+      const tasks = rawTasks.map((item) => {
         const config = resolveSubAgentConfig(item.agent, customAgents)
         if (!config) throw new Error(`未知 Sub-agent：${item.agent}`)
         const error = validateSubAgentTask(item.task, SUBAGENT_LIMITS.maxTaskCharacters)
         if (error) throw new Error(error)
-        return { taskId: `subtask-${Date.now()}-${index}`, agentId: config.id, task: `${item.task}\n\n${SUBAGENT_HANDOFF_PROMPT}` }
+        // 同一毫秒内的并发调用会让「时间戳 + 下标」撞 id：落库时后一条覆盖前一条，轨迹也会把两个任务并成一张卡
+        return { taskId: `subtask-${randomUUID()}`, agentId: config.id, task: `${item.task}\n\n${SUBAGENT_HANDOFF_PROMPT}` }
       })
       const executeOne = async (task: ScheduledSubAgentTask, taskSignal: AbortSignal, emit: (status: import('../subagent/subagent-types').SubAgentStatus, detail?: string) => void) => {
         const config = resolveSubAgentConfig(task.agentId, customAgents)
@@ -102,7 +104,8 @@ async function runChain(tasks: ScheduledSubAgentTask[], signal: AbortSignal, run
       results.push({ taskId: task.taskId, agentId: task.agentId, agentName: task.agentId, status: 'cancelled', output: '', truncated: false, startedAt: Date.now(), finishedAt: Date.now() })
       continue
     }
-    const result = await run({ ...task, task: `${task.task}\n\n前序 Sub-agent 输出（仅供核对）：\n${context}` }, signal, () => undefined)
+    // 走和并行同一份超时归一：直接调 run 的话 maxRuntimeMs 在链式路径上不生效
+    const result = await runSubAgentTask({ ...task, task: `${task.task}\n\n前序 Sub-agent 输出（仅供核对）：\n${context}` }, signal, (item, itemSignal) => run(item, itemSignal, () => undefined))
     results.push(result)
     context = result.output.slice(-SUBAGENT_LIMITS.maxOutputCharacters)
     if (result.status !== 'completed') break

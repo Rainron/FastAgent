@@ -71,7 +71,7 @@ export interface AbilityFilterOptions {
   source?: AbilitySourceFilter
 }
 
-function matchesKeyword(ability: Ability, keyword: string) {
+export function matchesKeyword(ability: Ability, keyword: string) {
   return [ability.name, ability.displayName, ability.description ?? '', ability.author ?? '']
     .join(' ')
     .toLowerCase()

@@ -1,7 +1,7 @@
 import type { ModelCredentials, ModelOption } from './models'
 
 /** restoring：本地存有账号、正在走续期请求换回登录态，既不算已登录也不算未登录 */
-export type AuthState = 'restoring' | 'signed_out' | 'authenticating' | 'ready' | 'locked' | 'revoked'
+export type AuthState = 'restoring' | 'signed_out' | 'login_requested' | 'authenticating' | 'ready' | 'locked' | 'revoked'
 
 export interface UserProfile {
   id: string

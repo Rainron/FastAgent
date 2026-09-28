@@ -63,6 +63,18 @@ export function GeneralSettings({ settings, onChange }: { settings: AppSettings;
       </select>
     </div>
 
+    <div className="settings-section-heading"><div><h2>附件上传</h2><p>限制文件与图片大小，并控制允许上传的类型。</p></div></div>
+    <div className="settings-row">
+      <div><strong>普通文件大小（MB）</strong><span>超过限制时会提示暂不支持。</span></div>
+      <input className="settings-number-input" type="number" min={1} max={500} value={settings.attachmentMaxFileSizeMb} onChange={(event) => onChange({ attachmentMaxFileSizeMb: Number(event.target.value) || 1 })} />
+    </div>
+    <div className="settings-row">
+      <div><strong>图片大小（MB）</strong><span>图片默认限制为 5MB。</span></div>
+      <input className="settings-number-input" type="number" min={1} max={100} value={settings.attachmentMaxImageSizeMb} onChange={(event) => onChange({ attachmentMaxImageSizeMb: Number(event.target.value) || 1 })} />
+    </div>
+    <div className="settings-row settings-row-column"><div><strong>允许的文件类型</strong><span>使用扩展名并以逗号分隔，例如 pdf,txt,md。</span></div><input value={settings.attachmentFileExtensions.join(',')} onChange={(event) => onChange({ attachmentFileExtensions: event.target.value.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean) })} /></div>
+    <div className="settings-row settings-row-column"><div><strong>允许的图片类型</strong><span>使用扩展名并以逗号分隔，例如 png,jpg,webp。</span></div><input value={settings.attachmentImageExtensions.join(',')} onChange={(event) => onChange({ attachmentImageExtensions: event.target.value.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean) })} /></div>
+
     <div className="settings-section-heading"><div><h2>外部编辑器</h2><p>在输入框按 Ctrl+G 会把草稿交给这里指定的编辑器；保存并回到 FastAgent 后内容自动回填输入框。</p></div></div>
     <div className="settings-row settings-row-column">
       <div className="settings-bash-path">

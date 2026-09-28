@@ -4,6 +4,9 @@ import type { ModelOption, PermissionPreset, ThinkingLevel } from '../../shared/
 import { findProfile, type BuiltinPermissionPreset, type PermissionProfile } from '../../shared/permission-profiles'
 import { allSectionGroupIds, expandedSectionModels, initialExpandedGroups, modelMetaLabel, modelSections, modelTabs, stepModelIndex, thinkingLevelDescription, thinkingLevelLabel, thinkingLevelShortLabel, triggerModelLabel, visibleModelOptions, type ModelTabKey } from '../model-picker'
 import { useDismiss } from '../use-dismiss'
+import { useDelayedUnmount } from '../use-delayed-unmount'
+import { usePopoverClamp } from './use-popover-clamp'
+import { MOTION_DURATIONS } from '../motion'
 import type { ComposerDensity } from './composer-density'
 
 /** 图标按档位继承的内置档取，自定义档跟随它的 base。 */
@@ -25,13 +28,16 @@ function PermissionOptions({ value, profiles, onSelect }: { value: PermissionPre
 export function PermissionSelector({ value, profiles, onChange, density, onOpenAdvanced }: { value: PermissionPreset; profiles: PermissionProfile[]; onChange: (preset: PermissionPreset) => void; density: ComposerDensity; onOpenAdvanced: () => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  usePopoverClamp(menuRef, open)
   const summary = findProfile(profiles, value)
   useDismiss(open, () => setOpen(false), ref)
+  const mounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
   return <div ref={ref} className="permission-selector">
     <button className={`composer-chip permission-trigger ${summary.risk ? 'risk' : ''}`} onClick={() => setOpen((current) => !current)} aria-haspopup="menu" aria-expanded={open} title={`执行权限：${summary.label} · ${summary.description}`}>
       {permissionIcon(summary.base, 14)}<span>{density === 'wide' ? summary.label : summary.shortLabel}</span><ChevronDown size={12} />
     </button>
-    {open && <div className="permission-menu popover-card" role="menu" aria-label="执行权限">
+    {mounted && <div ref={menuRef} className={`permission-menu popover-card${open ? '' : ' closing'}`} role="menu" aria-label="执行权限">
       <div className="popover-heading">执行权限</div>
       <PermissionOptions value={value} profiles={profiles} onSelect={(preset) => { onChange(preset); setOpen(false) }} />
       <button className="popover-footer-action" onClick={() => { setOpen(false); onOpenAdvanced() }}>高级权限设置…</button>
@@ -52,13 +58,16 @@ export function ReasoningOptions({ levels, value, onSelect, model }: { levels: T
 export function ReasoningSelector({ levels, value, onChange, density, model }: { levels: ThinkingLevel[]; value: ThinkingLevel; onChange: (level: ThinkingLevel) => void; density: ComposerDensity; model?: ModelOption | null }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  usePopoverClamp(menuRef, open)
   useDismiss(open, () => setOpen(false), ref)
   const active = levels.includes(value) ? value : levels[0]
+  const mounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
   return <div ref={ref} className="reasoning-selector">
     <button className="composer-chip reasoning-trigger" onClick={() => setOpen((current) => !current)} aria-haspopup="dialog" aria-expanded={open} title={`思考强度：${thinkingLevelLabel(active)} · ${thinkingLevelDescription(active, model)}`}>
       <span>{density === 'wide' ? thinkingLevelLabel(active) : thinkingLevelShortLabel(active)}</span><ChevronDown size={12} />
     </button>
-    {open && <div className="reasoning-menu popover-card" role="dialog" aria-label="思考强度">
+    {mounted && <div ref={menuRef} className={`reasoning-menu popover-card${open ? '' : ' closing'}`} role="dialog" aria-label="思考强度">
       <div className="popover-heading">思考强度</div>
       <ReasoningOptions levels={levels} value={active} model={model} onSelect={(level) => { onChange(level); setOpen(false) }} />
     </div>}
@@ -69,10 +78,13 @@ export function ReasoningSelector({ levels, value, onChange, density, model }: {
 export function ComposerOverflow({ permission, permissionProfiles, onPermissionChange, levels, thinkingLevel, onThinkingLevelChange, model }: { permission: PermissionPreset | null; permissionProfiles: PermissionProfile[]; onPermissionChange: (preset: PermissionPreset) => void; levels: ThinkingLevel[]; thinkingLevel: ThinkingLevel; onThinkingLevelChange: (level: ThinkingLevel) => void; model?: ModelOption | null }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  usePopoverClamp(menuRef, open)
   useDismiss(open, () => setOpen(false), ref)
+  const mounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
   return <div ref={ref} className="composer-overflow">
     <button className="composer-chip overflow-trigger" onClick={() => setOpen((current) => !current)} aria-haspopup="menu" aria-expanded={open} aria-label="更多运行配置" title="更多运行配置"><MoreHorizontal size={15} /></button>
-    {open && <div className="composer-overflow-menu popover-card" role="menu" aria-label="更多运行配置">
+    {mounted && <div ref={menuRef} className={`composer-overflow-menu popover-card${open ? '' : ' closing'}`} role="menu" aria-label="更多运行配置">
       {permission && <><div className="popover-heading">执行权限</div><PermissionOptions value={permission} profiles={permissionProfiles} onSelect={(preset) => { onPermissionChange(preset); setOpen(false) }} /></>}
       {levels.length > 0 && <div className="overflow-reasoning"><div className="popover-heading">思考强度</div><ReasoningOptions levels={levels} value={thinkingLevel} model={model} onSelect={(level) => { onThinkingLevelChange(level); setOpen(false) }} /></div>}
     </div>}
@@ -83,20 +95,22 @@ export function ModelSelector({ model, models, selectedModelId, favoriteModelIds
   const ref = useRef<HTMLDivElement>(null)
   // 关闭判定挂在外层容器上，触发按钮才不会被「先关再开」抵消。
   useDismiss(open, () => onOpenChange(false), ref)
+  const mounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
   return <div className="model-selector" ref={ref}>
     <button className="composer-chip model-trigger" onClick={() => onOpenChange(!open)} aria-haspopup="dialog" aria-expanded={open} title={`模型：${triggerModelLabel(model)}（Ctrl/Cmd + K）`}>
       <span className="model-trigger-label">{triggerModelLabel(model)}</span><ChevronDown size={13} />
     </button>
-    {open && <ModelPicker models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={(id) => { onSelectModel(id); onOpenChange(false) }} onToggleFavorite={onToggleFavorite} onManageModels={() => { onOpenChange(false); onManageModels() }} />}
+    {mounted && <ModelPicker closing={!open} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={(id) => { onSelectModel(id); onOpenChange(false) }} onToggleFavorite={onToggleFavorite} onManageModels={() => { onOpenChange(false); onManageModels() }} />}
   </div>
 }
 
-function ModelPicker({ models, selectedModelId, favoriteModelIds, recentModelIds, onSelectModel, onToggleFavorite, onManageModels }: { models: ModelOption[]; selectedModelId: number | null; favoriteModelIds: number[]; recentModelIds: number[]; onSelectModel: (modelId: number) => void; onToggleFavorite: (modelId: number) => void; onManageModels: () => void }) {
+function ModelPicker({ closing, models, selectedModelId, favoriteModelIds, recentModelIds, onSelectModel, onToggleFavorite, onManageModels }: { closing?: boolean; models: ModelOption[]; selectedModelId: number | null; favoriteModelIds: number[]; recentModelIds: number[]; onSelectModel: (modelId: number) => void; onToggleFavorite: (modelId: number) => void; onManageModels: () => void }) {
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<ModelTabKey>('all')
   const [activeIndex, setActiveIndex] = useState(0)
   const pickerRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  usePopoverClamp(pickerRef, !closing)
   const tabs = modelTabs(models, { favoriteIds: favoriteModelIds, recentIds: recentModelIds })
   const scopedModels = visibleModelOptions(models, { tab, query, favoriteIds: favoriteModelIds, recentIds: recentModelIds })
   const sections = useMemo(() => modelSections(scopedModels), [scopedModels])
@@ -145,7 +159,7 @@ function ModelPicker({ models, selectedModelId, favoriteModelIds, recentModelIds
     </div>
   }
 
-  return <div ref={pickerRef} className="model-picker-popover" role="dialog" aria-label="模型选择器">
+  return <div ref={pickerRef} className={`model-picker-popover${closing ? ' closing' : ''}`} role="dialog" aria-label="模型选择器">
     <div className="model-picker-search">
       <Search size={15} />
       <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown} placeholder="搜索模型…" aria-label="搜索模型" />

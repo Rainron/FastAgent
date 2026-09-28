@@ -5,6 +5,7 @@ import { AbilityErrorBlock } from '../../abilities/components/AbilityErrorBlock'
 import { AbilityEmptyState, AbilityLoadingState } from '../../abilities/components/AbilityEmptyState'
 import { AbilityStatusBadge } from '../../abilities/components/AbilityStatusBadge'
 import { connectionPresentation, SOURCE_LABELS, transportLabel } from '../../abilities/ability-view'
+import { Plug } from 'lucide-react'
 import { mcpService } from '../services/mcp-service'
 
 type DetailTab = 'overview' | 'tools' | 'resources' | 'prompts' | 'config'
@@ -40,6 +41,12 @@ export function McpServerDetailPanel({ ability, onClose, onEdit, onReconnect }: 
   return <CapabilityDrawer
     title={ability.displayName}
     subtitle={`${transportLabel(ability)} · ${SOURCE_LABELS[ability.source]}`}
+    icon={<Plug size={15} />}
+    badges={<>
+      {(connection.state === 'error' || ability.status === 'config_required' || ability.status === 'update_available')
+        && <AbilityStatusBadge status={ability.status === 'config_required' ? { label: '需要配置', tone: 'warn' } : ability.status === 'update_available' ? { label: '有更新', tone: 'warn' } : connectionPresentation(connection.state)} />}
+      <AbilityStatusBadge status={{ label: ability.enabled ? 'Agent 可用' : 'Agent 停用', tone: ability.enabled ? 'ok' : 'muted' }} />
+    </>}
     onClose={onClose}
     footer={<>
       <button className="quick-secondary" onClick={onReconnect}>重新连接</button>

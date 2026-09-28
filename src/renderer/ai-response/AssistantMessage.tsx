@@ -27,8 +27,10 @@ function useSampledText(text: string, turnId: string, streaming: boolean, interv
  * 助手消息的唯一入口：turn 先归一化成 blocks，再逐块分发。
  * 旧会话里 assistantMessage 只有字符串，归一化时自动变成 MarkdownBlock。
  */
-export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, textStart = 0, onRegenerate, onDelete, onCopyPair }: {
+export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, modelName, textStart = 0, onRegenerate, onDelete, onCopyPair }: {
   turn: ConversationTurn
+  /** 头部徽章显示的模型名；模型已删除时由调用方省略，不编造型号。 */
+  modelName?: string
   /** 执行轨迹已归档正文前段，正文区只渲染从这里开始的最终回答。 */
   textStart?: number
   onRegenerate: () => void
@@ -52,11 +54,17 @@ export const AssistantMessageView = React.memo(function AssistantMessageView({ t
   const message = useMemo(() => (streaming ? null : normalizeAssistantMessage(turn, textStart)), [turn, streaming, textStart])
   // 「复制为纯文本」基于完整正文，避免正文区切片后把轨迹里的前段说明丢掉。
   const plainText = useMemo(() => blocksToPlainText(parseBlocks(fullText, turn.id)), [fullText, turn.id])
+  const turnTime = useMemo(() => new Date(turn.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), [turn.createdAt])
+  const messageHead = <div className="msg-head">
+    <span className="tm">{turnTime}</span>
+    {modelName && <span className="mb" title={modelName}>{modelName}</span>}
+  </div>
 
   if (streaming) {
     if (!streamedText.trim()) return null
     return (
       <div className="assistant-message streaming">
+        {messageHead}
         <div className="assistant-blocks">
           {streamBlocks.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
           <span className="streaming-caret" aria-hidden="true" />
@@ -67,6 +75,7 @@ export const AssistantMessageView = React.memo(function AssistantMessageView({ t
   if (!message) return null
   return (
     <div className={`assistant-message ${message.status}`}>
+      {messageHead}
       <div className="assistant-blocks">
         {message.blocks.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
       </div>

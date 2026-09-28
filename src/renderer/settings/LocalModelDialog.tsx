@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X } from 'lucide-react'
 import type { LocalModelApi, LocalModelInput, LocalModelSummary } from '../../shared/types'
+import { useDrawerExit } from '../use-drawer-exit'
 
 interface Props {
   /** null 表示新增；传入既有模型时表单回填且 api_key / headers 留空表示不修改。 */
@@ -61,6 +62,7 @@ export function LocalModelDialog({ initial, onClose, onSave }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const { closing, requestClose } = useDrawerExit(onClose)
 
   const headers = parseJsonField(headersText)
   const extraBody = parseJsonField(extraBodyText)
@@ -104,12 +106,12 @@ export function LocalModelDialog({ initial, onClose, onSave }: Props) {
     }
   }
 
-  return <div className="cap-drawer-layer" role="presentation">
-    <div className="cap-overlay" onClick={onClose} />
+  return <div className={`cap-drawer-layer${closing ? ' closing' : ''}`} role="presentation">
+    <div className="cap-overlay" onClick={requestClose} />
     <div className="cap-drawer local-model-drawer" role="dialog" aria-label={initial ? '编辑本地模型' : '添加本地模型'}>
       <div className="cap-drawer-header">
         <div><strong>{initial ? `编辑本地模型：${initial.name}` : '添加本地模型'}</strong><small>直连自建网关或第三方 API，配置只保存在本机</small></div>
-        <button className="icon-button" onClick={onClose} aria-label="关闭"><X size={15} /></button>
+        <button className="icon-button" onClick={requestClose} aria-label="关闭"><X size={15} /></button>
       </div>
       <div className="cap-drawer-body">
         <div className="cap-form">
@@ -160,7 +162,7 @@ export function LocalModelDialog({ initial, onClose, onSave }: Props) {
         </div>
       </div>
       <div className="cap-drawer-footer">
-        <button className="quick-secondary" onClick={onClose}>取消</button>
+        <button className="quick-secondary" onClick={requestClose}>取消</button>
         <button className="primary-button" onClick={() => void handleSave()} disabled={!canSave}>{initial ? '保存修改' : '添加模型'}</button>
       </div>
     </div>

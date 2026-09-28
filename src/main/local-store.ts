@@ -6,6 +6,7 @@ import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentFileChange, A
 import type { PermissionAction } from '../shared/permission-rules'
 import { sanitizeOverrides, type BuiltinPermissionPreset, type StoredPermissionProfile } from '../shared/permission-profiles'
 import { normalizeSandboxSettings } from '../shared/sandbox'
+import { normalizeAttachmentPolicy } from '../shared/attachment-policy'
 import { normalizePageSize, pageOffset, resolvePage } from '../shared/pagination'
 import { conversationFilter, LATEST_MODE, LATEST_STATUS } from './local-store/conversation-filter'
 import { applyMigrations, SCHEMA_SQL } from './local-store/schema'
@@ -84,11 +85,12 @@ export class LocalStore {
     const row = this.db.prepare('SELECT payload FROM app_settings WHERE key = ?').get('global') as { payload: string } | undefined
     const stored = parseJson<Partial<AppSettings>>(row?.payload, {})
     // sandbox 为嵌套对象，浅合并救不了缺字段的旧记录，单独归一化。
-    return { ...defaultSettings, ...stored, sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory) }
+    return { ...defaultSettings, ...stored, ...normalizeAttachmentPolicy(stored), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory) }
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
-    const next = { ...this.getSettings(), ...patch }
+    const merged = { ...this.getSettings(), ...patch }
+    const next = { ...merged, ...normalizeAttachmentPolicy(merged) }
     this.db.prepare(`
       INSERT INTO app_settings(key, payload, updated_at) VALUES ('global', ?, ?)
       ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at

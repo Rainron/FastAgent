@@ -33,6 +33,8 @@ export function showFatalError(error: unknown) {
   }
   reportToMain(error, { afterPaint: false })
   container.dataset.fatal = '1'
+  container.classList.remove('app-enter-pending')
+  container.classList.add('app-enter')
   container.innerHTML = ''
   const panel = document.createElement('div')
   panel.className = 'fatal-error'

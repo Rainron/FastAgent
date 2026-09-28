@@ -17,12 +17,17 @@ function App() {
   const [modelCount, setModelCount] = useState(0)
   const [firstModelId, setFirstModelId] = useState<number | null>(null)
   const [accessLoaded, setAccessLoaded] = useState(false)
+  const [accountLoginRequested, setAccountLoginRequested] = useState(false)
   const workspaceEntryRef = useRef(false)
 
   useEffect(() => {
     let cancelled = false
     void window.fastAgent.auth.snapshot().then(setAuth).catch(() => undefined)
-    const unsubscribe = window.fastAgent.onAuthState(setAuth)
+    const unsubscribe = window.fastAgent.onAuthState((next) => {
+      setAuth(next)
+      if (next.state === 'login_requested' || next.state === 'authenticating') setAccountLoginRequested(true)
+      if (next.state === 'ready') setAccountLoginRequested(false)
+    })
     void Promise.all([
       window.fastAgent.modelConnections.list().then((connections) => connections.flatMap((connection) => connection.models.map((model) => model.id))).catch(() => []),
       window.fastAgent.models.localList().then((models) => models.map((model) => model.id)).catch(() => [])
@@ -50,6 +55,14 @@ function App() {
 
   useEffect(() => {
     const root = document.documentElement
+    root.dataset.accent = settings?.accentColor ?? 'green'
+    root.dataset.fontSize = settings?.baseFontSize ?? 'medium'
+    root.dataset.density = settings?.uiDensity ?? 'comfortable'
+    root.dataset.glass = settings?.sidebarGlass ? 'true' : 'false'
+  }, [settings?.accentColor, settings?.baseFontSize, settings?.uiDensity, settings?.sidebarGlass])
+
+  useEffect(() => {
+    const root = document.documentElement
     const query = window.matchMedia('(prefers-reduced-motion: reduce)')
     const update = () => {
       const preference = settings?.motionPreference ?? 'system'
@@ -63,21 +76,21 @@ function App() {
 
   // 登录界面没有首屏数据要等，画出来就算就绪；不报的话主窗口要一直等到 2.5 秒上限。
   useEffect(() => {
-    if (!accessLoaded || auth.state === 'restoring' || auth.state === 'ready' || modelCount === 0 || workspaceEntryRef.current) return
+    if (!accessLoaded || accountLoginRequested || auth.state === 'restoring' || auth.state === 'ready' || modelCount === 0 || workspaceEntryRef.current) return
     workspaceEntryRef.current = true
     void window.fastAgent.auth.enterWorkspace(firstModelId ?? undefined).catch(() => { workspaceEntryRef.current = false })
-  }, [accessLoaded, auth.state, firstModelId, modelCount])
+  }, [accessLoaded, accountLoginRequested, auth.state, firstModelId, modelCount])
 
   useEffect(() => {
-    if (!accessLoaded || auth.state === 'restoring' || auth.state === 'ready') return
+    if (!accessLoaded || accountLoginRequested || auth.state === 'restoring' || auth.state === 'ready') return
     // 双 rAF：等这一帧真的绘制完再报，否则主窗口显示出来的仍是上一帧。
     let inner = 0
     const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => { void window.fastAgent.startup.ready() }) })
     return () => { cancelAnimationFrame(outer); cancelAnimationFrame(inner) }
-  }, [accessLoaded, auth.state])
+  }, [accessLoaded, accountLoginRequested, auth.state])
 
   if (auth.state === 'restoring' || !accessLoaded) return <BootScreen />
-  if (shouldShowLoginScreen(auth.state, modelCount)) return <LoginScreen />
+  if (shouldShowLoginScreen(auth.state, modelCount, accountLoginRequested)) return <LoginScreen />
   // 有模型但账号尚未进入工作区时，先等待主进程完成工作区初始化，避免子组件抢先调用 requireNamespace。
   if (auth.state !== 'ready') return <BootScreen />
   return <QueryClientProvider client={queryClient}>

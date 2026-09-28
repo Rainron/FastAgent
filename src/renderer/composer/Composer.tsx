@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, ListEnd, Paperclip, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, FileText, ListEnd, Paperclip, X } from 'lucide-react'
 import type { Attachment, ConversationMode, GitOperationResult, GitWorkspaceState, LocalSkillRecord, ModelOption, PermissionPreset, ShortcutSettings, ThinkingLevel, WorkspaceFileMatch } from '../../shared/types'
 import { findProfile, type PermissionProfile } from '../../shared/permission-profiles'
 import type { CompactionState } from '../conversation/compaction-state'
 import { ContextHealth, type ContextHealthData } from '../conversation/ContextHealth'
+import { AttachmentImage, formatAttachmentSize, isImageAttachment } from '../conversation/AttachmentImage'
 import { activeMentionQuery, applyMention, applySlashCommand, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
 import { FileMentionMenu } from '../conversation/FileMentionMenu'
 import { GitBranchTrigger } from '../conversation/GitBranchMenu'
@@ -15,13 +16,15 @@ import { thinkingLevelsForModel } from '../model-picker'
 import { effectiveInAppBinding, matchKeyboardBinding } from '../shortcuts'
 import { nextConversationMode } from '../workspace-actions'
 import type { WorkspaceConversation } from '../workspace/workspace-types'
-import { appendAttachments, attachmentFromFile, attachmentsFromClipboard } from './attachments'
+import { appendAttachments, attachmentFromFile } from './attachments'
 import { clampComposerHeight } from './composer-height'
 import { useComposerDensity } from './composer-density'
+import { MOTION_DURATIONS, motionEnabled } from '../motion'
 import { ComposerOverflow, ModelSelector, PermissionSelector, ReasoningSelector } from './ComposerSelectors'
 import { FullAccessDialog } from './FullAccessDialog'
 import { ResumeMenu } from './ResumeMenu'
 import { lineBoundary } from './composer-shortcuts'
+import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidationError, type AttachmentPolicy } from '../../shared/attachment-policy'
 
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
@@ -29,7 +32,39 @@ function SquareIcon() { return <span className="square-icon" aria-hidden="true" 
 export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, onSend, onCancel, contextHealth, compaction, onCompact, onCancelCompaction, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: { compaction: CompactionState | null; /** 输入框作用域的快捷键绑定，未设置时回落 DEFAULT_IN_APP_BINDINGS */ shortcuts: ShortcutSettings | undefined; contextHealth: ContextHealthData; onCompact: () => void; onNewChat: () => void; onSelectConversation: (item: WorkspaceConversation) => void; onClearConversation: () => Promise<void>; onInitProject: () => Promise<void>; /** /resume 的语境依据：当前选中项目 id，null 表示快速对话，列表按它过滤。 */ currentProjectId: string | null; mode: ConversationMode; /** 计划模式开启时显示 Plan 标记，回复只产出实施计划 */ planMode: boolean; onTogglePlanMode: () => void; /** Agent 仅在项目会话可用；快速对话固定 chat */ agentAvailable: boolean; setMode: (mode: ConversationMode) => void; model: ModelOption | null; selectedModelId: number | null; models: ModelOption[]; favoriteModelIds: number[]; recentModelIds: number[]; onSelectModel: (modelId: number) => void; thinkingLevel: ThinkingLevel; onThinkingLevelChange: (level: ThinkingLevel) => void; onToggleFavorite: (modelId: number) => void; permission: PermissionPreset | null; /** 可选档位，内置三档恒在最前 */ permissionProfiles: PermissionProfile[]; onPermissionChange: (preset: PermissionPreset) => void; /** 打开设置页的「Agent 执行权限」分区 */ onOpenPermissionSettings: () => void; attachmentRequest: number; runId: string | null; queue: QueuedPrompt[]; onEnqueue: (text: string, attachments: Attachment[]) => void; onRemoveQueued: (id: string) => void; quoteRequest: { text: string; nonce: number } | null; onSend: (text: string, attachments: Attachment[]) => Promise<void>; onCancel: () => void; onCancelCompaction?: () => void; height: number; heightPinned: boolean; onHeightChange: (height: number, pinned: boolean) => void; onManageModels: () => void; onNotice: (notice: string) => void; /** Git 分支展示与切换；null 时不渲染入口。 */ gitState: GitWorkspaceState | null; gitAnyRunActive: boolean; onGitCheckout: (branch: string) => Promise<GitOperationResult>; onGitCreate: (name: string) => Promise<GitOperationResult>; onGitStopAndCheckout: (branch: string) => Promise<GitOperationResult> }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
+  useEffect(() => {
+    void window.fastAgent.settings.get().then((next) => setAttachmentPolicy(normalizeAttachmentPolicy(next))).catch(() => undefined)
+    return window.fastAgent.settings.onChange((next) => setAttachmentPolicy(normalizeAttachmentPolicy(next)))
+  }, [])
+  // 退场窗口内待移除的队列项/附件 id：先播折叠动画，到点才真正从数据里删
+  const [removingQueueIds, setRemovingQueueIds] = useState<string[]>([])
+  const [removingAttachmentIds, setRemovingAttachmentIds] = useState<string[]>([])
+
+  // 撤销排队先播折叠动画，播完才真正从队列里删；动效关闭时直通
+  function requestRemoveQueued(id: string) {
+    if (removingQueueIds.includes(id)) return
+    if (!motionEnabled()) { onRemoveQueued(id); return }
+    setRemovingQueueIds((current) => current.includes(id) ? current : [...current, id])
+    setTimeout(() => {
+      onRemoveQueued(id)
+      setRemovingQueueIds((current) => current.filter((item) => item !== id))
+    }, MOTION_DURATIONS.expand + 40)
+  }
+
+  // 附件移除同理：先缩放淡出再删；动效关闭时直通
+  function requestRemoveAttachment(id: string) {
+    if (removingAttachmentIds.includes(id)) return
+    if (!motionEnabled()) { setAttachments((current) => current.filter((item) => item.id !== id)); return }
+    setRemovingAttachmentIds((current) => current.includes(id) ? current : [...current, id])
+    setTimeout(() => {
+      setAttachments((current) => current.filter((item) => item.id !== id))
+      setRemovingAttachmentIds((current) => current.filter((item) => item !== id))
+    }, MOTION_DURATIONS.expand + 40)
+  }
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 拖拽高亮：dragleave 在子元素间穿梭也会触发，用计数器进出配对才稳定
+  const [dragDepth, setDragDepth] = useState(0)
   // @ 文件提及：mention 为空表示当前没在输入提及。
   const [mention, setMention] = useState<MentionQuery | null>(null)
   const [mentionMatches, setMentionMatches] = useState<WorkspaceFileMatch[]>([])
@@ -486,15 +521,37 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     void submit()
   }
 
-  function addFiles(files: FileList | null) {
+  async function addFiles(files: FileList | null) {
     if (!files) return
-    setAttachments((current) => appendAttachments(current, Array.from(files).map(attachmentFromFile)))
+    const accepted: Attachment[] = []
+    for (const file of Array.from(files)) {
+      const error = attachmentValidationError(file, attachmentPolicy)
+      if (error) { onNotice(error); continue }
+      accepted.push(attachmentFromFile(file))
+    }
+    setAttachments((current) => appendAttachments(current, accepted))
   }
 
-  function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const pasted = attachmentsFromClipboard(event.clipboardData)
-    if (pasted.length === 0) return
-    setAttachments((current) => appendAttachments(current, pasted))
+  async function handleComposerPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const pasted = Array.from(event.clipboardData.files)
+    const attachments = await Promise.all(pasted.map(async (file) => {
+      const extension = file.type.split('/')[1] || 'png'
+      const fileName = file.name || `clipboard.${extension}`
+      const fileInfo = { name: fileName, type: file.type, size: file.size }
+      const validationError = attachmentValidationError(fileInfo, attachmentPolicy)
+      if (validationError) { onNotice(validationError); return null }
+      const localPath = window.fastAgent.files.getPath(file)
+      if (localPath) return attachmentFromFile(file)
+      if (!file.type.startsWith('image/')) return null
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      let binary = ''
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte) })
+      const dataUrl = `data:${file.type};base64,${btoa(binary)}`
+      const savedPath = await window.fastAgent.files.saveClipboardImage(dataUrl, fileName, file.type)
+      return { ...attachmentFromFile(file), localPath: savedPath, name: fileName }
+    })).then((items) => items.filter((item): item is NonNullable<typeof item> => Boolean(item)))
+    if (attachments.length === 0) return
+    setAttachments((current) => appendAttachments(current, attachments))
     // 文件管理器复制通常没有文本；混合剪贴板则保留文本的默认粘贴行为。
     if (!event.clipboardData.getData('text/plain')) event.preventDefault()
   }
@@ -517,18 +574,30 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     return () => window.removeEventListener('fastagent:shortcut', onShortcut)
   }, [])
 
-  return <div className="composer-wrap"><div className="conversation-content composer" ref={composerRef} style={{ height }}>
+  return <div className="composer-wrap"><div className={`conversation-content composer${dragDepth > 0 ? ' drag' : ''}`} ref={composerRef} style={{ height }}
+    onDragEnter={(event) => { event.preventDefault(); setDragDepth((depth) => depth + 1) }}
+    onDragOver={(event) => event.preventDefault()}
+    onDragLeave={(event) => { event.preventDefault(); setDragDepth((depth) => Math.max(0, depth - 1)) }}
+    onDrop={(event) => { event.preventDefault(); setDragDepth(0); addFiles(event.dataTransfer.files) }}
+  >
     <div className="composer-resize top" onPointerDown={startResize} aria-hidden="true" />
     <div className="composer-resize bottom" onPointerDown={startResize} aria-hidden="true" />
     <div className="composer-top">
       {queue.length > 0 && <div className="composer-queue">
-        {queue.map((item, index) => <div className="queue-item" key={item.id}>
+        {queue.map((item, index) => <div className={`queue-item${removingQueueIds.includes(item.id) ? ' removing' : ''}`} key={item.id}>
           <span className="queue-index">排队 {index + 1}</span>
           <span className="queue-text" title={item.text}>{item.text}{item.attachments.length > 0 ? `（${item.attachments.length} 个附件）` : ''}</span>
-          <button onClick={() => onRemoveQueued(item.id)} aria-label="撤销排队" title="撤销排队"><X size={12} /></button>
+          <button onClick={() => requestRemoveQueued(item.id)} aria-label="撤销排队" title="撤销排队"><X size={12} /></button>
         </div>)}
       </div>}
-      {attachments.map((file) => <span className="attachment-chip" key={file.id}><Paperclip size={12} />{file.name}<button onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))} aria-label={`移除 ${file.name}`}><X size={12} /></button></span>)}
+      {attachments.length > 0 && <div className="attach-strip">
+        {attachments.map((file) => <span className={`thumb${isImageAttachment(file) ? '' : ' file'}${removingAttachmentIds.includes(file.id) ? ' removing' : ''}`} key={file.id}>
+          {isImageAttachment(file)
+            ? <AttachmentImage attachment={file} />
+            : <><FileText size={15} /><span>{file.name.split('.').pop()?.slice(0, 6).toUpperCase() || 'FILE'}</span><span>{formatAttachmentSize(file.size)}</span></>}
+          <button className="x" onClick={() => requestRemoveAttachment(file.id)} aria-label={`移除 ${file.name}`} title={`移除 ${file.name}`}><X size={10} /></button>
+        </span>)}
+      </div>}
     </div>
     {resumeOpen && <ResumeMenu records={resumeList} activeIndex={resumeIndex} onHover={setResumeIndex} onSelect={pickResume} />}
     {mention?.trigger === '/' && slashCandidates.length > 0
@@ -563,17 +632,21 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       {gitState && <GitBranchTrigger state={gitState} compact={density === 'compact'} anyRunActive={gitAnyRunActive} onCheckout={onGitCheckout} onCreate={onGitCreate} onStopAndCheckout={onGitStopAndCheckout} />}
       <div className="toolbar-spacer" />
       {planMode && <button className="composer-chip plan-chip" onClick={onTogglePlanMode} title="计划模式已开启：只产出实施计划，Shift+Tab 或点击退出">Plan</button>}
-      <ContextHealth data={contextHealth} onCompact={onCompact} onCancelCompaction={onCancelCompaction} compact={density !== 'wide'} compaction={compaction} />
+      <ContextHealth data={contextHealth} onCompact={onCompact} onCancelCompaction={onCancelCompaction} compaction={compaction} />
       <button className="composer-chip mode-chip" onClick={() => agentAvailable && setMode(nextConversationMode(mode))} disabled={!agentAvailable} title={agentAvailable ? `当前模式：${modeLabel}` : '快速对话仅支持 Chat，项目会话可用 Agent'}><span className={`mode-mark ${mode}`} />{modeLabel}<ChevronDown size={13} /></button>
       {permission && !overflowed && <PermissionSelector value={permission} profiles={permissionProfiles} onChange={choosePermission} density={density} onOpenAdvanced={onOpenPermissionSettings} />}
       <ModelSelector model={model} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} open={pickerOpen} onOpenChange={setPickerOpen} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavorite} onManageModels={onManageModels} />
       {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} model={model} />}
       {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} model={model} />}
       {runId ? <>
-        {Boolean(text.trim()) && <button className="send-button queue" disabled={compaction?.status === 'running'} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={17} /></button>}
+        {Boolean(text.trim()) && <button className="send-button queue" disabled={compaction?.status === 'running'} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={16} /></button>}
         <button className="send-button stop" onClick={onCancel} disabled={compaction?.status === 'running'} aria-label="停止生成" title="停止生成"><SquareIcon /></button>
-      </> : <button className="send-button" onClick={() => void submit()} disabled={!text.trim() || compaction?.status === 'running'} aria-label="发送" title="发送"><ArrowUp size={17} /></button>}
+      </> : <button className="send-button" onClick={() => void submit()} disabled={!text.trim() || compaction?.status === 'running'} aria-label="发送" title="发送"><ArrowUp size={16} /></button>}
     </div>
+  </div>
+  <div className="composer-hints">
+    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件</span>
+    <span><kbd>Ctrl</kbd>+<kbd>G</kbd> 编辑器 · 拖入文件即可附加</span>
   </div>
   {fullPrompt && <FullAccessDialog profile={findProfile(permissionProfiles, fullPrompt)} onRespond={closeFullPrompt} />}
   </div>

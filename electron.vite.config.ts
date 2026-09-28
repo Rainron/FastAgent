@@ -17,6 +17,7 @@ export default defineConfig({
     }
   },
   renderer: {
+    server: { host: '127.0.0.1' },
     resolve: { alias: { '@renderer': resolve('src/renderer'), '@shared': resolve('src/shared') } },
     plugins: [react(), tailwindcss()],
     build: {

@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { SUBAGENT_LIMITS } from '../subagent/subagent-types'
 import { createSubAgentTool } from './subagent'
 import type { SubAgentConfig, SubAgentResult } from '../subagent/subagent-types'
 import type { ScheduledSubAgentTask } from '../subagent/subagent-scheduler'
@@ -64,5 +65,44 @@ describe('subagent 工具的按轮解析', () => {
     custom.push({ id: 'auditor', name: 'auditor', description: '', systemPrompt: '只读审计', tools: ['read'], allowWrite: false, allowMcp: false, thinkingLevel: 'low', maxTurns: 8 })
     const result = await tool.execute('call-2', { agent: 'auditor', task: '检查一下' }, undefined, undefined, {} as never) as { details: { results: SubAgentResult[] } }
     expect(result.details.results[0].status).toBe('completed')
+  })
+})
+
+describe('subagent 任务 id 与链式超时', () => {
+  it('同一毫秒内发起的并行任务 id 互不相同', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
+    try {
+      const ids: string[] = []
+      const tool = createSubAgentTool({
+        resolveSignal: () => new AbortController().signal,
+        resolveCustomAgents: () => [],
+        execute: async (task) => { ids.push(task.taskId); return completed(task) }
+      })
+      await tool.execute('call-1', { tasks: [{ agent: 'scout', task: '看 a' }, { agent: 'scout', task: '看 b' }] }, undefined, undefined, {} as never)
+      await tool.execute('call-2', { tasks: [{ agent: 'scout', task: '看 a' }, { agent: 'scout', task: '看 b' }] }, undefined, undefined, {} as never)
+      expect(ids).toHaveLength(4)
+      expect(new Set(ids).size).toBe(4)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
+  it('链式子任务同样受 maxRuntimeMs 约束', async () => {
+    vi.useFakeTimers()
+    try {
+      const tool = createSubAgentTool({
+        resolveSignal: () => new AbortController().signal,
+        resolveCustomAgents: () => [],
+        execute: (_task, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      })
+      const promise = tool.execute('call-1', { chain: [{ agent: 'scout', task: '第一步' }, { agent: 'scout', task: '第二步' }] }, undefined, undefined, {} as never) as Promise<{ details: { results: SubAgentResult[] } }>
+      await vi.advanceTimersByTimeAsync(SUBAGENT_LIMITS.maxRuntimeMs + 1)
+      const result = await promise
+      expect(result.details.results[0].status).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

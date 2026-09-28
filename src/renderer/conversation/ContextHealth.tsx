@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Activity, ChevronDown, Gauge } from 'lucide-react'
+import { Activity, ChevronDown } from 'lucide-react'
 import { useDismiss } from '../use-dismiss'
 import type { CompactionState } from './compaction-state'
 import type { ModelUsageSummary } from '../../shared/types'
@@ -27,7 +27,12 @@ function formatTokens(value: number) {
   return new Intl.NumberFormat('en-US').format(Math.max(0, Math.round(value)))
 }
 
-export const ContextHealth = memo(function ContextHealth({ data, onCompact, onCancelCompaction, compact, compaction }: { data: ContextHealthData; onCompact?: () => void; onCancelCompaction?: () => void; compact?: boolean; compaction?: CompactionState | null }) {
+/** 原型触发器上的环形表：外径 20、半径 8，弧长 50.3，用 dashoffset 表达占用比。 */
+function MeterRing({ ratio }: { ratio: number }) {
+  return <span className="meter" aria-hidden="true"><svg viewBox="0 0 20 20" width="18" height="18"><circle className="meter-track" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" /><circle className="meter-fill" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="50.3" strokeDashoffset={50.3 * (1 - ratio)} /></svg></span>
+}
+
+export const ContextHealth = memo(function ContextHealth({ data, onCompact, onCancelCompaction, compaction }: { data: ContextHealthData; onCompact?: () => void; onCancelCompaction?: () => void; compaction?: CompactionState | null }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -40,7 +45,7 @@ export const ContextHealth = memo(function ContextHealth({ data, onCompact, onCa
   const hitLabel = cacheHitLabel(latestUsage)
   return <div className={`context-health ${tone}`} ref={ref}>
     <button className="context-health-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" title={`上下文已使用 ${percent}%；最近请求缓存命中率 ${hitLabel}${data.usagePending ? '；本次用量待返回' : ''}`}>
-      <Gauge size={13} /><span>{compact ? `${percent}%` : `上下文 ${percent}%`}</span><span className="context-cache-trigger">缓存 {hitLabel}{data.usagePending && <span aria-label="本次用量待返回">*</span>}</span><ChevronDown size={12} />
+      <MeterRing ratio={ratio} /><span>{percent}%</span><ChevronDown size={12} />
     </button>
     {open && <div className="context-health-popover" role="dialog" aria-label="上下文使用情况">
       <div className="context-health-heading"><strong>上下文使用情况</strong><span>{formatTokens(data.estimatedTokens)} / {formatTokens(data.contextWindow)}</span></div>

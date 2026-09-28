@@ -1,9 +1,25 @@
-import React, { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, Boxes, CircleCheck, LoaderCircle, Plus, Plug, RefreshCw, Wrench } from 'lucide-react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, Boxes, CircleCheck, LoaderCircle, Plus, Plug, RefreshCw, Search, Wrench } from 'lucide-react'
 import type { Ability, McpAbility, SkillAbility } from '../../../../shared/types'
 import { pageOffset, resolvePage } from '../../../../shared/pagination'
 import { Pagination } from '../../../components/Pagination'
-import { abilityStats } from '../ability-view'
+import { isMcp, isSkill, type AbilitySort } from '../ability-view'
+import {
+  MINE_SORT_OPTIONS,
+  MINE_STATUS_OPTIONS,
+  displayableAbilities,
+  filterMineRows,
+  mineAttentionAbilities,
+  mineRowsForType,
+  mineStats,
+  readStoredAbilitiesTab,
+  resolveInitialAbilitiesTab,
+  sortMineRows,
+  writeStoredAbilitiesTab,
+  type AbilitiesPageTab,
+  type MineStatusFilter,
+  type MineTypeFilter
+} from '../mine-view'
 import { SkillList } from '../../skills/components/SkillList'
 import { SkillCreateForm, type SkillFormMode } from '../../skills/components/SkillCreateForm'
 import { SkillDetailPanel } from '../../skills/components/SkillDetailPanel'
@@ -15,8 +31,7 @@ import { AbilityMenu } from '../components/AbilityMenu'
 import { BundleExportDialog } from '../components/BundleExportDialog'
 import { BundleImportDialog } from '../components/BundleImportDialog'
 import { AbilityErrorBlock } from '../components/AbilityErrorBlock'
-import { AbilityLoadingState } from '../components/AbilityEmptyState'
-import { isMcp, isSkill } from '../ability-view'
+import { AbilityEmptyState, AbilityLoadingState } from '../components/AbilityEmptyState'
 import { useAbilities } from '../hooks/useAbilities'
 import { useAsyncActions } from '../hooks/useAsyncAction'
 import { usePagination } from '../../../use-pagination'
@@ -29,8 +44,6 @@ import type { SkillImportFormat } from '../../skills/services/skills-service'
 // 「发现」会发起多源网络请求，组件树也不小，不跟能力列表一起进首屏 chunk。
 const DiscoverTab = React.lazy(() => import('../../hub/pages/DiscoverTab').then(({ DiscoverTab }) => ({ default: DiscoverTab })))
 
-type AbilityTab = 'discover' | 'skills' | 'mcp'
-
 type Overlay =
   | { kind: 'skill-form'; form: SkillFormMode }
   | { kind: 'skill-import'; format: SkillImportFormat }
@@ -41,48 +54,87 @@ type Overlay =
   | { kind: 'bundle-import' }
   | null
 
-const TABS: Array<[AbilityTab, string]> = [
+const TABS: Array<[AbilitiesPageTab, string]> = [
   ['discover', '发现能力'],
-  ['skills', 'Skills'],
-  ['mcp', 'MCP']
+  ['mine', '我的能力']
 ]
 
-/** 「能力」一级页面：安装与管理合并在这里，「发现」Tab 即原来的 Hub 页。 */
+const TYPE_CHIPS: Array<[MineTypeFilter, string]> = [
+  ['all', '全部'],
+  ['skill', 'Skills'],
+  ['mcp', 'MCP'],
+  ['attention', '待处理']
+]
+
+/** 「能力」一级页面：发现与我的能力两个 Tab，统计与筛选只针对 Skill 与 MCP。 */
 export function AbilitiesPage({ onNotice }: {
   onNotice: (notice: string) => void
 }) {
-  const [tab, setTab] = useState<AbilityTab>('discover')
+  const [tab, setTab] = useState<AbilitiesPageTab>(() => resolveInitialAbilitiesTab(readStoredAbilitiesTab(), null) ?? 'discover')
+  const [typeFilter, setTypeFilter] = useState<MineTypeFilter>('all')
+  const [mineKeyword, setMineKeyword] = useState('')
+  const [mineStatus, setMineStatus] = useState<MineStatusFilter>('all')
+  const [mineSort, setMineSort] = useState<AbilitySort>('name')
   const [overlay, setOverlay] = useState<Overlay>(null)
   const { abilities, error, loading, refresh } = useAbilities()
   const { page: requestedPage, pageSize, setPage, setPageSize } = usePagination()
   const actions = useAsyncActions()
 
-  const skills = useMemo(() => (abilities ?? []).filter(isSkill), [abilities])
-  const servers = useMemo(() => (abilities ?? []).filter(isMcp), [abilities])
+  const displayable = useMemo(() => displayableAbilities(abilities ?? []), [abilities])
+  const skills = useMemo(() => displayable.filter(isSkill), [displayable])
+  const servers = useMemo(() => displayable.filter(isMcp), [displayable])
+  const attention = useMemo(() => mineAttentionAbilities(displayable), [displayable])
 
-  // 每个 Tab 只对同类能力分页，Tab 上的计数仍取全量；「发现」自带分页，不参与这里
-  const rows: Ability[] = tab === 'skills' ? skills : tab === 'mcp' ? servers : []
-  const total = rows.length
+  // 分页只作用于当前类型筛选出的行；统计行永远取全量，不随分页变化
+  const rows = useMemo(() => mineRowsForType(displayable, typeFilter), [displayable, typeFilter])
+  const filtered = useMemo(
+    () => sortMineRows(filterMineRows(rows, { keyword: mineKeyword, status: mineStatus }), mineSort),
+    [rows, mineKeyword, mineStatus, mineSort]
+  )
+  const total = filtered.length
   const page = resolvePage(requestedPage, total, pageSize)
-  const visible = useMemo(() => rows.slice(pageOffset(page, pageSize), pageOffset(page, pageSize) + pageSize), [rows, page, pageSize])
+  const visible = useMemo(() => filtered.slice(pageOffset(page, pageSize), pageOffset(page, pageSize) + pageSize), [filtered, page, pageSize])
   const visibleSkills = useMemo(() => visible.filter(isSkill), [visible])
   const visibleServers = useMemo(() => visible.filter(isMcp), [visible])
+  const filteredSkillCount = useMemo(() => filtered.filter(isSkill).length, [filtered])
+  const filteredServerCount = useMemo(() => filtered.filter(isMcp).length, [filtered])
+  // 分区是否渲染取决于该类型在 chips 口径下有没有行，与关键词筛选结果无关
+  const showSkillsSection = typeFilter === 'all' || typeFilter === 'attention' ? skills.length > 0 || (typeFilter === 'attention' && attention.some(isSkill)) : typeFilter === 'skill'
+  const showServersSection = typeFilter === 'all' || typeFilter === 'attention' ? servers.length > 0 || (typeFilter === 'attention' && attention.some(isMcp)) : typeFilter === 'mcp'
 
-  // 首次加载完成后，有已安装能力优先进入管理页；之后用户切回发现页不再被重置。
-  const initialTabResolved = React.useRef(false)
+  // 首次进入：没记住 Tab 时，有已安装能力默认开「我的能力」；用户此后切 Tab 只写记忆、不再被覆盖
+  const initialTabResolved = useRef(false)
   useEffect(() => {
     if (initialTabResolved.current || !abilities) return
     initialTabResolved.current = true
-    if (abilities.length > 0) setTab('skills')
-  }, [abilities])
+    const next = resolveInitialAbilitiesTab(readStoredAbilitiesTab(), displayable)
+    if (next && next !== tab) setTab(next)
+  }, [abilities, displayable, tab])
 
-  // 「发现」Tab 装完能力后要跳回对应列表并打开详情，与外部深链走同一条路径。
+  function switchTab(next: AbilitiesPageTab) {
+    setTab(next)
+    writeStoredAbilitiesTab(next)
+    setPage(1)
+  }
+
+  function switchTypeFilter(next: MineTypeFilter) {
+    setTypeFilter(next)
+    setPage(1)
+  }
+
+  // 「发现」装完能力后要跳回「我的能力」并打开详情，与外部深链走同一条路径；
+  // 顺带清掉可能把目标筛掉的查询，保证定位得到。
   const focusAbility = useEventCallback((ability: Ability) => {
-    setTab(ability.type === 'skill' ? 'skills' : 'mcp')
+    setTab('mine')
+    writeStoredAbilitiesTab('mine')
+    setTypeFilter(ability.type === 'skill' ? 'skill' : 'mcp')
+    setMineKeyword('')
+    setMineStatus('all')
+    setPage(1)
     setOverlay(isSkill(ability) ? { kind: 'skill-detail', ability } : { kind: 'mcp-detail', ability: ability as McpAbility })
   })
 
-  // 「发现」Tab 刚装完的能力还不在 abilities 里，先记下 id，等刷新回来再定位。
+  // 「发现」刚装完的能力还不在 abilities 里，先记下 id，等刷新回来再定位。
   const [pendingFocusId, setPendingFocusId] = useState<string | null>(null)
   const openAbilityById = useEventCallback((abilityId: string) => { setPendingFocusId(abilityId); void refresh() })
 
@@ -142,46 +194,87 @@ export function AbilitiesPage({ onNotice }: {
       </div>
     </div>
 
-    <nav className="capabilities-tabs" role="tablist" aria-label="能力类型">
+    <nav className="capabilities-tabs" role="tablist" aria-label="能力分区">
       {TABS.map(([key, label]) => (
-        <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => { setTab(key); setPage(1) }}>
-          {label}{key === 'skills' && skills.length ? ` (${skills.length})` : key === 'mcp' && servers.length ? ` (${servers.length})` : ''}
-        </button>
+        <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => switchTab(key)}>{label}</button>
       ))}
     </nav>
 
     <div className="capabilities-content">
-      {tab !== 'discover' && abilities && <AbilitySummary abilities={abilities} />}
       {actions.errorOf('mcp-import') && <AbilityErrorBlock title="导入失败" message={actions.errorOf('mcp-import') as string} />}
       {error ? <AbilityErrorBlock
         title="能力列表加载失败"
         message={error}
         actions={<button className="small-control" onClick={() => void refresh()}>重试</button>}
       /> : loading && !abilities ? <AbilityLoadingState /> : <>
-        {tab === 'skills' && <SkillList
-          skills={visibleSkills}
-          onRefresh={refresh}
-          onNotice={onNotice}
-          onCreate={() => setOverlay({ kind: 'skill-form', form: { mode: 'create' } })}
-          onImport={() => setOverlay({ kind: 'skill-import', format: 'directory' })}
-          onEdit={(name) => setOverlay({ kind: 'skill-form', form: { mode: 'edit', name } })}
-          onInspect={(ability) => setOverlay({ kind: 'skill-detail', ability })}
-          onOpenPlugins={() => setTab('discover')}
-        />}
-        {tab === 'mcp' && <McpServerList
-          servers={visibleServers}
-          onRefresh={refresh}
-          onNotice={onNotice}
-          onCreate={() => setOverlay({ kind: 'mcp-form' })}
-          onImport={() => void importMcp()}
-          onEdit={(ability) => setOverlay({ kind: 'mcp-form', ability })}
-          onInspect={(ability) => setOverlay({ kind: 'mcp-detail', ability })}
-          onOpenPlugins={() => setTab('discover')}
-        />}
+        {tab === 'mine' && abilities && <>
+          <AbilitySummary abilities={abilities} />
+          {displayable.length === 0 ? <AbilityEmptyState
+            title="还没有已安装的能力"
+            description="从「发现能力」安装，或使用右上角「添加能力」手动创建、导入。"
+            action={<button className="primary-button" onClick={() => switchTab('discover')}>去发现能力</button>}
+          /> : <>
+            <div className="cap-toolbar cap-mine-toolbar">
+              <div className="cap-chips" role="group" aria-label="能力类型">
+                {TYPE_CHIPS.map(([key, label]) => {
+                  const count = key === 'all' ? displayable.length : key === 'skill' ? skills.length : key === 'mcp' ? servers.length : attention.length
+                  return <button key={key} className={typeFilter === key ? 'active' : ''} onClick={() => switchTypeFilter(key)}>
+                    {label}{count ? ` (${count})` : ''}
+                  </button>
+                })}
+              </div>
+              <div className="cap-search">
+                <Search size={14} />
+                <input
+                  value={mineKeyword}
+                  onChange={(event) => { setMineKeyword(event.target.value); setPage(1) }}
+                  placeholder="搜索我的能力…"
+                  aria-label="搜索我的能力"
+                />
+              </div>
+              <label className="ability-select"><span>状态</span>
+                <select value={mineStatus} onChange={(event) => { setMineStatus(event.target.value as MineStatusFilter); setPage(1) }}>
+                  {MINE_STATUS_OPTIONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+              <label className="ability-select"><span>排序</span>
+                <select value={mineSort} onChange={(event) => setMineSort(event.target.value as AbilitySort)}>
+                  {MINE_SORT_OPTIONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+            </div>
+            {showSkillsSection && <section className="cap-mine-section">
+              {typeFilter !== 'skill' && <div className="cap-section-heading"><span>Skills</span><small>{filteredSkillCount}</small></div>}
+              <SkillList
+                embedded
+                skills={visibleSkills}
+                onRefresh={refresh}
+                onNotice={onNotice}
+                onCreate={() => setOverlay({ kind: 'skill-form', form: { mode: 'create' } })}
+                onImport={() => setOverlay({ kind: 'skill-import', format: 'directory' })}
+                onEdit={(name) => setOverlay({ kind: 'skill-form', form: { mode: 'edit', name } })}
+                onInspect={(ability) => setOverlay({ kind: 'skill-detail', ability })}
+              />
+            </section>}
+            {showServersSection && <section className="cap-mine-section">
+              {typeFilter !== 'mcp' && <div className="cap-section-heading"><span>MCP Servers</span><small>{filteredServerCount}</small></div>}
+              <McpServerList
+                embedded
+                servers={visibleServers}
+                onRefresh={refresh}
+                onNotice={onNotice}
+                onCreate={() => setOverlay({ kind: 'mcp-form' })}
+                onImport={() => void importMcp()}
+                onEdit={(ability) => setOverlay({ kind: 'mcp-form', ability })}
+                onInspect={(ability) => setOverlay({ kind: 'mcp-detail', ability })}
+              />
+            </section>}
+            <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />
+          </>}
+        </>}
         {tab === 'discover' && <React.Suspense fallback={<AbilityLoadingState />}>
           <DiscoverTab onNotice={onNotice} onOpenAbility={openAbilityById} />
         </React.Suspense>}
-        {tab !== 'discover' && <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />}
       </>}
     </div>
 
@@ -225,7 +318,7 @@ export function AbilitiesPage({ onNotice }: {
 }
 
 function AbilitySummary({ abilities }: { abilities: Ability[] }) {
-  const stats = abilityStats(abilities)
+  const stats = mineStats(abilities)
   const cards = [
     { label: '已安装', value: stats.total, icon: <Boxes size={15} /> },
     { label: '已启用', value: stats.enabled, icon: <CircleCheck size={15} />, tone: 'success' },

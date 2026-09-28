@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, CircleDot, Command, Menu, MoreHorizontal, PanelRight } from 'lucide-react'
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Command, Moon, PanelLeft, PanelRight, Sun } from 'lucide-react'
 import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, AuthSnapshot, BootstrapData, ConversationMode, ConversationRunState, ConversationTurn, GitOperationResult, LocalModelInput, LocalModelSummary, TodoItem, ToolCallRecord } from '../../shared/types'
 import { createStreamBuffer } from '../ai-response/stream-buffer'
 import { formatFileReference, type FileReference } from '../ai-response/file-reference'
@@ -15,12 +15,14 @@ import { conversationMetaNow, mergeStreamedText, normalizeRenameInput, readModel
 import { ConversationInspector, type ConversationInspectorData } from '../conversation/ConversationInspector'
 import type { ContextHealthData } from '../conversation/ContextHealth'
 import { EmptyConversation, MessageList } from '../conversation/MessageList'
+import { LightboxLayer } from '../conversation/Lightbox'
+import { FindBar } from '../conversation/FindBar'
 import { MessageContextMenu, selectionText, type ContextMenuItem } from '../conversation/message-context-menu'
 import { nextFollowState, scrollNavAction, type ScrollNavAction } from '../conversation/auto-scroll'
 import { dropNextQueuedPrompt, enqueuePrompt, removeQueuedPrompt, takeNextQueuedPrompt, type QueuedPrompt } from '../conversation/prompt-queue'
 import { isRunConflictError } from '../../shared/active-runs'
 import { cleanIpcError } from '../ipc-error'
-import { conversationModelId, initialSelectedModelId, mergeModelOptions, normalizeThinkingLevel } from '../model-picker'
+import { conversationModelId, defaultThinkingLevel, initialSelectedModelId, mergeModelOptions, normalizeThinkingLevel } from '../model-picker'
 import { subscribeLocalModels } from '../local-model-sync'
 import { defaultModePrompts, modePromptFor, normalizeSavedModePrompt, withPlanModePrompt, type ModePrompts } from '../mode-prompts'
 import { defaultPermissionForMode } from '../permissions'
@@ -144,7 +146,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null)
   // 账户级默认模型：新会话用它开场，只有手动切换模型才会更新，打开历史会话不影响。
   const [defaultModelId, setDefaultModelId] = useState<number | null>(null)
-  const [thinkingLevel, setThinkingLevel] = useState<import('../../shared/types').ThinkingLevel>('auto')
+  const [thinkingLevel, setThinkingLevel] = useState<import('../../shared/types').ThinkingLevel>('low')
   const [modePrompts, setModePrompts] = useState<ModePrompts>({ ...defaultModePrompts })
   const [favoriteModelIds, setFavoriteModelIds] = useState<number[]>([])
   const [recentModelIds, setRecentModelIds] = useState<number[]>([])
@@ -175,8 +177,19 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [notice, setNotice] = useState('')
   /** 提示条上的附加动作；启动告警用它挂「查看日志」，撤销仍走 undoTurn 自己的分支。 */
   const [noticeAction, setNoticeAction] = useState<{ label: string; run: () => void } | null>(null)
+  const [noticeClosing, setNoticeClosing] = useState(false)
   const [artifactFile, setArtifactFile] = useState<FileReference | null>(null)
   const [scrollNav, setScrollNav] = useState<ScrollNavAction>('none')
+  const [headerStuck, setHeaderStuck] = useState(false)
+  // 标题栏主题按钮按「实际生效」的亮暗显示日月；system 主题跟随系统变化时同步刷新。
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
+  useEffect(() => {
+    const query = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+    query.addEventListener('change', onChange)
+    return () => query.removeEventListener('change', onChange)
+  }, [])
+  const effectiveDark = theme === 'dark' || (theme === 'system' && systemDark)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 是否跟随底部；用 ref 保存，滚动回调里不需要重新绑定。
   const followRef = useRef(true)
@@ -190,6 +203,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const queuedPrompts = selectedConversationId ? queuedPromptsByConversation[selectedConversationId] ?? [] : []
   // 消息右键菜单状态；quoteRequest 把「引用到输入框」转交给 Composer。
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
+  // Ctrl+F 页内查找：仅对话分区生效，request 每次按下自增以重新聚焦查找输入。
+  const [findOpen, setFindOpen] = useState(false)
+  const [findRequest, setFindRequest] = useState(0)
   const [conversationEntering, setConversationEntering] = useState(false)
   const [quoteRequest, setQuoteRequest] = useState<{ text: string; nonce: number } | null>(null)
   const [contextHealth, setContextHealth] = useState<ContextHealthData>(EMPTY_CONTEXT_HEALTH)
@@ -307,14 +323,15 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       const next = initialSelectedModelId(allModels, bootstrap?.default_model_id, selectedModelId)
       setSelectedModelId(next)
       const selected = allModels.find((item) => item.id === next)
-      setThinkingLevel(normalizeThinkingLevel(bootstrap?.default_thinking_level || selected?.thinking_default, selected))
+      setThinkingLevel(defaultThinkingLevel(bootstrap?.default_thinking_level || selected?.thinking_default, selected))
     }
   }, [allModels, bootstrap, bootstrapLoaded, localModelsLoaded, preferencesLoaded, selectedModelId])
 
   useEffect(() => {
     if (!bootstrapLoaded || !localModelsLoaded) return
     const model = allModels.find((item) => item.id === selectedModelId)
-    setThinkingLevel((current) => normalizeThinkingLevel(current, model))
+    // 模型尚未就绪时不归一：空能力会把刚落位的默认档冲回 auto。
+    if (model) setThinkingLevel((current) => normalizeThinkingLevel(current, model))
   }, [allModels, bootstrapLoaded, localModelsLoaded, selectedModelId])
 
   useEffect(() => {
@@ -327,10 +344,19 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
 
   useEffect(() => {
     if (!notice) return
+    // 换新提示时复位退场标记，重新计时；真正的清空交给退场 effect。
+    setNoticeClosing(false)
     // 带动作的提示要留够点击时间，2.4 秒不足以让人看完再点。
-    const timer = window.setTimeout(() => { setNotice(''); setNoticeAction(null) }, undoTurn || noticeAction ? 5000 : 2400)
+    const timer = window.setTimeout(() => setNoticeClosing(true), undoTurn || noticeAction ? 5000 : 2400)
     return () => window.clearTimeout(timer)
   }, [notice, noticeAction, undoTurn])
+
+  // 提示条退场窗口：先播淡出再卸载，避免到点直接闪没。
+  useEffect(() => {
+    if (!noticeClosing) return
+    const timer = window.setTimeout(() => { setNotice(''); setNoticeAction(null); setNoticeClosing(false) }, MOTION_DURATIONS.popoverClose)
+    return () => window.clearTimeout(timer)
+  }, [noticeClosing])
 
   useEffect(() => {
     if (!undoTurn) return
@@ -538,6 +564,25 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
+
+  // Ctrl+F 打开页内查找：只在对话分区拦截（其余分区交给浏览器默认行为），重复按下重新聚焦。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'f' || event.shiftKey || event.altKey) return
+      if (!event.ctrlKey && !event.metaKey) return
+      if (section !== 'chats' || batchKind === 'conversations') return
+      event.preventDefault()
+      setFindOpen(true)
+      setFindRequest((value) => value + 1)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [section, batchKind])
+
+  // 离开对话分区（含进入批量管理）时收起查找条，避免高亮残留在别的分区上。
+  useEffect(() => {
+    if (section !== 'chats' || batchKind === 'conversations') setFindOpen(false)
+  }, [section, batchKind])
 
   useAppShortcuts(settings?.shortcuts, {
     newConversation: () => startNewChat(),
@@ -797,7 +842,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setActiveTurnId(turn.id)
     try {
       await window.fastAgent.conversations.updateTurn(turn.id, { userMessage: reset.userMessage, attachments, assistantMessage: null, activity: reset.activity, status: 'working' })
-      const result = await window.fastAgent.chat.send({ conversationId: turn.conversationId, turnId: turn.id, mode: turn.runtimeConfig.mode, modelId: turn.runtimeConfig.modelId, thinkingLevel: turn.runtimeConfig.thinkingLevel, permission: turn.runtimeConfig.permission, modePrompt: withPlanModePrompt(modePromptFor(modePrompts, turn.runtimeConfig.mode), planMode), planMode, prompt, attachments })
+      // 重试 / 重新生成 / 编辑重发都以底部对话框当前选择的模型与思考级别为准，不复用被重跑那一轮的存档。
+      const result = await window.fastAgent.chat.send({ conversationId: turn.conversationId, turnId: turn.id, mode: turn.runtimeConfig.mode, modelId: selectedModelId, thinkingLevel, permission: turn.runtimeConfig.permission, modePrompt: withPlanModePrompt(modePromptFor(modePrompts, turn.runtimeConfig.mode), planMode), planMode, prompt, attachments })
       runTurnRef.current.set(result.runId, turn.id)
       setRunIdsByConversation((current) => ({ ...current, [turn.conversationId]: result.runId }))
     } catch (error) {
@@ -1031,6 +1077,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     const node = scrollRef.current
     if (!node) return
     if (followRef.current) node.scrollTop = node.scrollHeight
+    const stuckNow = node.scrollTop > 6
+    setHeaderStuck((current) => (current === stuckNow ? current : stuckNow))
     setScrollNav(scrollNavAction(readScrollMetrics(node), runId !== null))
   }, [turns, runId, selectedConversationId])
 
@@ -1040,6 +1088,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     const metrics = readScrollMetrics(node)
     followRef.current = nextFollowState(followRef.current, metrics)
     setScrollNav(scrollNavAction(metrics, runId !== null))
+    // 原型交互：头部吸顶后才浮起背景与边框，阈值只踩一次setState，不随滚动条抖动
+    const stuck = node.scrollTop > 6
+    setHeaderStuck((current) => (current === stuck ? current : stuck))
   }
 
   function jumpConversation(target: 'top' | 'bottom') {
@@ -1124,12 +1175,15 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     await window.fastAgent.models.localDelete(id)
   }
 
-  function handleTestLocal(id: number) {
-    return window.fastAgent.models.localTest(id)
+  function handleTestDialogue(id: number) {
+    return window.fastAgent.models.testDialogue(id)
   }
 
   // 下面这批回调全部传给 memo 过的子组件（Sidebar / Composer / SectionView / MessageList）。
   // 用 useEventCallback 定住引用，流式输出每帧的重渲染才不会穿透 memo。
+  const handleCloseFind = useEventCallback(() => setFindOpen(false))
+  /** 查找跳转会主动离开底部，必须停掉贴底跟随，否则流式输出立刻把视口拽回去。 */
+  const handleFindBeforeJump = useEventCallback(() => { followRef.current = false })
   const handleNotice = useEventCallback((next: string) => setNotice(next))
   const handleNavigate = useEventCallback(navigate)
   const handleNewChat = useEventCallback(() => startNewChat())
@@ -1167,7 +1221,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const handleCreateLocalModel = useEventCallback(handleCreateLocal)
   const handleUpdateLocalModel = useEventCallback(handleUpdateLocal)
   const handleDeleteLocalModel = useEventCallback(handleDeleteLocal)
-  const handleTestLocalModel = useEventCallback(handleTestLocal)
+  const handleTestDialogueModel = useEventCallback(handleTestDialogue)
   const handleCopyText = useEventCallback((text: string) => { void copyText(text) })
   const handleDeleteTurn = useEventCallback((turnId: string) => { void deleteTurn(turnId) })
   const handleRerunTurn = useEventCallback((turn: ConversationTurn) => { void rerunTurn(turn) })
@@ -1203,8 +1257,12 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setQueuedPromptsByConversation((current) => ({ ...current, [selectedConversationId]: enqueuePrompt(current[selectedConversationId] ?? [], text, attachments) }))
   })
   const handleRemoveQueued = useEventCallback((id: string) => {
-    if (!selectedConversationId) return
-    setQueuedPromptsByConversation((current) => ({ ...current, [selectedConversationId]: removeQueuedPrompt(current[selectedConversationId] ?? [], id) }))
+    // 按 id 清全部会话的队列：撤销排队有退场动画窗口，期间切换会话也不至于漏删
+    setQueuedPromptsByConversation((current) => {
+      const next: Record<string, QueuedPrompt[]> = {}
+      for (const [key, list] of Object.entries(current)) next[key] = removeQueuedPrompt(list, id)
+      return next
+    })
   })
   const handleCancelRun = useEventCallback(() => {
     if (!runId) return
@@ -1245,24 +1303,29 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     <div className="app-shell">
       <header className="titlebar">
         <div className="titlebar-drag">
-          <button className="icon-button no-drag" onClick={handleToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><Menu size={17} /></button>
+          <button className="icon-button no-drag" onClick={handleToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><PanelLeft size={16} /></button>
           <div className="window-nav no-drag"><button className="icon-button" onClick={() => stepHistory(-1)} disabled={navigation.index === 0} aria-label="后退" title="后退"><ChevronLeft size={16} /></button><button className="icon-button" onClick={() => stepHistory(1)} disabled={navigation.index >= navigation.entries.length - 1} aria-label="前进" title="前进"><ChevronRight size={16} /></button></div>
           <span className="window-title">{workspaceRoot ? workspaceRoot.split('\\').pop() : 'FastAgent'}</span>
         </div>
+        <div className="tb-center seg no-drag" role="tablist" aria-label="视图切换">
+          <button role="tab" aria-selected={section === 'chats'} className={section === 'chats' ? 'on' : ''} onClick={() => navigate('chats')}>主界面</button>
+          <button role="tab" aria-selected={section === 'settings'} className={section === 'settings' ? 'on' : ''} onClick={() => openSettings('general')}>设置</button>
+        </div>
         <div className="titlebar-actions no-drag">
-          <button className="icon-button" onClick={() => navigate('search')} aria-label="搜索与命令" title="搜索与命令"><Command size={16} /></button>
-          <button className="icon-button" aria-label="切换主题" title="切换主题" onClick={() => { const next = theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark'; onThemeChange(next); setNotice(next === 'dark' ? '已切换到深色主题' : next === 'light' ? '已切换到浅色主题' : '已跟随系统主题') }}><CircleDot size={16} /></button>
-          <button className="icon-button" onClick={() => setNotice('更多窗口操作将在后续版本提供')} aria-label="更多操作" title="更多操作"><MoreHorizontal size={17} /></button>
+          <button className="icon-button" onClick={() => navigate('search')} aria-label="搜索与命令" title="搜索与命令"><Command size={15} /></button>
+          <button className="icon-button" aria-label="切换主题" title="切换主题" onClick={() => { const next = effectiveDark ? 'light' : 'dark'; onThemeChange(next); setNotice(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题') }}>{effectiveDark ? <Moon size={15} /> : <Sun size={15} />}</button>
         </div>
       </header>
       <div className="shell-body">
         <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
         <main className={`conversation ${artifactOpen ? 'with-artifact' : ''}`}>
           {section === 'chats' && batchKind !== 'conversations' ? <>
-            <div className="conversation-header">
+            <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
               <div><span className="status-dot" /> <span>{conversationTitle}</span></div>
               <div className="header-actions">{selectedConversationId && <ItemActions onDelete={() => deleteConversation(selectedConversationId)} onArchive={() => archiveConversation(selectedConversationId)} onBatch={() => startBatch('conversations')} onInspect={() => void openInspector(selectedConversationId)} />}<button className="icon-button" aria-label="打开资源面板" title="打开资源面板" onClick={() => { closeInspector(); setArtifactOpen((value) => !value) }}><PanelRight size={16} /></button></div>
             </div>
+            {/* 页内查找条：挂在对话头下沿，搜索范围就是上面的滚动容器 */}
+            <FindBar open={findOpen} request={findRequest} containerRef={scrollRef} contentVersion={turns} scopeKey={selectedConversationId} onClose={handleCloseFind} onBeforeJump={handleFindBeforeJump} />
             <div className={`conversation-scroll ${conversationEntering ? 'conversation-entering' : ''}`} ref={scrollRef} onScroll={onConversationScroll}>
               {turns.length === 0 ? <EmptyConversation onPickWorkspace={handlePickWorkspace} onAddAttachment={() => setAttachmentRequest((value) => value + 1)} onRunAgent={agentAvailable ? () => { setMode('agent'); applyDefaultPermission('ask'); setNotice('已切换到智能体模式') } : undefined} /> : <MessageList turns={turns} models={allModels} onCopy={handleCopyText} onDelete={handleDeleteTurn} onRetry={handleRerunTurn} onRegenerate={handleRerunTurn} onEdit={handleEditTurn} onContinue={handleContinueTurn} onShowContextMenu={showMessageContextMenu} todosByTurn={todosByTurn} />}
             </div>
@@ -1273,13 +1336,15 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             <Composer shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={mode === 'chat' ? null : permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
-          </> : <SectionView key={section} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} settingsCategory={settingsCategory} settingsRequest={settingsRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onCreateLocal={handleCreateLocalModel} onUpdateLocal={handleUpdateLocalModel} onDeleteLocal={handleDeleteLocalModel} onTestLocal={handleTestLocalModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
+          </> : <SectionView key={section} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} settingsCategory={settingsCategory} settingsRequest={settingsRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onCreateLocal={handleCreateLocalModel} onUpdateLocal={handleUpdateLocalModel} onDeleteLocal={handleDeleteLocalModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} />}
         {inspector && <ConversationInspector data={inspector} compaction={inspectorId ? compactionStates[inspectorId] ?? null : null} onCancelCompaction={() => { if (inspectorId) { void window.fastAgent.conversations.cancelCompaction(inspectorId); setCompactionStates((current) => cancelCompaction(current, inspectorId)) } }} onClose={closeInspector} onRefresh={() => { if (inspectorId) void openInspector(inspectorId) }} onCompact={() => void compactConversationNow(inspectorId)} />}
         {Object.entries(compactionStates).filter(([, state]) => state.status === 'failed' || state.status === 'timed_out').map(([conversationId, state]) => <CompactionFallbackDialog key={`${conversationId}:${state.taskId}`} state={state} models={allModels} onRetry={(modelId) => void compactConversationNow(conversationId, modelId)} onCancel={() => { void window.fastAgent.conversations.cancelCompaction(conversationId); setCompactionStates((current) => cancelCompaction(current, conversationId)) }} onClose={() => setCompactionStates((current) => clearCompaction(current, conversationId))} />)}
       </div>
-      {notice && <div className="toast" role="status"><span>{notice}</span>{undoTurn && <button className="toast-action" onClick={() => void restoreTurn()}>撤销</button>}{noticeAction && <button className="toast-action" onClick={noticeAction.run}>{noticeAction.label}</button>}</div>}
+      {/* key 绑定文本：同一条 toast 元素不重挂，换新提示时重放入场动画 */}
+      {notice && <div key={notice} className={`toast${noticeClosing ? ' closing' : ''}`} role="status"><span>{notice}</span>{undoTurn && <button className="toast-action" onClick={() => void restoreTurn()}>撤销</button>}{noticeAction && <button className="toast-action" onClick={noticeAction.run}>{noticeAction.label}</button>}</div>}
+      <LightboxLayer />
       {contextMenu && <MessageContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
       {approvals.filter((item) => item.conversationId === selectedConversationId).map((item) => <ApprovalDialog key={item.request.id} request={item.request} onRespond={(decision, answer) => void respondApproval(item.request.id, decision, answer)} />)}
     </div>

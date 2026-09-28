@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
-import { Archive, ChevronRight, Copy, Edit3, FolderOpen, MoreHorizontal, Paperclip, Pause, RotateCw, TerminalSquare, Trash2 } from 'lucide-react'
+import { Archive, ChevronRight, Copy, Edit3, FolderOpen, MoreHorizontal, Paperclip, Pause, RotateCw, TerminalSquare, Trash2, Zap } from 'lucide-react'
 import type { AgentEvent, Attachment, Citation, ConversationTurn, ModelOption, TodoItem } from '../../shared/types'
 import { groupToolCallEvents } from '../activity'
 import { AssistantMessageView } from '../ai-response/AssistantMessage'
@@ -7,8 +7,11 @@ import { normalizeFlagEmoji } from '../ai-response/flag-emoji'
 import { openExternalLink, useResponseActions } from '../ai-response/response-context'
 import { sanitizeLinkHref } from '../ai-response/sanitize-url'
 import { appendAttachments, attachmentsFromClipboard } from '../composer/attachments'
+import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import { buildExecutionTrace } from '../execution-trace'
 import { useDismiss } from '../use-dismiss'
+import { useDelayedUnmount } from '../use-delayed-unmount'
+import { MOTION_DURATIONS } from '../motion'
 import { ExecutionTraceView } from './ExecutionTrace'
 import { modelChangeTurnIds } from './model-change-marker'
 import { TodoPanel, type TodoRunStatus } from './TodoPanel'
@@ -25,7 +28,7 @@ export const MessageList = React.memo(function MessageList({ turns, models, todo
     knownTurnIds.current!.add(turn.id)
     return <React.Fragment key={turn.id}>
       {modelChanges.has(turn.id) && <ModelChangeMarker label={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} />}
-      <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} />
+      <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} modelName={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} />
     </React.Fragment>
   })}</div>
 })
@@ -35,7 +38,7 @@ function ModelChangeMarker({ label }: { label?: string }) {
   return <div className="model-change-marker"><span className="model-change-line" />{label ? `已切换到 ${label}` : '已切换模型'}<span className="model-change-line" /></div>
 }
 
-const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, turn, todos, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { isNew: boolean; turn: ConversationTurn; todos?: TodoItem[]; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
+const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, turn, todos, modelName, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { isNew: boolean; turn: ConversationTurn; todos?: TodoItem[]; modelName?: string; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(turn.userMessage.text)
   const [editAttachments, setEditAttachments] = useState<Attachment[]>(turn.attachments)
@@ -52,9 +55,14 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
   // 中断原因来自事件流里最后一条 interrupted 事件；没有事件（历史库）时回退到通用文案。
   const interruption = turn.status === 'interrupted' ? activity?.events.filter((event) => event.type === 'interrupted').at(-1)?.detail || '执行被意外中断' : null
   const shareText = `${turn.userMessage.text}\n\n${turn.assistantMessage?.text || ''}`.trim()
+  const turnTime = new Date(turn.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const imageAttachments = turn.attachments.filter(isImageAttachment)
+  const fileAttachments = turn.attachments.filter((attachment) => !isImageAttachment(attachment))
   return <article className={`conversation-turn ${isNew ? 'conversation-turn-new' : ''}`} tabIndex={0} onContextMenu={(event) => onShowContextMenu(event, turn)}>
     <section className="message user">
-      {!editing && turn.attachments.length > 0 && <div className="message-attachments">{turn.attachments.map((attachment) => <span className="attachment-chip" key={attachment.id}><Paperclip size={12} />{attachment.name}</span>)}</div>}
+      <div className="msg-head">
+        <span className="tm">{turnTime}</span>
+      </div>
       {editing ? <div className="inline-edit">
         {editAttachments.length > 0 && <div className="message-attachments">{editAttachments.map((attachment) => <span className="attachment-chip" key={attachment.id}><Paperclip size={12} />{attachment.name}</span>)}</div>}
         <textarea value={draft} onChange={(event) => setDraft(event.target.value)} onPaste={(event) => {
@@ -62,7 +70,13 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
           if (pasted.length > 0) setEditAttachments((current) => appendAttachments(current, pasted))
         }} autoFocus />
         <div><button className="text-button" onClick={() => { setDraft(turn.userMessage.text); setEditAttachments(turn.attachments); setEditing(false) }}>取消</button><button className="primary-mini-button" disabled={!draft.trim()} onClick={() => { setEditing(false); onEdit(turn, draft.trim(), editAttachments) }}>发送</button></div>
-      </div> : <div className="message-body">{normalizeFlagEmoji(turn.userMessage.text)}</div>}
+      </div> : <>
+        <div className="message-body">
+          {imageAttachments.length > 0 && <div className="msg-imgs">{imageAttachments.map((attachment) => <AttachmentImage key={attachment.id} attachment={attachment} />)}</div>}
+          {fileAttachments.length > 0 && <div className="message-attachments">{fileAttachments.map((attachment) => <span className="attachment-chip" key={attachment.id}><Paperclip size={12} />{attachment.name}</span>)}</div>}
+          {normalizeFlagEmoji(turn.userMessage.text)}
+        </div>
+      </>}
       {!editing && <MessageActions onCopy={() => onCopy(turn.userMessage.text)} onEdit={() => setEditing(true)} onRetry={() => onRetry(turn)} onDelete={() => onDelete(turn.id)} />}
     </section>
     {interruption && <InterruptionBanner turn={turn} todos={todos} detail={interruption} onContinue={() => onContinue(turn)} />}
@@ -72,7 +86,7 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
       : <ExecutionTraceView turn={turn} trace={trace} startedAt={Date.parse(activity.startedAt || turn.createdAt)} finishedAt={activity.finishedAt ? Date.parse(activity.finishedAt) : null} kind={activity.status !== 'idle' ? activity.status : 'done'} />)}
     <section className="message assistant">
       {/* 对话模式不切分正文：没有执行轨迹承接前段说明，正文区必须拿到完整回答。 */}
-      <AssistantMessageView turn={turn} textStart={isChat || turn.status !== 'working' ? 0 : trace.answerStart} onRegenerate={() => onRegenerate(turn)} onDelete={() => onDelete(turn.id)} onCopyPair={() => onCopy(shareText)} />
+      <AssistantMessageView turn={turn} modelName={modelName} textStart={isChat || turn.status !== 'working' ? 0 : trace.answerStart} onRegenerate={() => onRegenerate(turn)} onDelete={() => onDelete(turn.id)} onCopyPair={() => onCopy(shareText)} />
       {turn.artifacts.length > 0 && <div className="turn-results">{turn.artifacts.map((artifact, index) => <button className="result-reference" key={artifact.id || index}><span>{artifact.name || artifact.path || 'Result'}</span><span>打开</span></button>)}</div>}
       {turn.citations.length > 0 && <div className="turn-citations">{turn.citations.map((citation, index) => <CitationLink key={citation.id || index} index={index} citation={citation} />)}</div>}
     </section>
@@ -100,6 +114,7 @@ function MessageActions({ onCopy, onEdit, onRetry, onDelete }: { onCopy: () => v
   const menuRef = useRef<HTMLSpanElement>(null)
   const closeMenu = useCallback(() => setMenuOpen(false), [])
   useDismiss(menuOpen, closeMenu, menuRef)
+  const mounted = useDelayedUnmount(menuOpen, MOTION_DURATIONS.popoverClose)
   return <div className="message-actions user">
     <button className="message-action" onClick={onCopy} aria-label="复制" title="复制"><CopyIcon /></button>
     <button className="message-action" onClick={onEdit} aria-label="编辑" title="编辑"><EditIcon /></button>
@@ -107,7 +122,7 @@ function MessageActions({ onCopy, onEdit, onRetry, onDelete }: { onCopy: () => v
     <span className="message-more" ref={menuRef}>
       <button className="message-action" onClick={() => setMenuOpen((value) => !value)} aria-label="更多" title="更多" aria-expanded={menuOpen}><MoreHorizontal size={14} /></button>
       {/* 删除失败时回合还在，菜单必须自己收起来 */}
-      {menuOpen && <div className="message-menu" role="menu"><button role="menuitem" className="danger-menu-item" onClick={() => { onDelete(); setMenuOpen(false) }}><Trash2 size={14} />删除本轮问答</button></div>}
+      {mounted && <div className={`message-menu${menuOpen ? '' : ' closing'}`} role="menu"><button role="menuitem" className="danger-menu-item" onClick={() => { onDelete(); setMenuOpen(false) }}><Trash2 size={14} />删除本轮问答</button></div>}
     </span>
   </div>
 }
@@ -169,5 +184,5 @@ function AgentActivity({ turnId, events, thinking, status }: { turnId: string; e
 }
 
 export function EmptyConversation({ onPickWorkspace, onAddAttachment, onRunAgent }: { onPickWorkspace: () => void; onAddAttachment: () => void; onRunAgent?: () => void }) {
-  return <div className="empty-conversation motion-welcome-enter"><div className="empty-kicker"><span className="kicker-line" /> 准备开始 <span className="kicker-line" /></div><h1>今天想做什么？</h1><p>从一个问题开始，或打开一个项目让 FastAgent 参与工作。</p><div className="quick-actions"><button onClick={onPickWorkspace}><FolderOpen size={16} /> 打开项目</button><button onClick={onAddAttachment}><Archive size={16} /> 添加附件</button>{onRunAgent && <button onClick={onRunAgent}><TerminalSquare size={16} /> 运行智能体</button>}</div></div>
+  return <div className="empty-conversation motion-welcome-enter"><div className="empty-mark" aria-hidden="true"><span className="empty-mark-glyph"><Zap size={22} fill="currentColor" strokeWidth={0} /></span></div><div className="empty-kicker"><span className="kicker-line" /> 准备开始 <span className="kicker-line" /></div><h1>今天想做什么？</h1><p>从一个问题开始，或打开一个项目让 FastAgent 参与工作。</p><div className="quick-actions"><button onClick={onPickWorkspace}><FolderOpen size={16} /> 打开项目</button><button onClick={onAddAttachment}><Archive size={16} /> 添加附件</button>{onRunAgent && <button onClick={onRunAgent}><TerminalSquare size={16} /> 运行智能体</button>}</div></div>
 }

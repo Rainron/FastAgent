@@ -72,6 +72,7 @@ export function ConnectionSettings({ auth, onNotice }: { auth: AuthSnapshot; onN
     try {
       // 先把新地址置顶，登录页会用最近服务器的首项预填，省得再输一遍。
       await persistServers(upsertRecentServer(savedServers, target))
+      await window.fastAgent.auth.requestLogin()
       await window.fastAgent.auth.logout()
     } catch (error) {
       onNotice(error instanceof Error ? error.message : '切换后端失败')

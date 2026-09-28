@@ -1,10 +1,12 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { homedir, hostname } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { ApiClient, ApiError } from './api-client'
+import { extractDialogueReply } from './model-dialogue'
 import { createAbilitiesService } from './abilities-service'
 import { createApprovalBridge, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
 import { buildEffectiveRules } from './agent/permission/effective-rules'
@@ -46,7 +48,9 @@ import { createBundleService } from './bundle/bundle-service'
 import { registerHubIpc } from './ipc/hub'
 import { registerBundleIpc } from './ipc/bundle'
 import { redactSecrets } from './secret-redaction'
-import { deleteWorkspaceEntry, listWorkspaceDirectory, normalizeWorkspaceRelative, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from './workspace-files'
+import { deleteWorkspaceEntry, listWorkspaceDirectory, normalizeWorkspaceRelative, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from './workspace-files'
+import { archiveAttachments } from './attachment-store'
+import { DEFAULT_ATTACHMENT_POLICY } from '../shared/attachment-policy'
 import { resolveToolPath } from './agent/safety/workspace-guard'
 import { clearRunBaselines } from './agent/tool-runtime'
 import { createArtifactId, inferArtifactType } from '../shared/artifact'
@@ -234,11 +238,16 @@ function scheduleDeferredStartupTasks() {
 }
 
 const defaultSettings: AppSettings = {
+  ...DEFAULT_ATTACHMENT_POLICY,
   motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
   closeToTray: true,
   theme: 'system',
+  accentColor: 'green',
+  baseFontSize: 'medium',
+  uiDensity: 'comfortable',
+  sidebarGlass: false,
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,
@@ -539,10 +548,10 @@ function createWindow() {
     // 先隐藏，等渲染进程给出首帧再显示；否则重启瞬间会看到一块空白窗口。
     show: false,
     // 不给底色的话窗口首帧是 Electron 默认的白，深色主题下必然闪一下。
-    backgroundColor: dark ? '#181817' : '#fafaf8',
+    backgroundColor: dark ? '#161513' : '#FAF8F3',
     titleBarOverlay: dark
-      ? { color: '#181817', symbolColor: '#F1F1ED', height: 44 }
-      : { color: '#FAFAF8', symbolColor: '#20201E', height: 44 },
+      ? { color: '#161513', symbolColor: '#EDEAE2', height: 44 }
+      : { color: '#FAF8F3', symbolColor: '#22201C', height: 44 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // 主题必须在首帧之前定死，走启动参数是唯一比渲染进程 IPC 更早的通道。
@@ -569,9 +578,11 @@ function createWindow() {
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
     // -3 是主动取消（例如重定向），不算失败。
     if (!isMainFrame || errorCode === -3) return
-    logStartup('界面加载失败', `${errorDescription}（${errorCode}）${validatedURL}`)
+    const detail = `${errorDescription}（${errorCode}）${validatedURL}`
+    logStartup('界面加载失败', detail)
     if (rendererRetried) {
-      // 启动页不能陪着无限等：放行到主窗口，失败详情由提示条 + 日志承担。
+      // 不能只放行一个透明空窗口；即使 renderer 完全没启动，也要给出可操作的故障页。
+      showRendererLoadError(detail, validatedURL)
       revealCoordinator?.forceReveal('fallback')
       return
     }
@@ -603,10 +614,27 @@ function createWindow() {
 
 function loadRenderer() {
   if (!mainWindow || mainWindow.isDestroyed()) return
-  const load = process.env.ELECTRON_RENDERER_URL
-    ? mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-    : mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL?.replace('://localhost:', '://127.0.0.1:')
+  const load = rendererUrl
+    ? mainWindow.loadURL(rendererUrl)
+    : mainWindow.loadURL(pathToFileURL(join(__dirname, '../renderer/index.html')).href)
   load.catch((error) => logStartup('loadRenderer', error))
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>\"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' })[character] ?? character)
+}
+
+function showRendererLoadError(detail: string, targetUrl: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const logPath = join(appPaths?.logsDir ?? app.getPath('logs'), 'startup.log')
+  const target = JSON.stringify(targetUrl).replace(/</g, '\\u003c')
+  const html = `<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><title>FastAgent 启动失败</title><style>
+    :root{color-scheme:light dark;font-family:system-ui,-apple-system,"Microsoft YaHei",sans-serif;background:#fafaf8;color:#20201e}
+    @media(prefers-color-scheme:dark){:root{background:#181817;color:#f1f1ed}}
+    body{margin:0;min-height:100vh;display:grid;place-items:center}.card{box-sizing:border-box;width:min(680px,calc(100% - 48px));padding:30px;border:1px solid #d8d8d0;border-radius:14px;background:color-mix(in srgb,currentColor 4%,transparent);box-shadow:0 12px 40px #0001}h1{margin:0 0 12px;font-size:20px}p{line-height:1.7;color:#777;margin:8px 0}.steps{margin:20px 0;padding:14px 18px;border-radius:8px;background:#0000000a;line-height:1.9}.buttons{display:flex;gap:10px;margin-top:22px}button{cursor:pointer;border:0;border-radius:7px;padding:10px 16px;background:#2864d7;color:white;font:inherit}button.secondary{background:#00000012;color:inherit}details{margin-top:18px}pre{white-space:pre-wrap;overflow:auto;font:12px/1.5 monospace;color:#888}
+  </style></head><body><main class="card"><h1>FastAgent 界面暂时无法启动</h1><p>应用进程仍在运行，但窗口页面加载失败。通常是开发服务未启动、被安全软件拦截，或本地缓存目录无访问权限。</p><div class="steps"><strong>建议按顺序处理：</strong><br>1. 确认终端中的 Vite 开发服务仍在运行，并使用 <code>npm run dev</code> 重新启动。<br>2. 若是安装版，请关闭 FastAgent 后重新打开；仍失败时检查日志目录权限。<br>3. 点击“打开日志目录”，将 <code>startup.log</code> 提供给开发人员。</div><div class="buttons"><button onclick="location.href=${target}">重新加载界面</button><button class="secondary" onclick="window.fastAgent?.shell.openPath(${JSON.stringify(logPath)})">打开日志目录</button></div><details><summary>错误详情</summary><pre>${escapeHtml(detail)}</pre></details></main></body></html>`
+  void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
 
 function applySettings(next: AppSettings) {
@@ -902,55 +930,62 @@ function reportModelFailure(modelId: number | null, error: unknown, durationMs?:
   })
 }
 
-/** 本地模型连通性测试：按协议发一个最小请求，只验证认证与基础连通，不消耗模型配额。 */
-async function testLocalModel(id: number): Promise<LocalModelTestResult> {
+/** 单模型对话连通性测试：覆盖云端账号、本地模型服务连接与旧版独立本地模型。
+ *  发送一句短对话并校验模型返回了正文，验证的是端到端可对话，不是只通网络。 */
+async function testModelDialogue(id: number): Promise<LocalModelTestResult> {
   const credentials = resolveModelCredentials(id)
-  const baseUrl = (credentials.base_url || '').replace(/\/+$/, '')
-  if (!baseUrl) return { ok: false, error: '未配置 Base URL' }
   const startedAt = Date.now()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 10_000)
+  const fail = (detail: string, durationMs = Date.now() - startedAt): LocalModelTestResult => {
+    logIntegrationError({ service: 'model', endpoint: `${credentials.provider}/${credentials.model_name}`, message: redactModelMessage(id, detail), durationMs })
+    return { ok: false, error: detail, latencyMs: durationMs }
+  }
   try {
+    // OAuth 账号连接必须走运行时拿授权令牌，HTTP 直连只有 API Key。
+    if (credentials.authMode === 'oauth' && credentials.connectionId) {
+      const { runtime, model } = await modelConnectionService.createRuntime(credentials.connectionId, credentials.model_name)
+      const result = await runtime.completeSimple(model, { messages: [{ role: 'user', content: 'Reply OK.', timestamp: Date.now() }] }, { maxTokens: 64, signal: AbortSignal.timeout(30_000) })
+      if (result.stopReason === 'error' || result.stopReason === 'aborted') return fail('模型未返回对话结果')
+      return { ok: true, latencyMs: Date.now() - startedAt }
+    }
+    const baseUrl = (credentials.base_url || '').replace(/\/+$/, '')
+    if (!baseUrl) return fail('未配置 Base URL')
     const headers: Record<string, string> = { ...(credentials.headers ?? {}) }
     let url: string
     let body: Record<string, unknown>
     const protocol = credentials.protocol ?? (credentials.provider === 'anthropic' || credentials.provider === 'openai-responses' || credentials.provider === 'openai' ? credentials.provider : 'openai')
     if (protocol === 'anthropic') {
-      url = `${baseUrl}/messages`
+      url = `${baseUrl.replace(/\/v1$/, '')}/v1/messages`
       headers['x-api-key'] = credentials.api_key || ''
       headers['anthropic-version'] = '2023-06-01'
       headers['content-type'] = 'application/json'
-      body = { model: credentials.model_name, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }
+      body = { model: credentials.model_name, max_tokens: 64, messages: [{ role: 'user', content: 'Reply OK.' }] }
     } else if (protocol === 'openai-responses') {
       url = `${baseUrl}/responses`
       headers.authorization = `Bearer ${credentials.api_key || ''}`
       headers['content-type'] = 'application/json'
-      body = { model: credentials.model_name, input: 'ping', max_output_tokens: 1 }
+      body = { model: credentials.model_name, input: 'Reply OK.', max_output_tokens: 64 }
     } else {
       url = `${baseUrl}/chat/completions`
       headers.authorization = `Bearer ${credentials.api_key || ''}`
       headers['content-type'] = 'application/json'
-      body = { model: credentials.model_name, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }
+      body = { model: credentials.model_name, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 64 }
     }
-    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: controller.signal })
+    const response = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(30_000) })
     if (!response.ok) {
-      let detail = `HTTP ${response.status}`
+      let detail = `对话测试失败（HTTP ${response.status}）`
       try {
         const data = await response.json() as { error?: { message?: string } }
         if (data?.error?.message) detail = data.error.message
       } catch { /* 非 JSON 响应体不解析 */ }
-      const latencyMs = Date.now() - startedAt
-      logIntegrationError({ service: 'model', endpoint: `${credentials.provider}/${credentials.model_name}`, status: response.status, message: redactModelMessage(id, detail), durationMs: latencyMs })
-      return { ok: false, error: detail, latencyMs }
+      return fail(detail)
     }
+    const data = await response.json() as Record<string, unknown>
+    const text = extractDialogueReply(protocol, data)
+    if (!text || !text.trim()) return fail('模型返回了空回复')
     return { ok: true, latencyMs: Date.now() - startedAt }
   } catch (error) {
-    const detail = error instanceof DOMException && error.name === 'AbortError' ? '连接超时' : error instanceof Error ? error.message : String(error)
-    const latencyMs = Date.now() - startedAt
-    logIntegrationError({ service: 'model', endpoint: `${credentials.provider}/${credentials.model_name}`, message: redactModelMessage(id, detail), durationMs: latencyMs })
-    return { ok: false, error: detail, latencyMs }
-  } finally {
-    clearTimeout(timer)
+    const detail = error instanceof DOMException && error.name === 'AbortError' ? '对话测试超时' : error instanceof Error ? error.message : String(error)
+    return fail(detail)
   }
 }
 
@@ -1043,6 +1078,10 @@ function handleIpc<Result>(channel: string, listener: (event: Electron.IpcMainIn
 function registerIpc() {
   const handle = handleIpc
   handle('auth:snapshot', () => authState)
+  handle('auth:request-login', () => {
+    broadcastAuth({ state: 'login_requested', user: null, backendUrl: authState.backendUrl })
+    return authState
+  })
   handle('auth:enter-workspace', (_event, modelId?: number) => {
     if (!store.modelConnections().list().some((connection) => connection.models.some((model) => model.id === modelId)) && !store.listLocalModels().some((model) => model.id === modelId)) {
       throw new Error('请先配置一个可用的模型连接')
@@ -1479,7 +1518,7 @@ function registerIpc() {
     modelContextWindows.delete(id)
     broadcastModelsChanged()
   })
-  handle('models:localTest', (_event, id: number) => testLocalModel(id))
+  handle('models:testDialogue', (_event, id: number) => testModelDialogue(id))
   handle('run-states:list', () => {
     const namespace = requireNamespace()
     const states = store.listRunStates(namespace)
@@ -1513,9 +1552,10 @@ function registerIpc() {
     if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: store.getConversationRoot(namespace, input.conversationId) }
+    const attachments = archiveAttachments(appPaths.attachmentsDir, input.conversationId, input.attachments || [], settings)
     const turn = input.turnId
-      ? store.updateTurn(namespace, input.turnId, { userMessage: { text: input.prompt, createdAt: now }, attachments: input.attachments || [], runtimeConfig, assistantMessage: null, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working' })
-      : store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments: input.attachments || [], runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
+      ? store.updateTurn(namespace, input.turnId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, assistantMessage: null, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working' })
+      : store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
     if (!turn) throw new Error('会话轮记录不存在')
     // 绑定以实际发出的模型为准：新会话首轮在这里落库，之后重开会话才能还原成同一个模型。
     store.setConversationModelId(namespace, input.conversationId, input.modelId ?? null)
@@ -1533,7 +1573,7 @@ function registerIpc() {
         conversationId: conversationRuntimeKey(namespace, input.conversationId),
         provider: credentials?.provider ?? 'unknown',
         modelId: input.modelId ?? -1
-      }, () => conversationRuns.run(conversationRuntimeKey(namespace, input.conversationId), () => runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, input.mode, input.modelId, input.thinkingLevel || 'auto', input.permission || null, input.modePrompt || '', Boolean(input.planMode), input.attachments || [], controller.signal, acceptedAt)))
+      }, () => conversationRuns.run(conversationRuntimeKey(namespace, input.conversationId), () => runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, input.mode, input.modelId, input.thinkingLevel || 'auto', input.permission || null, input.modePrompt || '', Boolean(input.planMode), attachments, controller.signal, acceptedAt)))
       activeRunCancels.set(runId, scheduled.cancel)
       void scheduled.promise.catch((error) => console.error('[chat:run]', error)).finally(() => activeRunCancels.delete(runId))
     })
@@ -1672,6 +1712,17 @@ function registerIpc() {
   handle('quick:hide', () => { hideQuickWindow() })
   handle('workspace:read-file', (_event, path: string) => readWorkspaceFile(workspaceRoot, path))
   handle('workspace:read-image', (_event, path: string) => readWorkspaceImage(workspaceRoot, path))
+  handle('files:read-image', (_event, path: string) => readAttachmentImage(path))
+  handle('files:save-clipboard-image', (_event, dataUrl: string, name: string, type: string) => {
+    const match = /^data:[^;]+;base64,(.+)$/.exec(dataUrl)
+    if (!match) throw new Error('剪贴板图片格式无效')
+    const dir = join(appPaths.attachmentsDir, 'clipboard')
+    mkdirSync(dir, { recursive: true })
+    const safeExt = extname(name) || `.${type.split('/')[1] || 'png'}`
+    const target = join(dir, `${randomUUID()}${safeExt}`)
+    writeFileSync(target, Buffer.from(match[1], 'base64'))
+    return target
+  })
   handle('workspace:list-directory', (_event, path: string) => listWorkspaceDirectory(workspaceRoot, path))
   handle('workspace:search-files', (_event, query: string) => searchWorkspaceFiles(workspaceRoot, query))
   // 右键菜单「在资源管理器中显示」：解析到绝对路径后定位文件；目录同样选中定位。

@@ -91,12 +91,25 @@ export interface RendererErrorReport {
 
 export type MotionPreference = 'system' | 'on' | 'off'
 
+/** 外观强调色预设；四值分别对应 --accent/--accent-2/--accent-soft/--accent-line */
+export type AccentColorKey = 'green' | 'terracotta' | 'blue' | 'purple' | 'graphite'
+
+/** 基础字号档位；渲染层换算为全局缩放 */
+export type BaseFontSize = 'small' | 'medium' | 'large'
+
+/** 界面密度；紧凑档降低列表行高与内边距 */
+export type UiDensity = 'comfortable' | 'compact'
+
 export interface AppSettings {
   motionPreference: MotionPreference
   startAtLogin: boolean
   showOnStartup: boolean
   closeToTray: boolean
   theme: AppTheme
+  accentColor: AccentColorKey
+  baseFontSize: BaseFontSize
+  uiDensity: UiDensity
+  sidebarGlass: boolean
   autoSummary: boolean
   contextStrategy: ContextStrategy
   triggerRatio: number | null
@@ -121,4 +134,8 @@ export interface AppSettings {
   quickDialogEnabled: boolean
   /** 快捷键绑定；缺省字段视为未绑定 */
   shortcuts?: ShortcutSettings
+  attachmentMaxFileSizeMb: number
+  attachmentMaxImageSizeMb: number
+  attachmentFileExtensions: string[]
+  attachmentImageExtensions: string[]
 }

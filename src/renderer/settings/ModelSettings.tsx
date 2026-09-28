@@ -12,7 +12,7 @@ import type { ModelConnectionSummary } from '../../shared/types'
  * 模型与 Provider 管理。云端模型来自登录后的服务端清单（只读展示 + 收藏 + 选择）；
  * 本地模型由用户自行添加，直连自建网关或第三方 API，可编辑 / 删除 / 测试连接。
  */
-export function ModelSettings({ models, selectedModelId, defaultModelId, favoriteModelIds, localModels, onSelectModel, onToggleFavorite, onCreateLocal, onUpdateLocal, onDeleteLocal, onTestLocal, onNotice }: {
+export function ModelSettings({ models, selectedModelId, defaultModelId, favoriteModelIds, localModels, onSelectModel, onToggleFavorite, onCreateLocal, onUpdateLocal, onDeleteLocal, onTestDialogue, onNotice }: {
   models: ModelOption[]
   selectedModelId: number | null
   defaultModelId: number | null
@@ -23,7 +23,7 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
   onCreateLocal: (input: LocalModelInput) => Promise<void>
   onUpdateLocal: (id: number, input: LocalModelInput) => Promise<void>
   onDeleteLocal: (id: number) => Promise<void>
-  onTestLocal: (id: number) => Promise<{ ok: boolean; error?: string; latencyMs?: number }>
+  onTestDialogue: (id: number) => Promise<{ ok: boolean; error?: string; latencyMs?: number }>
   onNotice: (notice: string) => void
 }) {
   const [query, setQuery] = useState('')
@@ -81,16 +81,53 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
     }
   }
 
-  async function handleTestLocal(model: LocalModelSummary) {
-    setTestingId(model.id)
+  interface BulkResult { id: number; label: string; ok: boolean; latencyMs?: number; error?: string }
+  const [bulkRunning, setBulkRunning] = useState(false)
+  const [bulkResults, setBulkResults] = useState<BulkResult[] | null>(null)
+
+  async function handleTestOne(modelId: number, label: string) {
+    setTestingId(modelId)
     try {
-      const result = await onTestLocal(model.id)
+      const result = await onTestDialogue(modelId)
       onNotice(result.ok
-        ? `连接成功（${result.latencyMs ?? '—'} ms）`
-        : `连接失败：${result.error ?? '未知错误'}`)
+        ? `${label}：对话测试通过（${result.latencyMs ?? '—'} ms）`
+        : `${label}：对话测试失败（${result.error ?? '未知错误'}）`)
     } finally {
       setTestingId(null)
     }
+  }
+
+  // 批量覆盖全部已保存模型：账号云端 + 本地服务连接 + 旧版独立本地。
+  const bulkTargets = useMemo(() => [
+    ...models.filter((model) => model.source !== 'local' && model.id >= 0).map((model) => ({ id: model.id, label: `${model.provider} / ${model.model_name}` })),
+    ...localModels.map((model) => ({ id: model.id, label: `${model.connectionName ?? model.name} / ${model.model_name}` }))
+  ], [models, localModels])
+
+  async function runBulkTest() {
+    if (bulkRunning || bulkTargets.length === 0) return
+    setBulkRunning(true)
+    setBulkResults(null)
+    const results: (BulkResult | undefined)[] = new Array(bulkTargets.length)
+    let cursor = 0
+    // 并发太多会同时打到各家服务触发限流，这里控制在 3 路。
+    async function worker() {
+      while (cursor < bulkTargets.length) {
+        const target = bulkTargets[cursor]
+        const index = cursor
+        cursor += 1
+        try {
+          const result = await onTestDialogue(target.id)
+          results[index] = result.ok
+            ? { ...target, ok: true, latencyMs: result.latencyMs }
+            : { ...target, ok: false, error: result.error }
+        } catch (error) {
+          results[index] = { ...target, ok: false, error: error instanceof Error ? error.message : '测试失败' }
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(3, bulkTargets.length) }, () => worker()))
+    setBulkRunning(false)
+    setBulkResults(results.filter((item): item is BulkResult => Boolean(item)))
   }
 
   return <section className="settings-panel model-settings" aria-labelledby="settings-models">
@@ -101,7 +138,16 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
     <div className="settings-section-heading"><div><h3>FastAgent 云端模型</h3><p>由 FastAgent 账号同步，可收藏和选择使用。</p></div></div>
     <div className="model-settings-filters">
       <label className="model-settings-search"><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型或 Provider" aria-label="搜索模型" /></label>
+      <button className="small-control" onClick={() => void runBulkTest()} disabled={bulkRunning || bulkTargets.length === 0} title="对云端与本地全部已保存模型各发一句短对话，验证能否真实回答">
+        {bulkRunning ? <LoaderCircle size={14} className="spin" /> : <Plug size={14} />}{bulkRunning ? '测试中…' : '测试全部模型'}
+      </button>
     </div>
+    {bulkResults && <div className="model-bulk-results" aria-live="polite">
+      {bulkResults.map((item) => <div className={`model-bulk-result ${item.ok ? 'ok' : 'fail'}`} key={item.id}>
+        <span className="model-bulk-name">{item.label}</span>
+        <span className="model-bulk-status">{item.ok ? `通过 · ${item.latencyMs ?? '—'} ms` : `失败：${item.error ?? '未知错误'}`}</span>
+      </div>)}
+    </div>}
     <div className="model-settings-list">
       {groups.length ? groups.map((group) => {
         const open = effectiveExpanded.has(group.channel)
@@ -129,6 +175,7 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
                   {model.description && <p>{model.description}</p>}
                 </div>
                 <div className="model-settings-actions">
+                  <button className="small-control" onClick={() => void handleTestOne(model.id, model.model_name)} disabled={testingId === model.id || bulkRunning}>{testingId === model.id ? <LoaderCircle size={13} className="spin" /> : <Plug size={13} />}测试</button>
                   <button className={`model-favorite ${favoriteModelIds.includes(model.id) ? 'active' : ''}`} onClick={() => onToggleFavorite(model.id)} aria-label={`${favoriteModelIds.includes(model.id) ? '取消收藏' : '收藏'} ${model.name}`} title={favoriteModelIds.includes(model.id) ? '取消收藏' : '收藏'}><Star size={14} fill={favoriteModelIds.includes(model.id) ? 'currentColor' : 'none'} /></button>
                   <button className="small-control" onClick={() => onSelectModel(model.id)} disabled={model.id === selectedModelId}>{model.id === selectedModelId ? <><Check size={13} />使用中</> : '设为当前模型'}</button>
                 </div>
@@ -156,7 +203,7 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
             <p className="local-model-base-url" title={model.base_url}>{model.base_url}{model.hasApiKey ? ' · 已配置密钥' : ''}</p>
           </div>
           <div className="model-settings-actions">
-            <button className="small-control" onClick={() => void handleTestLocal(model)} disabled={testingId === model.id}>{testingId === model.id ? <LoaderCircle size={13} className="spin" /> : <Plug size={13} />}测试</button>
+            <button className="small-control" onClick={() => void handleTestOne(model.id, `${model.name} / ${model.model_name}`)} disabled={testingId === model.id || bulkRunning}>{testingId === model.id ? <LoaderCircle size={13} className="spin" /> : <Plug size={13} />}测试</button>
             <button className="small-control" onClick={() => setDialog({ model })} aria-label={`编辑 ${model.name}`} title="编辑"><Pencil size={13} />编辑</button>
             <button className="small-control danger" onClick={() => void handleDeleteLocal(model)} disabled={deletingId === model.id} aria-label={`删除 ${model.name}`} title="删除">{deletingId === model.id ? <LoaderCircle size={13} className="spin" /> : <Trash2 size={13} />}删除</button>
             <button className="small-control" onClick={() => onSelectModel(model.id)} disabled={model.id === selectedModelId}>{model.id === selectedModelId ? <><Check size={13} />使用中</> : '设为当前模型'}</button>

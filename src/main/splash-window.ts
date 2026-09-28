@@ -7,6 +7,7 @@
  */
 import { BrowserWindow, nativeTheme } from 'electron'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { SplashUpdate } from '../shared/types'
 
 const CANVAS = { light: '#fafaf8', dark: '#181817' } as const
@@ -63,9 +64,10 @@ export function createSplashWindow(): void {
   })
   win.webContents.on('did-finish-load', () => { loaded = true; flush() })
   win.on('closed', () => { if (splashWindow === win) splashWindow = null })
-  const load = process.env.ELECTRON_RENDERER_URL
-    ? win.loadURL(`${process.env.ELECTRON_RENDERER_URL}/splash.html`)
-    : win.loadFile(join(__dirname, '../renderer/splash.html'))
+  const rendererUrl = process.env.ELECTRON_RENDERER_URL?.replace('://localhost:', '://127.0.0.1:')
+  const load = rendererUrl
+    ? win.loadURL(`${rendererUrl}/splash.html`)
+    : win.loadURL(pathToFileURL(join(__dirname, '../renderer/splash.html')).href)
   // 启动页自己加载失败不能反过来影响启动：主窗口该显示还是显示。
   load.catch((error) => console.error('[splash] 加载失败:', error))
   splashWindow = win

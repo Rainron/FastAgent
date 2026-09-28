@@ -2,6 +2,7 @@ import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, Ag
 import { defaultSandboxSettings } from '../../shared/sandbox'
 import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
 import { clampRecallLimit, DEFAULT_RECALL } from '../agent/memory/memory-rank'
+import { DEFAULT_ATTACHMENT_POLICY } from '../../shared/attachment-policy'
 
 export interface ConversationRecord {
   id: string
@@ -15,11 +16,16 @@ export interface ConversationRecord {
 }
 
 export const defaultSettings: AppSettings = {
+  ...DEFAULT_ATTACHMENT_POLICY,
   motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
   closeToTray: true,
   theme: 'system',
+  accentColor: 'green',
+  baseFontSize: 'medium',
+  uiDensity: 'comfortable',
+  sidebarGlass: false,
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,

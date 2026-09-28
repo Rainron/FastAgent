@@ -55,7 +55,7 @@ export function QuickChat() {
   const [error, setError] = useState<string | null>(null)
   // 模型与思考级别：localStorage 记住上次选择，其次回退默认模型；与主窗口互不干扰。
   const [selectedModelId, setSelectedModelId] = useState<number | null>(() => Number(readQuickPreference('fastagent.quick.modelId')) || null)
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() => (readQuickPreference('fastagent.quick.thinking') || 'auto') as ThinkingLevel)
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>(() => (readQuickPreference('fastagent.quick.thinking') || 'low') as ThinkingLevel)
   const [configOpen, setConfigOpen] = useState(false)
   const configRef = useRef<HTMLDivElement>(null)
   // 清空历史的两段式确认：误触会直接丢掉持久会话的上下文，第一次点击只进入确认态

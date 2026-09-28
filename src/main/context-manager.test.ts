@@ -3,8 +3,10 @@ import { buildSummarySourceText, contextTargetRatio, heuristicSummary, projectCo
 import * as contextManager from './context-manager'
 import type { AppSettings, ContextPolicy, ContextState, ConversationTurn } from '../shared/types'
 import { defaultSandboxSettings } from '../shared/sandbox'
+import { DEFAULT_ATTACHMENT_POLICY } from '../shared/attachment-policy'
 
 const settings: AppSettings = {
+  ...DEFAULT_ATTACHMENT_POLICY,
   motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,
@@ -21,7 +23,11 @@ const settings: AppSettings = {
   subAgentEnabled: true,
   memory: { enabled: true, autoExtract: true, maxRecall: 5, extractModelId: null },
   sandbox: defaultSandboxSettings,
-  quickDialogEnabled: true
+  quickDialogEnabled: true,
+  accentColor: 'green',
+  baseFontSize: 'medium',
+  uiDensity: 'comfortable',
+  sidebarGlass: false
 }
 
 function turn(id: string, patch: Partial<ConversationTurn> = {}): ConversationTurn {

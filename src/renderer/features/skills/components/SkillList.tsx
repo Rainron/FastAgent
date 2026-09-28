@@ -18,7 +18,7 @@ const STATUS_FILTERS: Array<[AbilityStatusFilter, string]> = [
   ['update_available', '有更新']
 ]
 
-export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCreate, onImport, onOpenPlugins }: {
+export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCreate, onImport, onOpenPlugins, embedded = false }: {
   skills: SkillAbility[]
   onRefresh: () => Promise<void>
   onNotice: (notice: string) => void
@@ -27,6 +27,8 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
   onCreate: () => void
   onImport: () => void
   onOpenPlugins?: () => void
+  /** 嵌入「我的能力」时：搜索、筛选、排序与新建入口由外层统一负责，这里只渲染行与批量操作。 */
+  embedded?: boolean
 }) {
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState<AbilityStatusFilter>('all')
@@ -37,9 +39,10 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const actions = useAsyncActions()
 
+  // 嵌入模式下行集由外层分页算好，这里不能再过滤，否则页码条和可见行对不上
   const visible = useMemo(
-    () => sortAbilities(filterAbilities(skills, { keyword, status, source }), sort),
-    [skills, keyword, status, source, sort]
+    () => embedded ? skills : sortAbilities(filterAbilities(skills, { keyword, status, source }), sort),
+    [embedded, skills, keyword, status, source, sort]
   )
   const selectedVisible = visible.filter((ability) => selected.has(ability.id))
   const batchPending = actions.isPending('batch')
@@ -83,7 +86,7 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
   }
 
   return <div className="cap-tab-content">
-    <div className="cap-toolbar">
+    {!embedded && <div className="cap-toolbar">
       <div className="cap-search"><Search size={14} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索 Skill…" aria-label="搜索 Skill" /></div>
       <div className="settings-shell-segmented" role="group" aria-label="Skill 状态筛选">
         {STATUS_FILTERS.map(([key, label]) => <button key={key} className={status === key ? 'active' : ''} onClick={() => setStatus(key)}>{label}</button>)}
@@ -104,9 +107,11 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
       <div className="cap-toolbar-spacer" />
       <button className="quick-secondary" onClick={onImport}>导入 Skill</button>
       <button className="primary-button" onClick={onCreate}>新建 Skill</button>
-    </div>
+    </div>}
 
-    {visible.length === 0 ? (
+    {embedded && skills.length === 0 ? (
+      <p className="cap-empty-note">本页没有匹配的 Skill</p>
+    ) : !embedded && visible.length === 0 ? (
       skills.length === 0
         ? <AbilityEmptyState
             title="还没有任何 Skill"
@@ -127,10 +132,10 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
             checked={selectedVisible.length > 0 && selectedVisible.length === visible.length}
             ref={(node) => { if (node) node.indeterminate = selectedVisible.length > 0 && selectedVisible.length < visible.length }}
             onChange={() => setSelected(selectedVisible.length === visible.length ? new Set() : new Set(visible.map((ability) => ability.id)))}
-            aria-label="全选当前列表"
+            aria-label={embedded ? '全选当前页' : '全选当前列表'}
           />
         </label>
-        <span>{selectedVisible.length ? `已选 ${selectedVisible.length} 个` : '选择后可批量启停'}</span>
+        <span>{selectedVisible.length ? `已选 ${selectedVisible.length} 个${embedded ? '（仅当前页）' : ''}` : '选择后可批量启停'}</span>
         <div className="cap-toolbar-spacer" />
         <button className="small-control" disabled={!selectedVisible.length || batchPending} onClick={() => void applyBatch(true)}>批量启用</button>
         <button className="small-control" disabled={!selectedVisible.length || batchPending} onClick={() => void applyBatch(false)}>批量停用</button>
@@ -141,9 +146,9 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
         {visible.map((ability) => {
           const busy = actions.isPending(`toggle:${ability.id}`) || actions.isPending(`remove:${ability.id}`)
           const error = actions.errorOf(`toggle:${ability.id}`) ?? actions.errorOf(`remove:${ability.id}`)
-          return <div className="ability-row" key={ability.id}>
+          return <div className="ability-row ability-card" key={ability.id} role="button" tabIndex={0} onClick={() => onInspect(ability)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onInspect(ability) } }}>
             <label className="ability-select-box">
-              <input type="checkbox" checked={selected.has(ability.id)} onChange={() => toggleSelected(ability.id)} aria-label={`选择 ${ability.displayName}`} />
+              <input type="checkbox" checked={selected.has(ability.id)} onClick={(event) => event.stopPropagation()} onChange={() => toggleSelected(ability.id)} aria-label={`选择 ${ability.displayName}`} />
             </label>
             <div className="ability-row-main">
               <div className="ability-row-title">
@@ -163,7 +168,7 @@ export function SkillList({ skills, onRefresh, onNotice, onEdit, onInspect, onCr
                 <button className="small-control" onClick={() => onInspect(ability)}><Info size={13} />查看详情</button>
               </>} />}
             </div>
-            <div className="ability-row-actions">
+            <div className="ability-row-actions" onClick={(event) => event.stopPropagation()}>
               <label className="switch-row" title="启用后 Agent 会按需加载该 Skill">
                 <input type="checkbox" checked={ability.enabled} disabled={busy} onChange={() => void toggle(ability)} />
                 <span className="switch-visual" />

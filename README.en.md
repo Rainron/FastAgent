@@ -42,7 +42,7 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
 **Skills, MCP, and plugins**  
-Manage and validate local Skills, import MCP servers and test connectivity, export/import capability bundles, and check for updates from configured Hub sources. The capability page and Hub discovery entry are now managed together.
+Manage and validate local Skills, import MCP servers and test connectivity, export/import capability bundles, and check for updates from configured Hub sources. The capability page is split into Discover and My capabilities views.
 
 **Run state and model permissions**
 
@@ -50,7 +50,11 @@ Run state can be reconciled after a reload, allowing in-progress tasks to be pic
 
 **Motion and session experience**
 
-Session lists support pagination, while page transitions, message actions, and workspace interactions include more feedback and motion.
+Session lists support pagination, while page transitions, message actions, and workspace interactions include more feedback and motion. Conversations support in-page search with Ctrl+F (F3 / F4 to step through matches), attachment images can be previewed, and appearance settings include accent color, font size, and density.
+
+**Model self-test**
+
+Model tests run a real round-trip conversation, and all saved models can be tested in one batch.
 
 **Context management and local workflow tools**  
 Provider-reported usage drives context accounting, with automatic summarization and manual compaction. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
@@ -122,7 +126,7 @@ The main process is organized as lifecycle → IPC → domain modules. The rende
 
 ## What is next
 
-Future work will continue to improve task continuity, model connections, and the capability ecosystem. Areas include more detailed run-state recovery, model connectivity diagnostics, session and usage management, long-term cross-session memory, and a project knowledge base.
+Future work will continue to improve task continuity, model connections, and the capability ecosystem. Areas include more detailed run-state recovery, session and usage management, long-term cross-session memory, and a project knowledge base.
 
 These are directional goals, not dated commitments. Please open an issue if you have a particular use case you would like prioritized.
 

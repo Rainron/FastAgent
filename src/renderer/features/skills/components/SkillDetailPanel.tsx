@@ -5,6 +5,7 @@ import { AbilityErrorBlock } from '../../abilities/components/AbilityErrorBlock'
 import { AbilityEmptyState, AbilityLoadingState } from '../../abilities/components/AbilityEmptyState'
 import { AbilityStatusBadge } from '../../abilities/components/AbilityStatusBadge'
 import { abilityStatusPresentation, SOURCE_LABELS } from '../../abilities/ability-view'
+import { Wrench } from 'lucide-react'
 import { skillsService } from '../services/skills-service'
 
 type DetailTab = 'overview' | 'content' | 'files' | 'permissions' | 'usage'
@@ -43,6 +44,12 @@ export function SkillDetailPanel({ ability, onClose, onOpenLocation }: {
   return <CapabilityDrawer
     title={ability.displayName}
     subtitle={`${ability.name} · ${SOURCE_LABELS[ability.source]}${ability.version ? ` · v${ability.version}` : ''}`}
+    icon={<Wrench size={15} />}
+    badges={<>
+      {(ability.status === 'error' || ability.status === 'config_required' || ability.status === 'update_available')
+        && <AbilityStatusBadge status={abilityStatusPresentation(ability.status)} />}
+      <AbilityStatusBadge status={{ label: ability.enabled ? 'Agent 可用' : 'Agent 停用', tone: ability.enabled ? 'ok' : 'muted' }} />
+    </>}
     onClose={onClose}
     footer={<button className="quick-secondary" onClick={onOpenLocation}>打开目录</button>}
   >

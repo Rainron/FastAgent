@@ -40,7 +40,9 @@ const api: FastAgentApi = {
     moveDataDirectory: () => ipcRenderer.invoke('storage:move-data-directory')
   },
   files: {
-    getPath: (file: File) => webUtils.getPathForFile(file)
+    getPath: (file: File) => webUtils.getPathForFile(file),
+    readImage: (path: string): Promise<string | null> => ipcRenderer.invoke('files:read-image', path)
+    ,saveClipboardImage: (dataUrl: string, name: string, type: string): Promise<string> => ipcRenderer.invoke('files:save-clipboard-image', dataUrl, name, type)
   },
   app: {
     info: (): Promise<AppRuntimeInfo> => ipcRenderer.invoke('app:info'),
@@ -72,6 +74,7 @@ const api: FastAgentApi = {
     login: (input) => ipcRenderer.invoke('auth:login', input),
     lock: () => ipcRenderer.invoke('auth:lock'),
     logout: () => ipcRenderer.invoke('auth:logout'),
+    requestLogin: (): Promise<AuthSnapshot> => ipcRenderer.invoke('auth:request-login'),
     enterWorkspace: (modelId?: number): Promise<AuthSnapshot> => ipcRenderer.invoke('auth:enter-workspace', modelId)
   },
   resources: {
@@ -87,7 +90,7 @@ const api: FastAgentApi = {
     localCreate: (input: LocalModelInput) => ipcRenderer.invoke('models:localCreate', input),
     localUpdate: (id: number, input: LocalModelInput) => ipcRenderer.invoke('models:localUpdate', id, input),
     localDelete: (id: number) => ipcRenderer.invoke('models:localDelete', id),
-    localTest: (id: number): Promise<LocalModelTestResult> => ipcRenderer.invoke('models:localTest', id)
+    testDialogue: (id: number): Promise<LocalModelTestResult> => ipcRenderer.invoke('models:testDialogue', id)
   },
   modelConnections: {
     providers: () => ipcRenderer.invoke('model-connections:providers'),

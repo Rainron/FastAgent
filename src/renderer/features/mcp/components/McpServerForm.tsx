@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { LoaderCircle, Plug } from 'lucide-react'
+import { Clipboard, LoaderCircle, Plug } from 'lucide-react'
 import type { LocalMcpServerInput, McpAbility, McpTestStatus } from '../../../../shared/types'
 import { CapabilityDrawer } from '../../abilities/components/CapabilityDrawer'
 import { AbilityErrorBlock } from '../../abilities/components/AbilityErrorBlock'
@@ -68,6 +68,10 @@ export function McpServerForm({ ability, onClose, onSaved }: {
 
   const testing = actions.isPending('test')
   const saving = actions.isPending('save')
+  const configPreview = JSON.stringify(draft(false), null, 2)
+  async function copyConfig() {
+    try { await navigator.clipboard.writeText(configPreview) } catch { /* 剪贴板不可用时不阻断保存 */ }
+  }
 
   return <CapabilityDrawer
     title={ability ? `编辑 Server：${ability.name}` : '添加 MCP Server'}
@@ -98,6 +102,8 @@ export function McpServerForm({ ability, onClose, onSaved }: {
         <label className="settings-inline-field"><span>请求头（JSON）</span><input value={headersText} placeholder='{"Authorization":"Bearer …"}' onChange={(event) => setHeadersText(event.target.value)} />{ability?.hasSecrets && <small className="cap-field-note">已有加密密钥，留空保持不变。</small>}</label>
       </>}
       <label className="settings-inline-field"><span>调用超时（ms）</span><input type="number" min={500} step={500} value={timeoutMs} onChange={(event) => setTimeoutMs(Math.max(500, Number(event.target.value) || 30_000))} /></label>
+
+      <div className="cap-form-section"><div className="cap-form-section-title"><strong>JSON 预览</strong><button type="button" className="small-control" onClick={() => void copyConfig()}><Clipboard size={13} />复制 JSON</button></div><pre className="ability-code-block cap-json-preview">{configPreview}</pre></div>
 
       {secretInvalid && <AbilityErrorBlock title="格式错误" message="密钥字段必须是 JSON 对象，例如 {&quot;API_KEY&quot;:&quot;…&quot;}。" />}
       {actions.errorOf('test') && <AbilityErrorBlock title="测试失败" message={actions.errorOf('test') as string} />}

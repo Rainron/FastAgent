@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { runSubAgentTask } from './subagent-scheduler'
+import { SUBAGENT_LIMITS } from './subagent-types'
 import { runSubAgentTasks } from './subagent-scheduler'
 
 describe('subagent scheduler', () => {
@@ -65,5 +67,36 @@ describe('subagent scheduler', () => {
     })
     expect(results[0].status).toBe('failed')
     expect(results[0].error).toBe('失败')
+  })
+})
+
+describe('runSubAgentTask', () => {
+  it('超过 maxRuntimeMs 的任务被判定为 timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const promise = runSubAgentTask(
+        { taskId: 'a', agentId: 'scout', task: 'a' },
+        new AbortController().signal,
+        (_task, signal) => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+        })
+      )
+      await vi.advanceTimersByTimeAsync(SUBAGENT_LIMITS.maxRuntimeMs + 1)
+      expect((await promise).status).toBe('timeout')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('父级已取消时不启动任务，直接给出 cancelled 结果', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    let started = false
+    const result = await runSubAgentTask({ taskId: 'a', agentId: 'scout', task: 'a' }, controller.signal, async (task) => {
+      started = true
+      return { taskId: task.taskId, agentId: task.agentId, agentName: task.agentId, status: 'completed', output: '', truncated: false, startedAt: 0, finishedAt: 1 }
+    })
+    expect(started).toBe(false)
+    expect(result.status).toBe('cancelled')
   })
 })

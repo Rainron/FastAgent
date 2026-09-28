@@ -1,4 +1,4 @@
-import { BookOpen, ClipboardCheck, Download, FileText, FolderOpen, Github, LoaderCircle, Package, Palette, Plug, Wrench } from 'lucide-react'
+import { BookOpen, ClipboardCheck, FileText, FolderOpen, Github, LoaderCircle, Package, Palette, Plug, Wrench } from 'lucide-react'
 import { AbilityStatusBadge } from '../../abilities/components/AbilityStatusBadge'
 import { TYPE_LABELS } from '../../abilities/ability-view'
 import { pluginStatus, pluginStatusPresentation, primaryAction, type CatalogItem } from '../plugin-view'
@@ -14,9 +14,11 @@ function PluginIcon({ name }: { name?: string }) {
   return <span className="plugin-card-icon"><Icon size={17} /></span>
 }
 
-export function PluginCard({ plugin, pending, onOpen, onPrimary }: {
+export function PluginCard({ plugin, pending, sourceName, onOpen, onPrimary }: {
   plugin: CatalogItem
   pending?: 'installing' | 'uninstalling'
+  /** 来源名：多源聚合后同名能力可能来自不同源，卡片上必须可区分。 */
+  sourceName?: string
   onOpen: () => void
   onPrimary: () => void
 }) {
@@ -33,9 +35,9 @@ export function PluginCard({ plugin, pending, onOpen, onPrimary }: {
       <small>{plugin.description || '暂无简介'}</small>
       <div className="ability-row-meta">
         <span>{TYPE_LABELS[plugin.abilityType]}</span>
+        {sourceName && <span>{sourceName}</span>}
         {plugin.author && <span>{plugin.author}</span>}
         {plugin.version && <span>v{plugin.version}</span>}
-        {plugin.downloadCount !== undefined && <span><Download size={10} /> {plugin.downloadCount}</span>}
         {plugin.categories.map((category) => <span key={category}>{category}</span>)}
       </div>
     </div>

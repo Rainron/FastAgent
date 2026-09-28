@@ -38,6 +38,9 @@ export interface FastAgentApi {
   files: {
     /** Electron 受控环境中通过 webUtils 取得用户选择或粘贴文件的本地路径。 */
     getPath(file: File): string
+    /** 读取附件图片转 data URL；路径失效或超出限制时返回 null，不抛错。 */
+    readImage(path: string): Promise<string | null>
+    saveClipboardImage(dataUrl: string, name: string, type: string): Promise<string>
   }
   app: {
     info(): Promise<AppRuntimeInfo>
@@ -72,6 +75,7 @@ export interface FastAgentApi {
     login(input: { backendUrl: string; username: string; password: string; captchaId: string; captchaAngle: number; remember: boolean }): Promise<AuthSnapshot>
     lock(): Promise<AuthSnapshot>
     logout(): Promise<AuthSnapshot>
+    requestLogin(): Promise<AuthSnapshot>
     enterWorkspace(modelId?: number): Promise<AuthSnapshot>
   }
   resources: {
@@ -83,7 +87,8 @@ export interface FastAgentApi {
     localCreate(input: LocalModelInput): Promise<LocalModelSummary>
     localUpdate(id: number, input: LocalModelInput): Promise<LocalModelSummary>
     localDelete(id: number): Promise<void>
-    localTest(id: number): Promise<LocalModelTestResult>
+    /** 模型对话连通性测试：云端账号 / 本地服务连接 / 旧版独立本地模型按 id 通用，发送短对话校验真实回复。 */
+    testDialogue(id: number): Promise<LocalModelTestResult>
   }
   modelConnections: ModelConnectionsApi
   doctor: {

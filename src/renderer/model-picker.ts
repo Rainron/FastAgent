@@ -1,6 +1,6 @@
 import type { LocalModelSummary, ModelOption, ThinkingLevel } from '../shared/types'
-import { getSupportedThinkingLevels } from '../shared/thinking-level'
-export { normalizeThinkingLevel } from '../shared/thinking-level'
+import { getSupportedThinkingLevels, selectableThinkingLevels } from '../shared/thinking-level'
+export { defaultThinkingLevel, normalizeThinkingLevel } from '../shared/thinking-level'
 
 export type ModelTabKey = 'all' | 'recent' | 'favorite'
 
@@ -33,7 +33,7 @@ const levelLabels: Record<string, string> = { auto: '默认', off: '关闭', min
 const levelShortLabels: Record<string, string> = { auto: '默认', off: '关闭', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', max: 'Max', xhigh: 'XHi' }
 
 const levelDescriptions: Record<string, string> = {
-  auto: '跟随模型默认设置，未配置时关闭思考',
+  auto: '跟随模型默认设置，未配置时选择最低思考档',
   off: '关闭思考，以普通模式回答',
   minimal: '几乎不推理，最快返回',
   low: '更快响应，适合简单任务',
@@ -189,7 +189,8 @@ export function stepModelIndex(count: number, index: number, direction: -1 | 1):
 
 export function thinkingLevelsForModel(model: ModelOption | null | undefined): ThinkingLevel[] {
   if (!model?.supports_thinking) return []
-  return ['auto', ...getSupportedThinkingLevels(model)]
+  // UI 不再提供「关闭」档，off 只存在于运行时内部语义。
+  return ['auto', ...selectableThinkingLevels(model)]
 }
 
 export function thinkingLevelLabel(level: ThinkingLevel) {
