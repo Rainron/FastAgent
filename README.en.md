@@ -2,10 +2,23 @@
 
 [![CI](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Rainron/FastAgent)](https://github.com/Rainron/FastAgent/releases)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://github.com/Rainron/FastAgent/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Rainron/FastAgent?style=social)](https://github.com/Rainron/FastAgent/stargazers)
 
 [中文文档](README.md)
 
 FastAgent is a **local-first AI Agent workspace for coding**. Bring your own model API key, select a project directory, and let the agent inspect code, edit files, run commands, and work through planned tasks. Sessions, settings, and credentials remain on the local machine under `~/.fa` and do not pass through a FastAgent relay service.
+
+- **Local-first:** sessions, settings, and credentials stay on your machine. No relay service, no account required.
+- **Bring your own model:** presets for OpenAI, Anthropic, DeepSeek, Qwen, Zhipu GLM, Kimi, and more, plus any OpenAI-compatible endpoint.
+- **Restrictive by default:** a fail-closed permission engine, plan mode, and a Rust OS-level sandbox that limits writes to the active workspace.
+- **Auditable:** every turn records tool calls, approvals, and durations; file changes are verified against the disk after writes instead of trusting the agent's own report.
+- **Batteries included:** ships pinned ripgrep, fd, jq, 7-Zip, MinGit, and Bash, so a real bash is available even without Git for Windows.
+
+![Conversation and execution trace](docs/screenshots/conversation.png)
+
+> Find it useful? A ⭐ Star is the simplest way to support the project and helps others discover it.
 
 - Engine: embedded [pi coding-agent](https://github.com/earendil-works/pi) runtime
 - Stack: Electron 43, React 19, TypeScript, Tailwind 4, and better-sqlite3
@@ -90,6 +103,8 @@ npm run dev
 
 On first launch, add a model connection under **Model Services**. Choose a provider and enter its API key, or configure a custom OpenAI-compatible `baseUrl`. The optional FastAgent account/server tabs are for users who deploy their own backend; the open-source build does not require them.
 
+If it works well for you, please [give it a Star ⭐](https://github.com/Rainron/FastAgent). For problems or feature requests, open an [issue](https://github.com/Rainron/FastAgent/issues).
+
 ### Build from source
 
 ```bash
@@ -166,6 +181,14 @@ For each bundled tool, the original license files are distributed with the packa
 ## Contributing
 
 Documentation improvements, tests, compatibility fixes, and security improvements are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) and review existing issues before opening a pull request.
+
+## Support the project
+
+If FastAgent saves you time, the simplest ways to help:
+
+- Give it a [Star ⭐](https://github.com/Rainron/FastAgent/stargazers)
+- Share it with friends who also code with AI
+- Report real-world problems in an issue, or contribute
 
 ## License
 

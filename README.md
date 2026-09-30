@@ -2,10 +2,23 @@
 
 [![CI](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/Rainron/FastAgent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/Rainron/FastAgent)](https://github.com/Rainron/FastAgent/releases)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6.svg)](https://github.com/Rainron/FastAgent/releases)
+[![GitHub stars](https://img.shields.io/github/stars/Rainron/FastAgent?style=social)](https://github.com/Rainron/FastAgent/stargazers)
 
 [English documentation](README.en.md)
 
 FastAgent 是一个**本地优先**的 AI Agent 工作区桌面应用。你自己带模型 API Key，选一个项目目录，它就能读代码、改文件、跑命令、按计划推进任务——所有会话、设置与凭证都留在本机的 `~/.fa` 目录，不经过任何中转服务。
+
+- **本地优先**：会话、设置、凭证只存本机，不经中转服务，也不需要账号。
+- **自带模型**：内置 OpenAI、Anthropic、DeepSeek、通义千问、智谱 GLM、Kimi 等预设，支持任意 OpenAI 兼容接口。
+- **默认收紧的权限**：fail-closed 权限引擎 + 计划模式 + Rust 实现的 OS 级沙箱，命令只能写当前工作区。
+- **可审计**：每一轮的工具调用、审批与耗时都有轨迹；文件改动以写盘后复查磁盘为准，而不是听 Agent 自报。
+- **开箱即用**：随包分发固定版本的 ripgrep、fd、jq、7-Zip、MinGit 与 Bash，没装 Git for Windows 也能用真正的 bash。
+
+![主对话与执行轨迹](docs/screenshots/conversation.png)
+
+> 觉得有用？点右上角的 ⭐ Star 就是对项目最直接的支持，也能让更多人发现它。
 
 - 引擎：内嵌 [pi coding-agent](https://github.com/earendil-works/pi) 运行时
 - 技术栈：Electron 43 + React 19 + TypeScript + Tailwind 4 + better-sqlite3
@@ -106,6 +119,8 @@ npm run dev
 
 首次启动进入登录页，在「模型服务」一侧添加一个模型连接（选厂商 + 填 API Key，或选「自定义 OpenAI 兼容」并填 baseUrl），保存后即可进入工作区。
 
+用起来顺手的话，欢迎 [点个 Star ⭐](https://github.com/Rainron/FastAgent)；遇到问题或想要的功能，直接提 [Issue](https://github.com/Rainron/FastAgent/issues)。
+
 > 登录页另有「FastAgent 账号」Tab、设置里也有「FastAgent 服务器」分区，那是给自建后端做账号登录与模型下发用的可选通道，需要你自己部署服务端。**开源版不需要它**，配好上面的模型连接就能用全部功能。
 
 ### 从源码打包
@@ -186,6 +201,14 @@ npm run package:win
 ## 参与贡献
 
 欢迎提交文档改进、测试补充、兼容性修复和安全性改进。请先查看 [贡献指南](CONTRIBUTING.md) 与现有 Issue，较大的改动建议先开 Issue 讨论范围。
+
+## 支持项目
+
+如果 FastAgent 帮你省了时间，最简单的支持方式：
+
+- 点一个 [Star ⭐](https://github.com/Rainron/FastAgent/stargazers)
+- 分享给同样在用 AI 写代码的朋友
+- 提 Issue 反馈真实使用中的问题，或参与贡献
 
 ## License
 
