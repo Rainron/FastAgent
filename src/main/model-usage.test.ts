@@ -81,4 +81,18 @@ describe('ModelUsageStore', () => {
       expect(store.get('ns', 'c').latest).toBeNull()
     } finally { db.close() }
   })
+
+  it('仪表盘窗口过滤：7/30/90 天返回不同聚合', () => {
+    const { db, store } = fixture()
+    try {
+      for (const [daysAgo, requestId] of [[1, 'a'], [10, 'b'], [40, 'c'], [80, 'd']] as const) {
+        store.record('ns', record(requestId, { createdAt: new Date(Date.now() - daysAgo * 86_400_000).toISOString() }))
+      }
+      expect(store.overview('ns', 7).totals.requestCount).toBe(1)
+      expect(store.overview('ns', 30).totals.requestCount).toBe(2)
+      expect(store.overview('ns', 90).totals.requestCount).toBe(4)
+      expect(store.overview('ns', 7).byDay).toHaveLength(1)
+      expect(store.overview('ns', 90).byDay).toHaveLength(4)
+    } finally { db.close() }
+  })
 })

@@ -56,12 +56,30 @@ Session lists support pagination, while page transitions, message actions, and w
 
 Model tests run a real round-trip conversation, and all saved models can be tested in one batch.
 
+**Model accounts and usage**
+
+Sign in to model accounts such as Kimi Code. The usage page shows calls and token consumption per model.
+
+**Memory, knowledge base, and unified search**
+
+Each turn shows which cross-session memories were injected and extracted. Projects can keep a knowledge base with an index, and the search page queries conversations, memories, and the knowledge base together.
+
+**Skill distillation and validation**
+
+Turn a successful conversation into a reusable Skill, with static validation for Skills.
+
+**Run limits and context sources**
+
+Concurrency, retry, and continuation limits stop a run with an explicit reason instead of silently continuing. The origin of each turn's context can be traced. Conversations can be exported, and artifact files keep per-turn versions that can be restored.
+
 **Context management and local workflow tools**  
 Provider-reported usage drives context accounting, with automatic summarization and manual compaction. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
 
 ## Quick start
 
-Requirements: Node.js 22+ and Windows 10/11.
+To just use the app, download `FastAgent-<version>-x64.exe` for the version you want from [Releases](https://github.com/Rainron/FastAgent/releases) (unsigned, so SmartScreen may show an “Unknown publisher” warning).
+
+Running from source requires Node.js 22+ and Windows 10/11.
 
 ```bash
 git clone https://github.com/Rainron/FastAgent.git
@@ -126,7 +144,7 @@ The main process is organized as lifecycle → IPC → domain modules. The rende
 
 ## What is next
 
-Future work will continue to improve task continuity, model connections, and the capability ecosystem. Areas include more detailed run-state recovery, session and usage management, long-term cross-session memory, and a project knowledge base.
+Future work will continue to improve task continuity, model connections, and the capability ecosystem. Areas include more detailed run-state recovery, session and usage management, knowledge base retrieval quality, and more source types.
 
 These are directional goals, not dated commitments. Please open an issue if you have a particular use case you would like prioritized.
 
@@ -140,6 +158,7 @@ We are grateful to the maintainers and contributors of the following open-source
 | [Electron](https://electronjs.org) / React / Tailwind | Application framework | MIT |
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | Local database | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | Global keyboard and mouse hooks | MIT |
+| [pdfjs-dist](https://github.com/mozilla/pdf.js) | PDF text extraction for the knowledge base | Apache-2.0 |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | Bundled command-line toolchain | Respective licenses; included under `resources/runtime/*/licenses/` |
 
 For each bundled tool, the original license files are distributed with the packaged application where applicable. Thank you to all upstream maintainers and contributors who make this project possible.

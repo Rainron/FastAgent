@@ -100,6 +100,22 @@ export type BaseFontSize = 'small' | 'medium' | 'large'
 /** 界面密度；紧凑档降低列表行高与内边距 */
 export type UiDensity = 'comfortable' | 'compact'
 
+/**
+ * 运行上限。三项都作用在真实存在的机制上：
+ * 并发上限交给 RunScheduler，两项重试上限交给 pi 运行时的自动重试，
+ * 会话预算在开跑前按已记录的 token 用量拦截。
+ */
+export interface RunLimits {
+  /** 同时进行的运行数上限，1~16。 */
+  maxConcurrentRuns: number
+  /** 单次运行内「空响应自动重试」的次数上限，0 表示不重试。 */
+  maxEmptyRetries: number
+  /** 单次运行内「输出达上限自动续写」的次数上限，0 表示不续写。 */
+  maxLengthContinuations: number
+  /** 单个会话累计 token 预算；null 表示不限制。达到后拒绝开新一轮。 */
+  conversationTokenBudget: number | null
+}
+
 export interface AppSettings {
   motionPreference: MotionPreference
   startAtLogin: boolean
@@ -134,6 +150,8 @@ export interface AppSettings {
   quickDialogEnabled: boolean
   /** 快捷键绑定；缺省字段视为未绑定 */
   shortcuts?: ShortcutSettings
+  /** 运行上限：达到后进入明确的失败/排队状态并说明原因，不静默继续。 */
+  limits: RunLimits
   attachmentMaxFileSizeMb: number
   attachmentMaxImageSizeMb: number
   attachmentFileExtensions: string[]

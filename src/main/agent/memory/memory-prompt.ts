@@ -34,3 +34,32 @@ export function renderMemoryPrompt(hits: readonly MemoryRecallHit[], budget = ME
 export function withMemoryPrompt(prompt: string, memoryPrompt: string): string {
   return memoryPrompt ? `${memoryPrompt}\n\n${prompt}` : prompt
 }
+
+/** 项目知识库注入：人工策展内容，可信度高于记忆，单独成段。 */
+export const KB_PROMPT_BUDGET = 2_400
+
+/** 来源标注：有文件与定位时一并给出，模型引用这段内容时才能落回原文的具体位置。 */
+function citationOf(entry: { sourcePath?: string | null; locator?: string | null }): string {
+  if (!entry.sourcePath) return ''
+  return entry.locator ? `（${entry.sourcePath} ${entry.locator}）` : `（${entry.sourcePath}）`
+}
+
+export function renderKbPrompt(entries: ReadonlyArray<{ title: string; content: string; sourcePath?: string | null; locator?: string | null }>, budget = KB_PROMPT_BUDGET): string {
+  if (!entries.length) return ''
+  const lines: string[] = []
+  let used = 0
+  for (const entry of entries) {
+    // 知识条目可能整段粘贴，先压平再拼行；预算按条截断，不截半句。
+    const body = entry.content.replace(/\s+/g, ' ').trim()
+    const line = `- ${entry.title.replace(/\s+/g, ' ').trim()}${citationOf(entry)}: ${body}`
+    if (used + line.length + 1 > budget) break
+    used += line.length + 1
+    lines.push(line)
+  }
+  if (!lines.length) return ''
+  return [
+    '## 项目知识库（人工维护的项目约定与背景）',
+    '引用其中内容时，请一并给出括号里的文件与位置。',
+    ...lines
+  ].join('\n')
+}

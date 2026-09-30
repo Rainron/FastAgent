@@ -1,12 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import { CredentialSynchronizationError, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { Api, CredentialStore, Model } from '@earendil-works/pi-ai'
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import type { DiscoveredConnectionModel, ModelConnectionDraft, ModelConnectionInput, ModelConnectionsApi, ModelLoginState } from '../shared/types'
 import { MODEL_PROVIDERS, modelProvider } from '../shared/model-providers'
 import type { ModelConnectionStore } from './local-store/model-connections'
+import { modelLoginError } from './model-login-error'
 
-type LoginSession = { state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; openedUrl?: string; answer?: (value: string) => void; reject?: (error: Error) => void }
+type LoginSession = { providerId: string; state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; openedUrl?: string; answer?: (value: string) => void; reject?: (error: Error) => void }
+
+// 厂商有效期允许覆盖 10 分钟默认截止时间，但封顶 15 分钟，并留出余量让 pi 的设备码过期错误先生效。
+const LOGIN_DEFAULT_TIMEOUT_MS = 10 * 60_000
+const LOGIN_VENDOR_MAX_TIMEOUT_MS = 15 * 60_000
+const LOGIN_VENDOR_GRACE_MS = 30_000
 type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void }
 type RuntimeModelCapabilities = Model<Api> & { thinkingDefault?: string; thinkingProfiles?: Record<string, unknown> | null }
 
@@ -127,6 +133,10 @@ export class ModelConnectionService implements ModelConnectionsApi {
   async startLogin(providerId: string, connectionId?: string): Promise<ModelLoginState> {
     const provider = modelProvider(providerId)
     if (!provider.oauthProviderId) throw new Error('该厂商未提供可用的账号登录，请使用 API Key')
+    // OpenAI 等厂商绑定固定本地回调端口，同厂商并发登录会互相抢占回调。
+    for (const active of this.sessions.values()) {
+      if (active.providerId === providerId && ['pending', 'input-required'].includes(active.state.status)) throw new Error('该厂商已有进行中的账号登录，请先完成或取消后再试')
+    }
     if (connectionId) {
       const metadata = this.store.metadata(connectionId)
       if (metadata.providerId !== providerId || metadata.authMode !== 'oauth') throw new Error('账号连接不匹配')
@@ -136,8 +146,8 @@ export class ModelConnectionService implements ModelConnectionsApi {
     const id = connectionId ?? this.store.save({ providerId, authMode: 'oauth', models: [] }).id
     const sessionId = randomUUID()
     const session: LoginSession = {
-      state: { sessionId, connectionId: id, status: 'pending' }, abort: new AbortController(), ephemeral,
-      timer: setTimeout(() => this.finishLogin(sessionId, 'expired'), 10 * 60_000)
+      providerId, state: { sessionId, connectionId: id, status: 'pending' }, abort: new AbortController(), ephemeral,
+      timer: setTimeout(() => this.finishLogin(sessionId, 'expired'), LOGIN_DEFAULT_TIMEOUT_MS)
     }
     session.timer.unref?.()
     this.sessions.set(sessionId, session)
@@ -149,6 +159,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
       if (session.abort.signal.aborted) throw new Error('登录已取消')
       return next
     }, options) }
+    let successMessage = '账号授权成功，可以选择模型。'
     void this.buildRuntime(guarded).then(async (runtime) => {
       if (session.abort.signal.aborted) return
       await runtime.login(provider.oauthProviderId!, 'oauth', {
@@ -156,7 +167,18 @@ export class ModelConnectionService implements ModelConnectionsApi {
         notify: (event) => {
           if (session.abort.signal.aborted) return
           if (event.type === 'auth_url') { Object.assign(session.state, { url: event.url, message: event.instructions }); this.openAuthUrl(session, event.url) }
-          else if (event.type === 'device_code') { Object.assign(session.state, { url: event.verificationUri, userCode: event.userCode }); this.openAuthUrl(session, event.verificationUri) }
+          else if (event.type === 'device_code') {
+            Object.assign(session.state, { url: event.verificationUri, userCode: event.userCode })
+            this.openAuthUrl(session, event.verificationUri)
+            const expires = event.expiresInSeconds
+            if (typeof expires === 'number' && Number.isFinite(expires) && expires > 0) {
+              // 重新武装计时器前先释放旧的，避免旧计时器提前结束新有效期。
+              clearTimeout(session.timer)
+              const deadline = Math.min(expires * 1000, LOGIN_VENDOR_MAX_TIMEOUT_MS) + LOGIN_VENDOR_GRACE_MS
+              session.timer = setTimeout(() => this.finishLogin(sessionId, 'expired'), Math.max(deadline, 30_000))
+              session.timer.unref?.()
+            }
+          }
           else session.state.message = event.message
         },
         prompt: (prompt) => new Promise<string>((resolve, reject) => {
@@ -171,12 +193,16 @@ export class ModelConnectionService implements ModelConnectionsApi {
           session.abort.signal.addEventListener('abort', aborted, { once: true })
           if (prompt.signal?.aborted) aborted()
         })
+      }).catch((error: unknown) => {
+        // pi 将凭据提交与模型快照同步分开；仅后者失败时凭据已有效落库，后续会重建运行时。
+        if (!(error instanceof CredentialSynchronizationError) || error.operation !== 'login' || error.providerId !== provider.oauthProviderId || error.credential?.type !== 'oauth') throw error
+        successMessage = '账号授权已保存，但模型状态同步失败；可重新获取模型并测试连接。'
       })
-      if (!session.abort.signal.aborted) { session.state.status = 'success'; clearTimeout(session.timer); this.runtimes.delete(id); this.onChanged() }
-    }).catch(() => {
+      if (!session.abort.signal.aborted) { session.state.status = 'success'; session.state.message = successMessage; clearTimeout(session.timer); this.runtimes.delete(id); this.onChanged() }
+    }).catch((error: unknown) => {
       if (!session.abort.signal.aborted) {
         session.state.status = 'error'
-        session.state.error = '账号登录失败，请重试'
+        session.state.error = modelLoginError(error)
         clearTimeout(session.timer)
         this.cleanupEphemeral(session)
       }

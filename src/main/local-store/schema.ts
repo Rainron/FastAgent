@@ -5,12 +5,14 @@ import { defaultRuntimeConfig } from './row-mappers'
 import { migrateSharedWorkspace, WORKSPACE_SCHEMA_SQL } from './shared-workspace'
 import { MODEL_CONNECTIONS_SQL, migrateLegacyLocalModels } from './model-connections'
 import { MODEL_USAGE_SCHEMA_SQL } from '../model-usage-store'
+import { ensureKbEntrySourceColumns, KB_SCHEMA_SQL } from '../kb-store'
 
 /** 建库 DDL：全部 IF NOT EXISTS，已有库重复执行无副作用；补列与改约束走下面的迁移函数。 */
 export const SCHEMA_SQL = `
       ${WORKSPACE_SCHEMA_SQL}
       ${MODEL_CONNECTIONS_SQL}
       ${MODEL_USAGE_SCHEMA_SQL}
+      ${KB_SCHEMA_SQL}
       CREATE TABLE IF NOT EXISTS accounts (
         namespace TEXT PRIMARY KEY,
         backend_url TEXT NOT NULL,
@@ -110,6 +112,18 @@ export const SCHEMA_SQL = `
         name TEXT PRIMARY KEY,
         enabled INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
+      );
+      /* Skill 改写前的历史快照。与 local_skill_state 一样不分 namespace：
+         Skill 装在数据根的 skills 目录里，本来就是跨账户共用的。 */
+      CREATE TABLE IF NOT EXISTS skill_versions (
+        name TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        description TEXT NOT NULL,
+        version TEXT,
+        reason TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY(name, revision)
       );
       CREATE TABLE IF NOT EXISTS local_mcp_servers (
         id TEXT PRIMARY KEY,
@@ -347,6 +361,7 @@ export const SCHEMA_SQL = `
         before_hash TEXT,
         after_hash TEXT,
         diff TEXT,
+        before_text TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY(namespace, turn_id, path)
@@ -425,7 +440,47 @@ export const SCHEMA_SQL = `
        * 不用外部内容表：rowid 与 memories 对齐，写入侧在同一事务里同步两张表。
        */
       CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, tokenize='trigram');
+      /* 每轮召回命中落一张日志表：会话内闭环要求展示「这一轮注入了什么」，
+         而召回本身不改动 memories 行，只能另存。clearMemories 物理删记忆时同步清理。 */
+      CREATE TABLE IF NOT EXISTS memory_recall_log (
+        namespace TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        memory_id TEXT NOT NULL,
+        recalled_at INTEGER NOT NULL,
+        PRIMARY KEY(namespace, turn_id, memory_id)
+      );
+      CREATE INDEX IF NOT EXISTS memory_recall_log_turn
+        ON memory_recall_log(namespace, turn_id, recalled_at);
+      /* 本轮实际注入的知识条目 / Skill / 规则文件。与 memory_recall_log 同样的理由另存：
+         这些来源不改动任何既有行，运行结束后没有别的地方能回答「这一轮用了什么」。 */
+      CREATE TABLE IF NOT EXISTS turn_context_sources (
+        namespace TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        turn_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        ref_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        locator TEXT,
+        detail TEXT,
+        recorded_at INTEGER NOT NULL,
+        PRIMARY KEY(namespace, turn_id, kind, ref_id)
+      );
+      CREATE INDEX IF NOT EXISTS turn_context_sources_turn
+        ON turn_context_sources(namespace, turn_id, recorded_at);
+      CREATE INDEX IF NOT EXISTS turn_context_sources_conversation
+        ON turn_context_sources(namespace, conversation_id);
     `
+
+/**
+ * 成果版本恢复要的是「本轮第一次写之前的原文」。旧库没有这一列，补上即可，
+ * 历史回合无法追溯原文，界面按 canRestore=false 处理。
+ */
+function ensureFileChangeBeforeText(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(agent_file_changes)').all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === 'before_text')) return
+  db.exec('ALTER TABLE agent_file_changes ADD COLUMN before_text TEXT')
+}
 
 // 旧库的 conversations 表建于 project_id 之前，CREATE TABLE IF NOT EXISTS 不会补列。
 function ensureConversationProjectColumn(db: Database.Database) {
@@ -757,6 +812,8 @@ export function applyMigrations(db: Database.Database) {
   ensureTodoPlanColumns(db)
   ensureTodoStatusExtended(db)
   ensureAgentRunDiagnosticColumns(db)
+  ensureKbEntrySourceColumns(db)
+  ensureFileChangeBeforeText(db)
 
   const [{ user_version: current }] = db.pragma('user_version') as Array<{ user_version: number }>
   if (current >= SCHEMA_VERSION) return

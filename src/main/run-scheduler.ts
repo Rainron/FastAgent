@@ -23,7 +23,7 @@ export class RunScheduler {
   private readonly activeProviders = new Map<string, number>()
   private readonly activeModels = new Map<string, number>()
   private active = 0
-  private readonly maxConcurrent: number
+  private maxConcurrent: number
   private readonly providerLimits: Record<string, number>
   private readonly modelLimits: Record<string, number>
 
@@ -31,6 +31,19 @@ export class RunScheduler {
     this.maxConcurrent = Math.max(1, options.maxConcurrent ?? 4)
     this.providerLimits = options.providerLimits ?? {}
     this.modelLimits = options.modelLimits ?? {}
+  }
+
+  /** 设置变更后即时生效：调大时立刻放行排队中的任务，调小只影响之后的调度，不打断在跑的。 */
+  setMaxConcurrent(value: number) {
+    const next = Math.max(1, Math.round(value))
+    if (next === this.maxConcurrent) return
+    this.maxConcurrent = next
+    this.pump()
+  }
+
+  /** 当前排队等待的任务数；界面据此说明「已达并发上限，排队中」。 */
+  get queuedCount() {
+    return this.queue.filter((entry) => !entry.cancelled).length
   }
 
   schedule<T>(key: RunResourceKey, task: () => Promise<T>): ScheduledRun<T> {

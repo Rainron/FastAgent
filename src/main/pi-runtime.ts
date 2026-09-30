@@ -186,6 +186,10 @@ export interface RuntimeRunOptions {
   onCompaction?: (event: { reason: 'manual' | 'threshold' | 'overflow'; tokensBefore: number; estimatedTokensAfter: number; durationMs: number; measurement: ContextMeasurement }) => void
   /** 运行时内部自动重试时回调一次，供调用方把次数记进台账；不影响重试本身。 */
   onRetry?: (reason: 'empty-response' | 'length-continuation') => void
+  /** 用户暂停时挂起下一次工具调用；闸门由调用方持有，取消优先于暂停。 */
+  waitWhilePaused?: (signal: AbortSignal) => Promise<void> | void
+  /** 自动重试上限；缺省沿用改造前写死的 2 / 3。 */
+  retryLimits?: { maxEmptyRetries?: number; maxLengthContinuations?: number }
   // Agent Tool Runtime（Phase 1）
   namespace: string
   conversationId: string
@@ -436,7 +440,8 @@ function toolRuntimeContext(options: RuntimeRunOptions): ToolRuntimeContext {
     customSubAgents: options.customSubAgents,
     verificationCommands: options.verificationCommands,
     skillManifestPaths: options.skillPaths,
-    onAbilityUsed: options.onAbilityUsed
+    onAbilityUsed: options.onAbilityUsed,
+    waitWhilePaused: options.waitWhilePaused
   }
 }
 
@@ -650,8 +655,8 @@ export interface RunOutcome {
  * 长任务异常停止的根因之一是：任何 agent_end 都被当成「生成完成」，
  * 导致模型报错、输出被截断、空响应都被 UI 标记为 completed。这里把可判定的异常区分出来。
  */
-export function shouldAutoContinueLength(last: unknown, limits: { contextWindow?: number | null; maxTokens?: number | null }, attempts: number): boolean {
-  if (attempts >= 3 || !last || typeof last !== 'object') return false
+export function shouldAutoContinueLength(last: unknown, limits: { contextWindow?: number | null; maxTokens?: number | null }, attempts: number, maxAttempts = 3): boolean {
+  if (attempts >= maxAttempts || !last || typeof last !== 'object') return false
   const message = last as { stopReason?: string; usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number } }
   if (message.stopReason !== 'length') return false
   const maxTokens = limits.maxTokens || DEFAULT_MAX_TOKENS
@@ -851,7 +856,8 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
     const limits = { contextWindow: options.credentials.context_window || DEFAULT_CONTEXT_WINDOW, maxTokens: options.credentials.max_tokens || DEFAULT_MAX_TOKENS }
     const continuationPrompt = '输出令牌上限已到。直接从截断处继续，不要道歉、不要回顾、不要重复已完成内容；把剩余工作拆成更小步骤并持续更新待办。'
     // 空响应自动重试最多 2 次；真正吃满输出预算时自动续写最多 3 次。
-    const MAX_EMPTY_RETRIES = 2
+    const MAX_EMPTY_RETRIES = options.retryLimits?.maxEmptyRetries ?? 2
+    const MAX_LENGTH_CONTINUATIONS = options.retryLimits?.maxLengthContinuations ?? 3
     let emptyRetries = 0
     let lengthContinuations = 0
     let nextPrompt = prompt
@@ -881,12 +887,12 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
         return
       }
       const outcome = classifyRunOutcome(lastAssistantMessage, limits)
-      if (shouldAutoContinueLength(lastAssistantMessage, limits, lengthContinuations) && !options.signal.aborted) {
+      if (shouldAutoContinueLength(lastAssistantMessage, limits, lengthContinuations, MAX_LENGTH_CONTINUATIONS) && !options.signal.aborted) {
         lengthContinuations += 1
         nextPrompt = continuationPrompt
         nextPromptArgs = undefined
         options.onRetry?.('length-continuation')
-        options.onEvent({ type: 'run_phase', phase: 'prompting', detail: `单次输出达到上限，正在自动续写（${lengthContinuations}/3）`, status: 'running' })
+        options.onEvent({ type: 'run_phase', phase: 'prompting', detail: `单次输出达到上限，正在自动续写（${lengthContinuations}/${MAX_LENGTH_CONTINUATIONS}）`, status: 'running' })
         continue
       }
       if (outcome.kind === 'retry-empty' && emptyRetries < MAX_EMPTY_RETRIES && !options.signal.aborted) {

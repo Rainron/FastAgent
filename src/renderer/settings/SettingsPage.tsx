@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Boxes, Brain, CircleUserRound, Database, FileText, Keyboard, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
+import { Boxes, Brain, ChartColumn, CircleUserRound, Database, FileText, Keyboard, LibraryBig, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { AppSettings, AppTheme, AuthSnapshot, ConversationMode, LocalModelInput, LocalModelSummary, LocalModelTestResult, ModelOption } from '../../shared/types'
 import { mergeModelOptions } from '../model-picker'
@@ -10,6 +10,7 @@ import { ContextSettings } from './ContextSettings'
 import { DataStorageSettings } from './DataStorageSettings'
 import { GeneralSettings } from './GeneralSettings'
 import { KeybindingSettings } from './KeybindingSettings'
+import { KnowledgeSettings } from './KnowledgeSettings'
 import { MemorySettings } from './MemorySettings'
 import { ModelSettings } from './ModelSettings'
 import { PermissionSettings } from './PermissionSettings'
@@ -17,8 +18,10 @@ import { PromptSettings } from './PromptSettings'
 import { SandboxSettings } from './SandboxSettings'
 import { DoctorSettings } from './DoctorSettings'
 import { RuntimeSettings } from './RuntimeSettings'
+import { UsageSettings } from './UsageSettings'
+import { RunLimitSettings } from './RunLimitSettings'
 
-export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'context' | 'permissions' | 'memory' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor'
+export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor'
 
 const categories: Array<{ key: SettingsCategory; label: string; desc: string; icon: ComponentType<{ size?: number }>; group: string }> = [
   { key: 'general', label: '常规', desc: '启动、后台与基础行为偏好。', icon: Settings, group: '通用' },
@@ -26,9 +29,11 @@ const categories: Array<{ key: SettingsCategory; label: string; desc: string; ic
   { key: 'keybindings', label: '快捷键', desc: '应用内与全局快捷键绑定。', icon: Keyboard, group: '通用' },
   { key: 'connection', label: 'FastAgent 服务器', desc: '登录状态与服务连接。', icon: Server, group: '运行时' },
   { key: 'models', label: '模型服务', desc: '模型选择、收藏与本地模型。', icon: Boxes, group: '运行时' },
+  { key: 'usage', label: '用量统计', desc: '模型调用量与 token 消耗。', icon: ChartColumn, group: '运行时' },
   { key: 'context', label: '对话与上下文', desc: '压缩策略与上下文窗口占用。', icon: MessagesSquare, group: '运行时' },
   { key: 'permissions', label: 'Agent 与权限', desc: 'Agent 执行权限档位。', icon: ShieldCheck, group: '运行时' },
   { key: 'memory', label: '记忆', desc: '记忆提取与注入。', icon: Brain, group: '运行时' },
+  { key: 'knowledge', label: '项目知识库', desc: '人工维护的项目背景与约定。', icon: LibraryBig, group: '运行时' },
   { key: 'sandbox', label: '安全与沙箱', desc: '沙箱与命令执行防护。', icon: Shield, group: '系统' },
   { key: 'prompts', label: '提示词', desc: '各模式提示词覆写。', icon: FileText, group: '系统' },
   { key: 'storage', label: '数据与存储', desc: '数据目录与存储占用。', icon: Database, group: '系统' },
@@ -92,9 +97,11 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'connection' && <ConnectionSettings auth={auth} onNotice={onNotice} />}
             {category === 'appearance' && settings && <AppearanceSettings settings={settings} theme={theme} onThemeChange={onThemeChange} onChange={onSettingsChange} />}
             {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onCreateLocal={onCreateLocal} onUpdateLocal={onUpdateLocal} onDeleteLocal={onDeleteLocal} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
+            {category === 'usage' && <><UsageSettings onNotice={onNotice} /><RunLimitSettings settings={settings} onSettingsChange={onSettingsChange} /></>}
             {category === 'context' && settings && <ContextSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'permissions' && settings && <PermissionSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'memory' && settings && <MemorySettings settings={settings} models={selectableModels} onChange={onSettingsChange} onNotice={onNotice} />}
+            {category === 'knowledge' && <KnowledgeSettings onNotice={onNotice} />}
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'runtime' && <RuntimeSettings onNotice={onNotice} />}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}

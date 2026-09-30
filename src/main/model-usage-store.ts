@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { ModelUsageAggregate, ModelUsageRecord, ModelUsageSummary } from '../shared/types'
+import type { ModelUsageAggregate, ModelUsageDayRow, ModelUsageModelRow, ModelUsageOverview, ModelUsageRecord, ModelUsageSummary } from '../shared/types'
 
 export const MODEL_USAGE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS model_request_usage (
@@ -65,5 +65,29 @@ export class ModelUsageStore {
 
   deleteConversation(namespace: string, conversationId: string): void {
     this.db.prepare('DELETE FROM model_request_usage WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+  }
+
+  /** 用量仪表盘的跨会话聚合。days 上限 365，避免一次性拉全库；日粒度按本地时区切天。 */
+  overview(namespace: string, days: number): ModelUsageOverview {
+    const clamped = Math.min(Math.max(Math.trunc(days) || 30, 1), 365)
+    const since = new Date(Date.now() - clamped * 86_400_000).toISOString()
+    const range = 'namespace = ? AND created_at >= ?'
+    const totals = this.db.prepare(`SELECT COUNT(*) AS requestCount,
+      COALESCE(SUM(status = 'failed'), 0) AS failedCount,
+      COALESCE(SUM(status = 'cancelled'), 0) AS cancelledCount,
+      ${AGGREGATE_COLUMNS} FROM model_request_usage WHERE ${range}`).get(namespace, since) as ModelUsageOverview['totals']
+    const byModel = this.db.prepare(`SELECT provider, model_name AS modelName,
+      COUNT(*) AS requestCount, COALESCE(SUM(status = 'failed'), 0) AS failedCount,
+      ${AGGREGATE_COLUMNS}, MAX(created_at) AS lastUsedAt
+      FROM model_request_usage WHERE ${range}
+      GROUP BY provider, model_name
+      ORDER BY inputTokens + outputTokens DESC, requestCount DESC`).all(namespace, since) as ModelUsageModelRow[]
+    const byDay = this.db.prepare(`SELECT date(created_at, 'localtime') AS day,
+      COUNT(*) AS requestCount,
+      COALESCE(SUM(input_tokens + cache_read_tokens + cache_write_tokens), 0) AS inputTokens,
+      COALESCE(SUM(output_tokens), 0) AS outputTokens
+      FROM model_request_usage WHERE ${range}
+      GROUP BY day ORDER BY day`).all(namespace, since) as ModelUsageDayRow[]
+    return { totals, byModel, byDay }
   }
 }

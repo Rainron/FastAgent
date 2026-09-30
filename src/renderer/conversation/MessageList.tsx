@@ -18,8 +18,10 @@ import { TodoPanel, type TodoRunStatus } from './TodoPanel'
 import { ThinkingText } from './ThinkingText'
 import { todoStats } from './todo-status'
 import { ToolCallCard } from './ToolCallCard'
+import { MemoryTurnBar } from './MemoryTurnBar'
+import { ContextSourceBar } from './ContextSourceBar'
 
-export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
+export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, memoryTurnIds, contextSourceTurnIds, onNotice, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; memoryTurnIds: ReadonlySet<string>; contextSourceTurnIds: ReadonlySet<string>; onNotice: (notice: string) => void; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
   const modelChanges = useMemo(() => modelChangeTurnIds(turns), [turns])
   const knownTurnIds = useRef<Set<string> | null>(null)
   if (knownTurnIds.current === null) knownTurnIds.current = new Set(turns.map((turn) => turn.id))
@@ -28,7 +30,7 @@ export const MessageList = React.memo(function MessageList({ turns, models, todo
     knownTurnIds.current!.add(turn.id)
     return <React.Fragment key={turn.id}>
       {modelChanges.has(turn.id) && <ModelChangeMarker label={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} />}
-      <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} modelName={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} />
+      <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} hasMemoryActivity={memoryTurnIds.has(turn.id)} hasContextSources={contextSourceTurnIds.has(turn.id)} modelName={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} onNotice={onNotice} />
     </React.Fragment>
   })}</div>
 })
@@ -38,7 +40,7 @@ function ModelChangeMarker({ label }: { label?: string }) {
   return <div className="model-change-marker"><span className="model-change-line" />{label ? `已切换到 ${label}` : '已切换模型'}<span className="model-change-line" /></div>
 }
 
-const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, turn, todos, modelName, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { isNew: boolean; turn: ConversationTurn; todos?: TodoItem[]; modelName?: string; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
+const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, turn, todos, hasMemoryActivity, hasContextSources, modelName, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu, onNotice }: { isNew: boolean; turn: ConversationTurn; todos?: TodoItem[]; hasMemoryActivity: boolean; hasContextSources: boolean; modelName?: string; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void; onNotice: (notice: string) => void }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(turn.userMessage.text)
   const [editAttachments, setEditAttachments] = useState<Attachment[]>(turn.attachments)
@@ -79,6 +81,8 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
       </>}
       {!editing && <MessageActions onCopy={() => onCopy(turn.userMessage.text)} onEdit={() => setEditing(true)} onRetry={() => onRetry(turn)} onDelete={() => onDelete(turn.id)} />}
     </section>
+    {hasMemoryActivity && <MemoryTurnBar turnId={turn.id} onNotice={onNotice} />}
+    {hasContextSources && <ContextSourceBar turnId={turn.id} onNotice={onNotice} />}
     {interruption && <InterruptionBanner turn={turn} todos={todos} detail={interruption} onContinue={() => onContinue(turn)} />}
     {todos && todos.length > 0 && activity && <TodoPanel items={todos} execution={activity.execution} status={todoStatus} startedAt={Date.parse(activity.startedAt || turn.createdAt)} finishedAt={activity.finishedAt ? Date.parse(activity.finishedAt) : null} />}
     {showActivity && activity && (isChat

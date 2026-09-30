@@ -7,6 +7,10 @@ export interface SkillStateStore {
   isSkillEnabled(name: string): boolean
   setSkillEnabled(name: string, enabled: boolean): void
   removeSkillState(name: string): void
+  /** 改写前存一份旧内容，返回新的修订号。 */
+  recordSkillVersion(name: string, input: { content: string; description: string; version?: string | null; reason: 'edit' | 'import' | 'revert' }): number
+  readSkillVersion(name: string, revision: number): string | null
+  removeSkillVersions(name: string): void
 }
 
 export interface LocalSkillRecord {
@@ -145,8 +149,25 @@ export class LocalSkillRegistry {
     const instructions = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '')
     const next = { name, description: patch.description ?? current.description, instructions: patch.instructions ?? instructions }
     validateInput(next)
+    // 先存旧内容再覆盖：写完再存就只剩新版本，回退无从谈起。
+    this.snapshot(current, source, 'edit')
     this.writeSkill(current.filePath, next)
     return this.require(name)
+  }
+
+  /** 回退到某个历史修订：当前内容先存成新快照，回退本身也是一次可再回退的改动。 */
+  revert(name: string, revision: number): LocalSkillRecord {
+    const current = this.require(name)
+    const content = this.state.readSkillVersion(name, revision)
+    if (content === null) throw new Error(`找不到 Skill 版本：${name} #${revision}`)
+    if (!parseSkillContent(content, current.filePath, false)) throw new Error('该历史版本的 SKILL.md 已不是有效格式，无法回退')
+    this.snapshot(current, readFileSync(current.filePath, 'utf8'), 'revert')
+    writeFileSync(current.filePath, content, 'utf8')
+    return this.require(name)
+  }
+
+  private snapshot(record: LocalSkillRecord, content: string, reason: 'edit' | 'import' | 'revert') {
+    this.state.recordSkillVersion(record.name, { content, description: record.description, version: record.version ?? null, reason })
   }
 
   setEnabled(name: string, enabled: boolean) {
@@ -218,6 +239,12 @@ export class LocalSkillRegistry {
         mkdirSync(dirname(target), { recursive: true })
         writeFileSync(target, content, 'utf8')
       }
+      // 覆盖安装前留一份旧内容，导入踩坏了还能退回去。
+      const previousManifest = join(directory, 'SKILL.md')
+      if (existsSync(previousManifest)) {
+        const previous = parseSkill(previousManifest, false)
+        if (previous) this.snapshot(previous, readFileSync(previousManifest, 'utf8'), 'import')
+      }
       if (existsSync(directory)) rmSync(directory, { recursive: true, force: true })
       renameSync(staging, directory)
     } finally {
@@ -258,6 +285,8 @@ export class LocalSkillRegistry {
     const current = this.require(name)
     rmSync(join(current.filePath, '..'), { recursive: true, force: true })
     this.state.removeSkillState(name)
+    // 目录都删了，留着历史快照只会在同名 Skill 重装时把别人的历史接上去。
+    this.state.removeSkillVersions(name)
   }
 
   private require(name: string) {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LocalStore } from './local-store'
 import * as schema from './local-store/schema'
-import type { ConversationTurn } from '../shared/types'
+import type { ConversationTurn, ModelUsageRecord } from '../shared/types'
 
 const defaultRoot = join(tmpdir(), 'fastagent-default')
 mkdirSync(defaultRoot, { recursive: true })
@@ -152,6 +152,141 @@ describe('LocalStore CLI 工具', () => {
     store.saveCliTool(tool)
     store.removeCliTool('gh')
     expect(store.listCliTools()).toEqual([])
+    store.close()
+  })
+})
+
+describe('LocalStore 旧库升级', () => {
+  it('kb_entries 建于来源字段之前的旧库也能正常打开', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fastagent-store-'))
+    tempRoots.push(root)
+    const databasePath = join(root, 'fastagent.db')
+    // 手工造一张「升级前」的 kb_entries：只有旧列，没有 source_id / source_path / locator。
+    const raw = new Database(databasePath)
+    raw.exec(`
+      CREATE TABLE kb_entries (
+        namespace TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        entry_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(namespace, project_id, entry_id)
+      );
+    `)
+    raw.prepare('INSERT INTO kb_entries(namespace, project_id, entry_id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('account-a', 'p1', 'kb-old', '旧条目', '旧正文', 1, 1)
+    raw.close()
+
+    // 建库 SQL 里若对新列建索引，这一步会以 no such column 失败并让整个应用起不来。
+    const store = new LocalStore(databasePath)
+    const entries = store.listKbEntries('account-a', 'p1')
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({ id: 'kb-old', title: '旧条目', sourceId: null, locator: null })
+    store.close()
+
+    // 补列之后索引也要真的建出来，否则来源过滤会退化成全表扫。
+    const check = new Database(databasePath)
+    const indexes = check.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'kb_entries'").all() as Array<{ name: string }>
+    check.close()
+    expect(indexes.map((row) => row.name)).toContain('kb_entries_source')
+  })
+})
+
+describe('LocalStore 成果版本', () => {
+  function change(store: ReturnType<typeof makeStore>, patch: Partial<Parameters<ReturnType<typeof makeStore>['upsertFileChange']>[1]> = {}) {
+    store.upsertFileChange('account-a', {
+      turnId: 't1', conversationId: 'c1', runId: 'r1', path: 'docs/plan.md',
+      operation: 'update', additions: 3, deletions: 1, tools: ['edit'],
+      beforeHash: 'h0', afterHash: 'h1', diff: '-old|+new', beforeText: '旧内容',
+      ...patch
+    })
+  }
+
+  it('按路径列出改动历史，标出可看差异与可恢复', () => {
+    const store = makeStore()
+    change(store)
+    const versions = store.listFileVersions('account-a', 'docs/plan.md')
+    expect(versions).toHaveLength(1)
+    expect(versions[0]).toMatchObject({ turnId: 't1', operation: 'update', additions: 3, deletions: 1, hasDiff: true, canRestore: true })
+    store.close()
+  })
+
+  it('同一回合重复写入时只保留第一次的原文', () => {
+    const store = makeStore()
+    change(store)
+    change(store, { beforeText: '第二次写之前的内容', diff: '-new|+newer' })
+    expect(store.getFileChangeBeforeText('account-a', 't1', 'docs/plan.md')).toBe('旧内容')
+    store.close()
+  })
+
+  it('没有原文的记录不可恢复，也不谎称可以', () => {
+    const store = makeStore()
+    change(store, { turnId: 't2', beforeText: null, diff: null })
+    const version = store.listFileVersions('account-a', 'docs/plan.md').find((item) => item.turnId === 't2')
+    expect(version).toMatchObject({ canRestore: false, hasDiff: false })
+    expect(store.getFileChangeBeforeText('account-a', 't2', 'docs/plan.md')).toBeNull()
+    store.close()
+  })
+
+  it('按会话过滤，其他会话改同名文件不混进来', () => {
+    const store = makeStore()
+    change(store)
+    change(store, { turnId: 't9', conversationId: 'c2' })
+    expect(store.listFileVersions('account-a', 'docs/plan.md', 'c1').map((item) => item.turnId)).toEqual(['t1'])
+    expect(store.listFileVersions('account-a', 'docs/plan.md')).toHaveLength(2)
+    store.close()
+  })
+
+  it('getArtifact 取单条产物，不存在时返回 null', () => {
+    const store = makeStore()
+    const saved = store.upsertArtifact('account-a', { id: 'a1', workspaceId: 'K:/repo', name: 'plan.md', type: 'markdown', path: 'docs/plan.md', conversationId: 'c1' })
+    expect(store.getArtifact('account-a', saved.id)).toMatchObject({ id: saved.id, path: 'docs/plan.md', workspaceId: 'K:/repo' })
+    expect(store.getArtifact('account-a', 'missing')).toBeNull()
+    store.close()
+  })
+})
+
+describe('LocalStore 上下文来源', () => {
+  it('落库后按回合读回，并按 kind 分组排序', () => {
+    const store = makeStore()
+    store.recordTurnContextSources('account-a', 'c1', 't1', [
+      { kind: 'skill', refId: 'code-review', title: '代码审查', locator: 'K:/skills/code-review', detail: '描述已注入' },
+      { kind: 'kb', refId: 'kb-1', title: '部署约定', locator: null, detail: '发布前跑 npm test' }
+    ], 1_700_000_000_000)
+    const sources = store.listTurnContextSources('account-a', 't1')
+    expect(sources.map((source) => source.kind)).toEqual(['kb', 'skill'])
+    expect(sources[0]).toEqual({ kind: 'kb', refId: 'kb-1', title: '部署约定', locator: null, detail: '发布前跑 npm test', recordedAt: 1_700_000_000_000 })
+    store.close()
+  })
+
+  it('同回合同来源重复写幂等，标题与说明按最新一次更新', () => {
+    const store = makeStore()
+    const write = (title: string) => store.recordTurnContextSources('account-a', 'c1', 't1', [{ kind: 'kb', refId: 'kb-1', title, locator: null, detail: null }])
+    write('旧标题')
+    write('新标题')
+    const sources = store.listTurnContextSources('account-a', 't1')
+    expect(sources).toHaveLength(1)
+    expect(sources[0].title).toBe('新标题')
+    store.close()
+  })
+
+  it('按会话列出有来源记录的回合，namespace 之间互不可见', () => {
+    const store = makeStore()
+    store.recordTurnContextSources('account-a', 'c1', 't1', [{ kind: 'rule', refId: 'AGENTS.md', title: '项目 AGENTS.md', locator: 'K:/repo/AGENTS.md', detail: null }])
+    store.recordTurnContextSources('account-b', 'c1', 't2', [{ kind: 'rule', refId: 'AGENTS.md', title: '项目 AGENTS.md', locator: 'K:/repo/AGENTS.md', detail: null }])
+    expect(store.listContextSourceTurnIds('account-a', 'c1')).toEqual(['t1'])
+    expect(store.listTurnContextSources('account-a', 't2')).toEqual([])
+    store.close()
+  })
+
+  it('清空会话时一并删掉来源记录，不留孤儿行', () => {
+    const store = makeStore()
+    store.createConversation('account-a', { id: 'c1', title: '会话' })
+    store.recordTurnContextSources('account-a', 'c1', 't1', [{ kind: 'kb', refId: 'kb-1', title: '部署约定', locator: null, detail: null }])
+    store.clearConversationTurns('account-a', 'c1')
+    expect(store.listContextSourceTurnIds('account-a', 'c1')).toEqual([])
     store.close()
   })
 })
@@ -1616,6 +1751,118 @@ describe('agent 运行台账', () => {
     const store = makeStore()
     seedRun(store)
     expect(store.listAgentRunLedger('ns-b', 'c1')).toEqual([])
+    store.close()
+  })
+})
+
+describe('LocalStore 用量总览', () => {
+  let seq = 0
+  function usageRecord(overrides: Partial<ModelUsageRecord> = {}): ModelUsageRecord {
+    seq += 1
+    return {
+      requestId: `req-${seq}`,
+      conversationId: 'c1',
+      turnId: 't1',
+      runId: 'r1',
+      modelId: 1,
+      provider: 'p1',
+      modelName: 'm1',
+      createdAt: new Date().toISOString(),
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      readAvailability: 'unknown',
+      writeAvailability: 'unknown',
+      status: 'completed',
+      ...overrides
+    }
+  }
+
+  it('overview 按模型聚合并统计失败数', () => {
+    const store = makeStore()
+    store.createConversation('ns', { id: 'c1', title: '用量' })
+    store.recordModelUsage('ns', usageRecord({ modelName: 'm1', inputTokens: 100, outputTokens: 40 }))
+    store.recordModelUsage('ns', usageRecord({ modelName: 'm1', inputTokens: 300, outputTokens: 60, status: 'failed' }))
+    store.recordModelUsage('ns', usageRecord({ modelName: 'm2', provider: 'p2', inputTokens: 50, outputTokens: 10 }))
+    const overview = store.getModelUsageOverview('ns', 30)
+    expect(overview.totals.requestCount).toBe(3)
+    expect(overview.totals.failedCount).toBe(1)
+    expect(overview.totals.inputTokens).toBe(450)
+    expect(overview.totals.outputTokens).toBe(110)
+    expect(overview.byModel).toHaveLength(2)
+    expect(overview.byModel[0].modelName).toBe('m1')
+    expect(overview.byModel[0].failedCount).toBe(1)
+    expect(overview.byModel[1].modelName).toBe('m2')
+    store.close()
+  })
+
+  it('overview 按本地日期分组且窗口外的记录不计入', () => {
+    const store = makeStore()
+    store.createConversation('ns', { id: 'c1', title: '用量' })
+    const now = new Date()
+    const old = new Date(now.getTime() - 40 * 86_400_000)
+    store.recordModelUsage('ns', usageRecord({ createdAt: now.toISOString(), inputTokens: 200, outputTokens: 20 }))
+    store.recordModelUsage('ns', usageRecord({ createdAt: old.toISOString(), inputTokens: 999, outputTokens: 999 }))
+    const overview = store.getModelUsageOverview('ns', 30)
+    expect(overview.totals.requestCount).toBe(1)
+    expect(overview.totals.inputTokens).toBe(200)
+    expect(overview.byDay).toHaveLength(1)
+    const day = overview.byDay[0].day
+    const local = new Date(Date.now() - 86_400_000)
+    expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(day >= local.toISOString().slice(0, 10)).toBe(true)
+    store.close()
+  })
+
+  it('空库返回零值不抛错', () => {
+    const store = makeStore()
+    const overview = store.getModelUsageOverview('ns', 7)
+    expect(overview.totals.requestCount).toBe(0)
+    expect(overview.byModel).toEqual([])
+    expect(overview.byDay).toEqual([])
+    store.close()
+  })
+})
+
+describe('LocalStore 记忆会话内闭环', () => {
+  it('recordMemoryRecalls 幂等落库，联表读回当前状态', () => {
+    const store = makeStore()
+    store.createConversation('ns', { id: 'c1', title: '记忆' })
+    const memory = store.createMemory('ns', { scope: 'global', scopeId: null, type: 'fact', content: '偏好深色主题', importance: 4 })
+    store.recordMemoryRecalls('ns', 'c1', 't1', [memory.id], 1_000)
+    store.recordMemoryRecalls('ns', 'c1', 't1', [memory.id], 2_000)
+    const hits = store.listMemoryRecallsForTurn('ns', 't1')
+    expect(hits).toHaveLength(1)
+    expect(hits[0].id).toBe(memory.id)
+    expect(hits[0].content).toBe('偏好深色主题')
+    expect(hits[0].recalledAt).toBe(1_000)
+    store.removeMemory('ns', memory.id)
+    expect(store.listMemoryRecallsForTurn('ns', 't1')).toHaveLength(1)
+    expect(store.listMemoryRecallsForTurn('ns', 't1')[0].status).toBe('deleted')
+    store.close()
+  })
+
+  it('listMemories 按 sourceTurnId 过滤且 status=all 含被替代项', () => {
+    const store = makeStore()
+    const first = store.createMemory('ns', { scope: 'global', scopeId: null, type: 'fact', content: 'v1', importance: 3, sourceConversationId: 'c1', sourceTurnId: 't1', sourceRunId: 'r1' })
+    store.createMemory('ns', { scope: 'global', scopeId: null, type: 'fact', content: 'v2', importance: 3, sourceConversationId: 'c1', sourceTurnId: 't2', sourceRunId: 'r2' })
+    store.supersedeMemory('ns', first.id, 'other')
+    expect(store.listMemories('ns', { sourceTurnId: 't1' })).toEqual({ items: [], total: 0, page: 1, pageSize: 10 })
+    const all = store.listMemories('ns', { sourceTurnId: 't1', status: 'all' })
+    expect(all.total).toBe(1)
+    expect(all.items[0].content).toBe('v1')
+    expect(all.items[0].status).toBe('superseded')
+    store.close()
+  })
+
+  it('clearMemories 物理删除后召回日志同步清理', () => {
+    const store = makeStore()
+    store.createMemory('ns', { scope: 'global', scopeId: null, type: 'fact', content: 'x', importance: 3 })
+    const memory = store.listMemories('ns').items[0]
+    store.recordMemoryRecalls('ns', 'c1', 't1', [memory.id])
+    store.clearMemories('ns')
+    expect(store.listMemoryRecallsForTurn('ns', 't1')).toEqual([])
     store.close()
   })
 })

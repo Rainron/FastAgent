@@ -1,4 +1,4 @@
-import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, AgentRunStatus, RunErrorKind, AgentTaskRecord, AgentTaskStatus, AppSettings, ClientPreferences, ConversationMode, ExecutionSnapshot, McpConnectionSnapshot, MemoryRecord, MemoryScope, MemorySettings, MemoryStatus, MemoryType, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../../shared/types'
+import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, AgentRunStatus, RunErrorKind, AgentTaskRecord, AgentTaskStatus, AppSettings, ClientPreferences, ConversationMode, ExecutionSnapshot, McpConnectionSnapshot, MemoryRecord, MemoryScope, MemorySettings, MemoryStatus, MemoryType, RunLimits, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../../shared/types'
 import { defaultSandboxSettings } from '../../shared/sandbox'
 import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
 import { clampRecallLimit, DEFAULT_RECALL } from '../agent/memory/memory-rank'
@@ -13,6 +13,26 @@ export interface ConversationRecord {
   projectId: string | null
   /** 会话绑定的模型；null 表示还没发过消息，打开时用账户默认模型。 */
   modelId: number | null
+}
+
+/** 并发 4 与重试 2/3 沿用改造前写死的取值，行为默认不变，只是变得可配。 */
+export const DEFAULT_RUN_LIMITS: RunLimits = {
+  maxConcurrentRuns: 4,
+  maxEmptyRetries: 2,
+  maxLengthContinuations: 3,
+  conversationTokenBudget: null
+}
+
+export function normalizeRunLimits(input: Partial<RunLimits> | undefined): RunLimits {
+  const clamp = (value: unknown, min: number, max: number, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(Math.max(Math.round(value), min), max) : fallback
+  const budget = input?.conversationTokenBudget
+  return {
+    maxConcurrentRuns: clamp(input?.maxConcurrentRuns, 1, 16, DEFAULT_RUN_LIMITS.maxConcurrentRuns),
+    maxEmptyRetries: clamp(input?.maxEmptyRetries, 0, 10, DEFAULT_RUN_LIMITS.maxEmptyRetries),
+    maxLengthContinuations: clamp(input?.maxLengthContinuations, 0, 10, DEFAULT_RUN_LIMITS.maxLengthContinuations),
+    conversationTokenBudget: typeof budget === 'number' && Number.isFinite(budget) && budget > 0 ? Math.round(budget) : null
+  }
 }
 
 export const defaultSettings: AppSettings = {
@@ -37,7 +57,8 @@ export const defaultSettings: AppSettings = {
   subAgentEnabled: true,
   memory: { enabled: true, autoExtract: true, maxRecall: DEFAULT_RECALL, extractModelId: null },
   sandbox: defaultSandboxSettings,
-  quickDialogEnabled: true
+  quickDialogEnabled: true,
+  limits: DEFAULT_RUN_LIMITS
 }
 
 export const defaultRuntimeConfig = (): TurnRuntimeConfig => ({ modelId: null, thinkingLevel: 'auto', mode: 'chat', permission: null, project: null })

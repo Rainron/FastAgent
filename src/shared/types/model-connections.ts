@@ -20,6 +20,8 @@ export interface ModelProviderPreset {
   protocol: LocalModelApi
   authModes: ModelConnectionAuthMode[]
   oauthProviderId?: string
+  /** 账号登录入口的产品边界说明，例如 Kimi Code 套餐不是通用 Moonshot API。 */
+  description?: string
   models: DiscoveredConnectionModel[]
 }
 export interface ModelConnectionDraft {

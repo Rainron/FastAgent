@@ -70,6 +70,18 @@ Rust 实现的沙箱内核：命令跑在受限的系统账户下，只能写当
 **模型自测**
 模型测试走真实的一轮对话，可一键批量测试全部已保存模型。
 
+**模型账号与用量**
+支持 Kimi Code 等模型账号登录；设置里的用量统计按模型展示调用量与 token 消耗。
+
+**记忆、知识库与统一搜索**
+每一轮对话可见注入与提取了哪些跨会话记忆；可为项目维护知识库并建立索引，搜索页统一检索会话、记忆与知识库。
+
+**技能蒸馏与校验**
+把一次成功的对话提炼成可复用的 Skill，并对 Skill 做静态校验。
+
+**运行限额与上下文来源**
+可限制并发运行数与重试、续写次数，达到上限后明确停下并说明原因；每一轮上下文的来源可以追溯。会话可导出，产物文件保留逐轮版本并可恢复。
+
 **上下文管理**
 按 provider 真实 usage 计量上下文占用（不是字符数除以 4），支持自动摘要与手动压缩，可配触发比例与保留轮次。
 
@@ -81,7 +93,9 @@ Rust 实现的沙箱内核：命令跑在受限的系统账户下，只能写当
 
 ## 快速开始
 
-需要 Node.js 22+ 与 Windows 10/11。
+只想使用：到 [Releases](https://github.com/Rainron/FastAgent/releases) 下载对应版本的 `FastAgent-<版本>-x64.exe` 安装即可（未代码签名，SmartScreen 会提示「未知发布者」）。
+
+从源码运行需要 Node.js 22+ 与 Windows 10/11。
 
 ```bash
 git clone https://github.com/Rainron/FastAgent.git
@@ -141,7 +155,7 @@ npm run package:win
 
 ## 架构
 
-主进程按「生命周期 → IPC → 领域模块」分层，渲染层按「容器组件 → hooks → 纯逻辑模块」分层，纯逻辑模块配单元测试（当前 168 个测试文件、1546 个用例）。
+主进程按「生命周期 → IPC → 领域模块」分层，渲染层按「容器组件 → hooks → 纯逻辑模块」分层，纯逻辑模块配单元测试（当前 190 个测试文件、1759 个用例）。
 
 - `src/main/` 主进程：agent 引擎（工具运行时、权限引擎、安全守卫、沙箱）、`local-store` 数据层、能力注册表
 - `src/preload/` 上下文桥接，向渲染进程暴露类型化 API
@@ -150,7 +164,7 @@ npm run package:win
 
 ## 接下来做什么
 
-后续会继续围绕任务连续性、模型连接和能力生态打磨：包括更细的运行状态恢复、会话与用量管理，以及跨会话的长期记忆和项目知识库。
+后续会继续围绕任务连续性、模型连接和能力生态打磨：包括更细的运行状态恢复、会话与用量管理，以及知识库的检索质量与更多来源类型。
 
 路线图是方向性描述，不承诺固定时间点，做完一块发一块。想优先看到哪个，欢迎提 issue。
 
@@ -164,6 +178,7 @@ npm run package:win
 | [Electron](https://electronjs.org) / React / Tailwind | 应用框架 | MIT |
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | 本地数据库 | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | 全局键鼠钩子 | MIT |
+| [pdfjs-dist](https://github.com/mozilla/pdf.js) | 知识库读取 PDF 文本 | Apache-2.0 |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | 内置工具链，构建时按固定版本下载 | 各自原许可，随包落到 `resources/runtime/*/licenses/` |
 
 打包应用会在适用情况下随对应工具分发原始许可证文件。感谢所有上游维护者和贡献者，他们的工作让 FastAgent 成为可能。

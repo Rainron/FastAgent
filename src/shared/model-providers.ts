@@ -5,6 +5,7 @@ export const MODEL_PROVIDERS: ModelProviderPreset[] = [
   { id: 'qwen', name: '通义千问', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', protocol: 'openai', authModes: ['api-key'], models: [] },
   { id: 'zhipu', name: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', protocol: 'openai', authModes: ['api-key'], models: [] },
   { id: 'kimi', name: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1', protocol: 'openai', authModes: ['api-key'], models: [] },
+  { id: 'kimi-coding', name: 'Kimi Code', baseUrl: 'https://api.kimi.com/coding', protocol: 'openai', authModes: ['oauth'], oauthProviderId: 'kimi-coding', models: [], description: '使用 Kimi Code 编程套餐账号授权（设备验证码登录），不是通用 Moonshot API；需要已开通 Kimi Code 套餐的账号。' },
   { id: 'deepseek', name: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', protocol: 'openai', authModes: ['api-key'], models: [] },
   { id: 'minimax', name: 'MiniMax', baseUrl: 'https://api.minimaxi.com/v1', protocol: 'openai', authModes: ['api-key'], models: [] },
   { id: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com', protocol: 'anthropic', authModes: ['api-key'], models: [] },

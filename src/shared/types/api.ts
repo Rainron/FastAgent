@@ -1,22 +1,24 @@
 import type { PermissionProfile, StoredPermissionProfile } from '../permission-profiles'
 import type { PermissionAction } from '../permission-rules'
-import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpServerDetail, McpTestStatus, SkillDetail } from './abilities'
+import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpServerDetail, McpTestStatus, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord } from './abilities'
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
 import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
 import type { AgentEvent, ToolCallRecord } from './agent-events'
-import type { AgentRunChanges } from './changes'
+import type { AgentRunChanges, FileVersionRecord } from './changes'
 import type { ActiveRunInfo, AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
 import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
 import type { ApprovalDecision, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
-import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageSummary } from './context'
+import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageOverview, ModelUsageSummary, TurnContextSource } from './context'
 import type { Attachment, ConversationDetailed, ConversationInspector, ConversationPageQuery, ConversationRecord, ConversationStats, ConversationTurn, ConversationTurnPatch } from './conversation'
-import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryUpdateInput } from './memory'
+import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, MemoryUpdateInput } from './memory'
 import type { LocalModelInput, LocalModelSummary, LocalModelTestResult } from './models'
 import type { ModelConnectionsApi } from './model-connections'
 import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, PluginQuery } from './plugins'
 import type { RuntimeReport } from './runtime'
 import type { SandboxCapabilities, SandboxSessionInfo } from './sandbox'
+import type { SearchQuery, SearchResponse } from './search'
 import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, RendererErrorReport, StartupWarnings, StoredPermissionRule } from './settings'
+import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
 import type { Artifact, ArtifactQuery, GitOperationResult, GitStatusEntry, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
 
 export interface FastAgentApi {
@@ -94,6 +96,8 @@ export interface FastAgentApi {
   doctor: {
     /** 跑一次环境体检：开发工具、Shell、沙箱、工作区、能力。只探测与报缺，不做任何安装。 */
     run(): Promise<DoctorReport>
+    /** 导出诊断信息到文件；内容按白名单挑字段，不含后端地址、本机路径与凭据。取消时返回 null。 */
+    export(): Promise<string | null>
   }
   runtime: {
     /** 内置工具链现状。verify 为 true 时逐个算 sha256 与清单比对，耗时明显更长。 */
@@ -118,6 +122,14 @@ export interface FastAgentApi {
     remove(name: string): Promise<void>
     /** 文件对话框选择 SKILL.md、目录或 ZIP，返回导入的 Skill；用户取消时返回 null。 */
     import(options?: { format?: 'directory' | 'zip'; onConflict?: 'overwrite' | 'save-as' }): Promise<LocalSkillRecord | null>
+    /** 从会话蒸馏 SKILL.md 草稿：只返草稿不落库，确认后走 create。 */
+    distill(conversationId: string, modelId: number | null): Promise<SkillDraft>
+    /** 历史版本：每次改写 SKILL.md 之前存下的旧内容，按修订号倒序。 */
+    versions(name: string): Promise<SkillVersionRecord[]>
+    /** 回退到指定修订；当前内容会先存成新快照，可以再退回来。 */
+    revert(name: string, revision: number): Promise<LocalSkillRecord>
+    /** 静态校验：只查配置与工具依赖，不启动模型也不执行脚本。 */
+    check(name: string): Promise<SkillCheckResult>
     /** 元数据 + 指令 + 文件树，供详情面板展示。 */
     detail(name: string): Promise<SkillDetail>
   }
@@ -181,6 +193,13 @@ export interface FastAgentApi {
     /** 快速对话专用：直接调模型接口，不走 pi 运行时，无工具 / MCP / 权限审批 */
     quickSend(input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: ThinkingLevel }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
     cancel(runId: string): Promise<void>
+    /**
+     * 暂停：在下一次工具调用前停住。已经发出的模型请求与正在执行的工具不受影响，
+     * 因此按下之后可能还会看到当前这一步跑完。run 已结束时返回 false。
+     */
+    pause(runId: string): Promise<boolean>
+    /** 继续执行；该 run 没有处于暂停状态时返回 false。 */
+    resume(runId: string): Promise<boolean>
     /** 运行途中改权限档位：立刻对当前这一轮生效；run 已结束时返回 false。 */
     setPermission(runId: string, preset: PermissionPreset | null): Promise<boolean>
     respondApproval(id: string, decision: ApprovalDecision, answer: string | undefined, runId: string): Promise<void>
@@ -191,6 +210,10 @@ export interface FastAgentApi {
     saveState(state: ConversationRunState): Promise<void>
     markRead(conversationId: string): Promise<void>
   }
+  usage: {
+    /** 跨会话用量聚合；days 由调用方选 7/30/90，主进程会夹到 1..365。 */
+    overview(days: number): Promise<ModelUsageOverview>
+  },
   conversations: {
     list(): Promise<ConversationRecord[]>
     get(conversationId: string): Promise<ConversationRecord | null>
@@ -207,6 +230,10 @@ export interface FastAgentApi {
     refreshContext(conversationId: string, modelId: number | null): Promise<ContextState>
     modelUsage(conversationId: string, turnId?: string): Promise<ModelUsageSummary>
     listToolCalls(turnId: string): Promise<ToolCallRecord[]>
+    /** 本轮实际注入的知识条目 / Skill / 规则文件；记忆走 memories.turnActivity。 */
+    contextSources(turnId: string): Promise<TurnContextSource[]>
+    /** 哪些回合有上下文来源记录；会话加载时一次拉全。 */
+    contextSourceTurns(conversationId: string): Promise<string[]>
     listTodos(conversationId: string): Promise<TodoItem[]>
     listPermissionRules(): Promise<StoredPermissionRule[]>
     upsertPermissionRule(rule: { toolKey: string; pattern: string; action: PermissionAction }): Promise<StoredPermissionRule[]>
@@ -227,6 +254,8 @@ export interface FastAgentApi {
     openSessionDirectory(conversationId: string): Promise<string>
     /** 重命名只改标题，不影响排序；返回改后的记录，标题为空时抛错。 */
     rename(conversationId: string, title: string): Promise<ConversationRecord | null>
+    /** 弹保存对话框把会话导出为 Markdown / HTML（由对话框过滤器决定）；取消时返回 null，否则返回落地路径。 */
+    export(conversationId: string): Promise<string | null>
     archive(conversationId: string): Promise<void>
     remove(conversationId: string): Promise<void>
     /** 清空会话全部消息与运行时状态，保留会话条目并重置标题。 */
@@ -277,10 +306,40 @@ export interface FastAgentApi {
     archive(id: string): Promise<void>
     remove(id: string): Promise<void>
   }
+  search: {
+    /** 统一搜索：会话标题、项目知识、Skill、成果。Skill 是全局能力，按项目过滤时不参与。 */
+    query(input: SearchQuery): Promise<SearchResponse>
+  }
+  knowledgeBase: {
+    /** 项目知识条目列表；项目侧栏管理入口用。 */
+    list(projectId: string): Promise<KbEntry[]>
+    save(projectId: string, input: { id?: string; title: string; content: string }): Promise<KbEntry>
+    remove(projectId: string, entryId: string): Promise<void>
+    /** 项目下的文件/目录来源；界面据此展示索引状态与失败原因。 */
+    listSources(projectId: string): Promise<KbSource[]>
+    /** 弹系统对话框选路径并返回范围预览；用户取消时返回 null，此时未写库。 */
+    pickSource(kind: KbSourceKind): Promise<KbSourcePreview | null>
+    /** 对已知路径重算范围预览，用于调整排除规则后再看一眼。 */
+    previewSource(path: string, kind: KbSourceKind, excludes?: string[]): Promise<KbSourcePreview>
+    /** 建来源并立即索引；返回本次索引结果（含逐文件失败原因）。 */
+    addSource(projectId: string, input: { path: string; kind: KbSourceKind; title?: string; excludes?: string[] }): Promise<KbIndexResult>
+    /** 重新索引：按内容哈希增量更新，来源路径已消失时标记为 stale。 */
+    refreshSource(sourceId: string): Promise<KbIndexResult>
+    /** 解绑来源并删除它产生的全部条目。 */
+    removeSource(sourceId: string): Promise<void>
+    /** 保存/删除后广播，常开的编辑器据此刷新。 */
+    onChanged(listener: (projectId: string) => void): () => void
+  }
   artifacts: {
     list(query?: ArtifactQuery): Promise<Artifact[]>
     /** 移除一条产物登记；只删记录，不动磁盘上的文件。 */
     remove(artifactId: string): Promise<void>
+    /** 成果的改动历史：一条记录对应一个改过它的回合，按时间倒序。 */
+    versions(artifactId: string): Promise<FileVersionRecord[]>
+    /** 某一次改动的逐行 diff；二进制与超大文件为 null。 */
+    versionDiff(artifactId: string, turnId: string): Promise<string | null>
+    /** 恢复到该回合改动之前的内容；恢复本身也记为一次新变更，可再退回。 */
+    restore(artifactId: string, turnId: string): Promise<{ ok: boolean; error?: string }>
     /** Agent 产生新 Artifact（或更新）后广播，Artifacts 面板据此实时刷新。 */
     onChanged(listener: () => void): () => void
   }
@@ -303,6 +362,10 @@ export interface FastAgentApi {
     clear(scope?: MemoryScope, scopeId?: string | null): Promise<number>
     /** 抽取写入或用户编辑后广播，管理页据此刷新。 */
     onChanged(listener: () => void): () => void
+    /** 会话内闭环：某一轮的召回命中与提取产出，展开时才调用。 */
+    turnActivity(turnId: string): Promise<MemoryTurnActivity>
+    /** 哪些回合有记忆活动（召回命中或提取产出）；会话加载时一次拉全。 */
+    conversationActivity(conversationId: string): Promise<string[]>
   }
   changes: {
     /** 某一轮 Agent 对工作区的最终变更聚合；不含 diff 文本。 */

@@ -10,6 +10,7 @@ import { builtinProfile } from '../../shared/permission-profiles'
 import { buildEffectiveRules } from './permission/effective-rules'
 import type { LocalStore } from '../local-store'
 import { changeStats, collectShellWriteTargets, createToolRuntimeExtension, modeSystemPrompt, toolAvailabilityNote } from './tool-runtime'
+import { PauseGate } from './pause-gate'
 
 const roots: string[] = []
 
@@ -554,6 +555,45 @@ describe('落库失败不能中断运行', () => {
     } finally {
       error.mockRestore()
     }
+  })
+})
+
+describe('暂停闸门', () => {
+  it('暂停时挡在工具调用之前，恢复后才继续', async () => {
+    const gate = new PauseGate()
+    const extension = createToolRuntimeExtension({
+      namespace: 'ns', conversationId: 'c1', turnId: 't1', runId: 'paused-run',
+      cwd: makeWorkspace(), mode: 'agent', planMode: false, shellToolName: 'bash',
+      resolveRuleSet: () => presetRuleSet('full'),
+      sessionOverrides: new Map(),
+      store: fakeStore(),
+      signal: new AbortController().signal,
+      emit: () => undefined,
+      requestApproval: async () => 'once' as ApprovalDecision,
+      requestQuestion: async () => [],
+      mcpToolRisk: new Map(),
+      waitWhilePaused: (signal) => gate.wait(signal)
+    })
+    let onToolCall: (event: ToolCallEvent) => Promise<unknown> = async () => undefined
+    extension({
+      on: (event: string, handler: unknown) => { if (event === 'tool_call') onToolCall = handler as typeof onToolCall },
+      registerTool: () => undefined
+    } as never)
+
+    gate.pause()
+    let settled = false
+    const pending = onToolCall(toolCall({ toolCallId: 'paused-call', toolName: 'read', input: { path: 'a.txt' } })).then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    gate.resume()
+    await pending
+    expect(settled).toBe(true)
+  })
+
+  it('未暂停时不插入额外微任务，既有的同 tick 时序不变', () => {
+    const gate = new PauseGate()
+    expect(gate.wait()).toBeUndefined()
   })
 })
 

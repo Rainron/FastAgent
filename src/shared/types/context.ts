@@ -40,6 +40,58 @@ export interface ModelUsageSummary {
   session: ModelUsageAggregate
 }
 
+export interface ModelUsageModelRow {
+  provider: string
+  modelName: string
+  requestCount: number
+  failedCount: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  lastUsedAt: string
+}
+
+export interface ModelUsageDayRow {
+  /** 本地时区日期，YYYY-MM-DD。 */
+  day: string
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+}
+
+export interface ModelUsageOverview {
+  totals: {
+    requestCount: number
+    failedCount: number
+    cancelledCount: number
+    inputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+  }
+  byModel: ModelUsageModelRow[]
+  byDay: ModelUsageDayRow[]
+}
+
+/**
+ * 本轮真正进入模型请求的上下文来源。记忆另有 memory_recall_log 与专门的查看入口，
+ * 这里只记「记忆之外」的三类，避免同一事实两处存。
+ */
+export type TurnContextSourceKind = 'kb' | 'skill' | 'rule'
+
+export interface TurnContextSource {
+  kind: TurnContextSourceKind
+  /** 知识条目 id / Skill 名 / 规则文件路径。 */
+  refId: string
+  title: string
+  /** 来源入口用的定位串：文件绝对路径；无对应文件时为 null。 */
+  locator: string | null
+  /** 一句话说明这条来源以什么形式进了请求。 */
+  detail: string | null
+  recordedAt: number
+}
+
 export interface ContextPolicy {
   conversationId: string
   strategy: ContextStrategy

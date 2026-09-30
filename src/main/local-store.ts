@@ -2,7 +2,7 @@ import { app } from 'electron'
 import Database from 'better-sqlite3'
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
-import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentFileChange, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, ResumableRun, RunErrorKind, AgentTaskRecord, AgentTaskStatus, ConversationMode, AppSettings, Artifact, ArtifactQuery, ArtifactReference, Attachment, Citation, FileOperation, ClientPreferences, CliToolCheck, CompactionHistory, ContextPolicy, ContextState, ContextStrategy, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, HubSource, HubSourceInput, HubSourceKind, LocalCliTool, PageQuery, PageResult, ConversationTurnPatch, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryType, MemoryUpdateInput, ModelCredentials, ProjectRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../shared/types'
+import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentFileChange, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, ResumableRun, RunErrorKind, AgentTaskRecord, AgentTaskStatus, ConversationMode, AppSettings, Artifact, ArtifactQuery, ArtifactReference, Attachment, Citation, FileOperation, FileVersionRecord, ClientPreferences, CliToolCheck, CompactionHistory, ContextPolicy, ContextState, ContextStrategy, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, HubSource, HubSourceInput, HubSourceKind, LocalCliTool, PageQuery, PageResult, ConversationTurnPatch, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryType, MemoryUpdateInput, ModelCredentials, ProjectRecord, SkillVersionRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../shared/types'
 import type { PermissionAction } from '../shared/permission-rules'
 import { sanitizeOverrides, type BuiltinPermissionPreset, type StoredPermissionProfile } from '../shared/permission-profiles'
 import { normalizeSandboxSettings } from '../shared/sandbox'
@@ -12,10 +12,11 @@ import { conversationFilter, LATEST_MODE, LATEST_STATUS } from './local-store/co
 import { applyMigrations, SCHEMA_SQL } from './local-store/schema'
 import { ModelConnectionStore } from './local-store/model-connections'
 import { ModelUsageStore } from './model-usage-store'
+import { KbStore } from './kb-store'
 import { accountModelId } from './local-store/shared-workspace'
-import type { ModelUsageRecord, ModelUsageSummary } from '../shared/types'
+import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, TurnContextSource } from '../shared/types'
 import {
-  defaultClientPreferences, defaultRuntimeConfig, defaultSettings, emptyConnectionSnapshot, mapAbilityMeta, mapConversation,
+  defaultClientPreferences, defaultRuntimeConfig, defaultSettings, emptyConnectionSnapshot, mapAbilityMeta, mapConversation, normalizeRunLimits,
   mapAgentRun, mapAgentTask, mapMemory, normalizeMemorySettings, normalizeRuntimeConfig, normalizeTurnActivity, parseJson,
   type AbilityMetaRow, type AgentRunRow, type AgentTaskRow, type ConversationRecord, type ConversationRow, type MemoryRow, type TurnRow
 } from './local-store/row-mappers'
@@ -57,6 +58,7 @@ export class LocalStore {
   private readonly db: Database.Database
   private readonly modelConnectionRepository: ModelConnectionStore
   private readonly modelUsageRepository: ModelUsageStore
+  private readonly kbRepository: KbStore
 
   constructor(databasePath?: string) {
     this.db = new Database(databasePath ?? `${app.getPath('userData')}\fastagent.db`)
@@ -66,11 +68,19 @@ export class LocalStore {
     applyMigrations(this.db)
     this.modelConnectionRepository = new ModelConnectionStore(this.db)
     this.modelUsageRepository = new ModelUsageStore(this.db)
+    this.kbRepository = new KbStore(this.db)
   }
 
   modelConnections(): ModelConnectionStore { return this.modelConnectionRepository }
   recordModelUsage(namespace: string, record: ModelUsageRecord): boolean { return this.modelUsageRepository.record(namespace, record) }
   getModelUsage(namespace: string, conversationId: string, turnId?: string): ModelUsageSummary { return this.modelUsageRepository.get(namespace, conversationId, turnId) }
+  getModelUsageOverview(namespace: string, days: number): ModelUsageOverview { return this.modelUsageRepository.overview(namespace, days) }
+  listKbEntries(namespace: string, projectId: string) { return this.kbRepository.list(namespace, projectId) }
+  saveKbEntry(namespace: string, projectId: string, input: { id?: string; title: string; content: string }) { return this.kbRepository.save(namespace, projectId, input) }
+  removeKbEntry(namespace: string, projectId: string, entryId: string) { return this.kbRepository.remove(namespace, projectId, entryId) }
+  searchKbEntries(namespace: string, projectId: string, plan: { match: string | null; likeTerms: readonly string[] }, limit: number) { return this.kbRepository.search(namespace, projectId, plan, limit) }
+  /** 知识来源（文件/目录绑定）：索引流程在 knowledge/kb-indexer.ts，这里只透出存取。 */
+  get knowledgeBase() { return this.kbRepository }
   deleteModelUsage(namespace: string, conversationId: string): void { this.modelUsageRepository.deleteConversation(namespace, conversationId) }
 
   static namespace(backendUrl: string, userId: string) {
@@ -85,7 +95,7 @@ export class LocalStore {
     const row = this.db.prepare('SELECT payload FROM app_settings WHERE key = ?').get('global') as { payload: string } | undefined
     const stored = parseJson<Partial<AppSettings>>(row?.payload, {})
     // sandbox 为嵌套对象，浅合并救不了缺字段的旧记录，单独归一化。
-    return { ...defaultSettings, ...stored, ...normalizeAttachmentPolicy(stored), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory) }
+    return { ...defaultSettings, ...stored, ...normalizeAttachmentPolicy(stored), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), limits: normalizeRunLimits(stored.limits) }
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
@@ -249,6 +259,35 @@ export class LocalStore {
 
   removeSkillState(name: string) {
     this.db.prepare('DELETE FROM local_skill_state WHERE name = ?').run(name)
+  }
+
+  /** 改写 SKILL.md 之前存一份旧内容；修订号自增，回退时按它定位。 */
+  recordSkillVersion(name: string, input: { content: string; description: string; version?: string | null; reason: SkillVersionRecord['reason'] }): number {
+    const { next } = this.db.prepare('SELECT COALESCE(MAX(revision), 0) + 1 AS next FROM skill_versions WHERE name = ?').get(name) as { next: number }
+    this.db.prepare('INSERT INTO skill_versions(name, revision, content, description, version, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(name, next, input.content, input.description, input.version ?? null, input.reason, Date.now())
+    return next
+  }
+
+  listSkillVersions(name: string): SkillVersionRecord[] {
+    const rows = this.db.prepare('SELECT name, revision, description, version, reason, created_at FROM skill_versions WHERE name = ? ORDER BY revision DESC')
+      .all(name) as Array<{ name: string; revision: number; description: string; version: string | null; reason: SkillVersionRecord['reason']; created_at: number }>
+    return rows.map((row) => ({ name: row.name, revision: row.revision, description: row.description, version: row.version, reason: row.reason, createdAt: row.created_at }))
+  }
+
+  /** 当前修订号：运行中的任务按它绑定「用的是哪一版」。没有历史时为 0。 */
+  latestSkillRevision(name: string): number {
+    const { latest } = this.db.prepare('SELECT COALESCE(MAX(revision), 0) AS latest FROM skill_versions WHERE name = ?').get(name) as { latest: number }
+    return latest
+  }
+
+  readSkillVersion(name: string, revision: number): string | null {
+    const row = this.db.prepare('SELECT content FROM skill_versions WHERE name = ? AND revision = ?').get(name, revision) as { content: string } | undefined
+    return row?.content ?? null
+  }
+
+  removeSkillVersions(name: string) {
+    this.db.prepare('DELETE FROM skill_versions WHERE name = ?').run(name)
   }
 
   listAbilityMeta(): AbilityInstallMeta[] {
@@ -898,6 +937,28 @@ export class LocalStore {
     return { items: rows.map(mapConversation), total: count, page, pageSize }
   }
 
+  /** 统一搜索用：按标题匹配。会话正文不参与——逐轮反序列化整段历史会把主进程顶死。 */
+  searchConversationsByTitle(namespace: string, keyword: string, projectId: string | null, limit: number): ConversationRecord[] {
+    const rows = this.db.prepare(`
+      SELECT conversation_id, title, created_at, updated_at, archived, project_id, model_id
+      FROM conversations
+      WHERE namespace = ? AND archived = 0 AND title LIKE ? AND (? IS NULL OR project_id = ?)
+      ORDER BY updated_at DESC LIMIT ?
+    `).all(namespace, `%${keyword}%`, projectId, projectId, limit) as Array<{
+      conversation_id: string; title: string; created_at: string; updated_at: string
+      archived: number; project_id: string | null; model_id: number | null
+    }>
+    return rows.map((row) => ({
+      id: row.conversation_id,
+      title: row.title,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      archived: Boolean(row.archived),
+      projectId: row.project_id,
+      modelId: row.model_id
+    }))
+  }
+
   listConversations(namespace: string, archived = false): ConversationRecord[] {
     const rows = this.db.prepare(`
       SELECT conversation_id, title, created_at, updated_at, archived, project_id, model_id
@@ -1086,6 +1147,7 @@ export class LocalStore {
       this.db.prepare('DELETE FROM conversation_compactions WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('DELETE FROM conversation_context_state WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('DELETE FROM conversation_model_runtime WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+      this.db.prepare('DELETE FROM turn_context_sources WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE namespace = ? AND conversation_id = ?').run('新对话', new Date().toISOString(), namespace, conversationId)
       return count
     })()
@@ -1134,7 +1196,39 @@ export class LocalStore {
   }
 
   removeProject(namespace: string, id: string) {
+    // 先清知识库（含 FTS），再删项目；无 FK，顺序不能反。
+    this.kbRepository.deleteProjectEntries(namespace, id)
     this.db.prepare('DELETE FROM projects WHERE namespace = ? AND project_id = ?').run(namespace, id)
+  }
+
+  /** 单条产物。版本视图与恢复都要先拿到它的 workspaceId 与相对路径。 */
+  getArtifact(namespace: string, artifactId: string): Artifact | null {
+    const row = this.db.prepare(`
+      SELECT artifact_id, workspace_id, conversation_id, task_id, agent_run_id, turn_id, name, type, path, content, size, source, created_at, updated_at
+      FROM artifacts WHERE namespace = ? AND artifact_id = ?
+    `).get(namespace, artifactId) as {
+      artifact_id: string; workspace_id: string; conversation_id: string | null; task_id: string | null
+      agent_run_id: string | null; turn_id: string | null; name: string; type: Artifact['type']
+      path: string | null; content: string | null; size: number | null; source: string | null
+      created_at: number; updated_at: number
+    } | undefined
+    if (!row) return null
+    return {
+      id: row.artifact_id,
+      workspaceId: row.workspace_id,
+      conversationId: row.conversation_id ?? undefined,
+      taskId: row.task_id ?? undefined,
+      agentRunId: row.agent_run_id ?? undefined,
+      turnId: row.turn_id ?? undefined,
+      name: row.name,
+      type: row.type,
+      path: row.path ?? undefined,
+      content: row.content ?? undefined,
+      size: row.size ?? undefined,
+      source: row.source ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }
   }
 
   listArtifacts(namespace: string, query: ArtifactQuery = {}): Artifact[] {
@@ -1241,11 +1335,13 @@ export class LocalStore {
     beforeHash?: string | null
     afterHash?: string | null
     diff?: string | null
+    /** 本轮第一次写入之前的原文；只在首次插入时落库，供成果版本恢复。 */
+    beforeText?: string | null
   }) {
     const now = Date.now()
     this.db.prepare(`
-      INSERT INTO agent_file_changes(namespace, turn_id, path, conversation_id, run_id, operation, old_path, additions, deletions, tools, before_hash, after_hash, diff, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agent_file_changes(namespace, turn_id, path, conversation_id, run_id, operation, old_path, additions, deletions, tools, before_hash, after_hash, diff, before_text, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(namespace, turn_id, path) DO UPDATE SET
         operation = excluded.operation,
         old_path = COALESCE(excluded.old_path, old_path),
@@ -1254,11 +1350,14 @@ export class LocalStore {
         tools = excluded.tools,
         after_hash = excluded.after_hash,
         diff = excluded.diff,
+        -- 同一回合里同一个文件可能被写多次，原文只保留第一次那份，
+        -- 否则「恢复到本轮之前」会退成上一次写完的样子。
+        before_text = COALESCE(before_text, excluded.before_text),
         updated_at = excluded.updated_at
     `).run(
       namespace, input.turnId, input.path, input.conversationId, input.runId, input.operation,
       input.oldPath ?? null, input.additions, input.deletions, JSON.stringify(input.tools),
-      input.beforeHash ?? null, input.afterHash ?? null, input.diff ?? null, now, now
+      input.beforeHash ?? null, input.afterHash ?? null, input.diff ?? null, input.beforeText ?? null, now, now
     )
   }
 
@@ -1306,6 +1405,41 @@ export class LocalStore {
       deletions: files.reduce((sum, file) => sum + file.deletions, 0),
       files
     }
+  }
+
+  /**
+   * 一个文件的改动历史：每一条对应改过它的一个回合。
+   * 成果版本视图按它渲染；conversationId 传入时只看该会话，避免把别的会话的历史混进来。
+   */
+  listFileVersions(namespace: string, path: string, conversationId?: string | null, limit = 50): FileVersionRecord[] {
+    const rows = this.db.prepare(`
+      SELECT turn_id, run_id, conversation_id, operation, additions, deletions,
+             diff IS NOT NULL AS has_diff, before_text IS NOT NULL AS can_restore, updated_at
+      FROM agent_file_changes
+      WHERE namespace = ? AND path = ? AND (? IS NULL OR conversation_id = ?)
+      ORDER BY updated_at DESC LIMIT ?
+    `).all(namespace, path, conversationId ?? null, conversationId ?? null, limit) as Array<{
+      turn_id: string; run_id: string; conversation_id: string; operation: FileOperation
+      additions: number; deletions: number; has_diff: number; can_restore: number; updated_at: number
+    }>
+    return rows.map((row) => ({
+      turnId: row.turn_id,
+      runId: row.run_id,
+      conversationId: row.conversation_id,
+      operation: row.operation,
+      additions: row.additions,
+      deletions: row.deletions,
+      hasDiff: Boolean(row.has_diff),
+      canRestore: Boolean(row.can_restore),
+      changedAt: row.updated_at
+    }))
+  }
+
+  /** 恢复用的原文；旧记录没有存过时为 null，调用方据此禁用恢复入口。 */
+  getFileChangeBeforeText(namespace: string, turnId: string, path: string): string | null {
+    const row = this.db.prepare('SELECT before_text FROM agent_file_changes WHERE namespace = ? AND turn_id = ? AND path = ?')
+      .get(namespace, turnId, path) as { before_text: string | null } | undefined
+    return row?.before_text ?? null
   }
 
   getFileChangeDiff(namespace: string, turnId: string, path: string): string | null {
@@ -1521,6 +1655,7 @@ export class LocalStore {
     const params: unknown[] = [namespace]
     conditions.push('status = ?')
     params.push(query.status ?? 'active')
+    if (query.status === 'all') { conditions.pop(); params.pop() }
     if (query.scope) {
       conditions.push('scope = ?')
       params.push(query.scope)
@@ -1535,6 +1670,10 @@ export class LocalStore {
     if (query.type) {
       conditions.push('type = ?')
       params.push(query.type)
+    }
+    if (query.sourceTurnId) {
+      conditions.push('source_turn_id = ?')
+      params.push(query.sourceTurnId)
     }
     const keyword = (query.keyword ?? '').trim()
     if (keyword) {
@@ -1552,6 +1691,71 @@ export class LocalStore {
       ORDER BY updated_at DESC, memory_id DESC LIMIT ? OFFSET ?
     `).all(...params, pageSize, pageOffset(page, pageSize)) as MemoryRow[]
     return { items: rows.map(mapMemory), total: count, page, pageSize }
+  }
+
+  /** 逐轮召回命中落库；同回合重复写幂等（主键冲突忽略）。 */
+  recordMemoryRecalls(namespace: string, conversationId: string, turnId: string, memoryIds: string[], now = Date.now()): void {
+    if (!memoryIds.length) return
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO memory_recall_log
+      (namespace, conversation_id, turn_id, memory_id, recalled_at) VALUES (?, ?, ?, ?, ?)`)
+    const write = this.db.transaction(() => {
+      for (const memoryId of memoryIds) insert.run(namespace, conversationId, turnId, memoryId, now)
+    })
+    write()
+  }
+
+  /** 回合的召回命中，联表取记忆当前内容与状态；记忆被物理清空后自动不出现在结果里。 */
+  listMemoryRecallsForTurn(namespace: string, turnId: string): Array<MemoryRecord & { recalledAt: number }> {
+    const rows = this.db.prepare(`
+      SELECT m.memory_id, m.scope, m.scope_id, m.type, m.content, m.importance, m.confidence,
+             m.source_conversation_id, m.source_turn_id, m.source_run_id, m.status, m.superseded_by,
+             m.created_at, m.updated_at, m.last_accessed_at, m.expires_at, r.recalled_at
+      FROM memory_recall_log r JOIN memories m
+        ON m.namespace = r.namespace AND m.memory_id = r.memory_id
+      WHERE r.namespace = ? AND r.turn_id = ?
+      ORDER BY r.recalled_at DESC, m.importance DESC
+    `).all(namespace, turnId) as Array<MemoryRow & { recalled_at: number }>
+    return rows.map((row) => ({ ...mapMemory(row), recalledAt: row.recalled_at }))
+  }
+
+  /** 本轮上下文来源落库；同回合重复写幂等（主键冲突覆盖标题与说明，来源本身不变）。 */
+  recordTurnContextSources(namespace: string, conversationId: string, turnId: string, sources: readonly Omit<TurnContextSource, 'recordedAt'>[], now = Date.now()): void {
+    if (!sources.length) return
+    const insert = this.db.prepare(`INSERT INTO turn_context_sources
+      (namespace, conversation_id, turn_id, kind, ref_id, title, locator, detail, recorded_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(namespace, turn_id, kind, ref_id) DO UPDATE SET title = excluded.title, locator = excluded.locator, detail = excluded.detail`)
+    const write = this.db.transaction(() => {
+      for (const source of sources) insert.run(namespace, conversationId, turnId, source.kind, source.refId, source.title, source.locator, source.detail, now)
+    })
+    write()
+  }
+
+  listTurnContextSources(namespace: string, turnId: string): TurnContextSource[] {
+    const rows = this.db.prepare(`
+      SELECT kind, ref_id, title, locator, detail, recorded_at
+      FROM turn_context_sources WHERE namespace = ? AND turn_id = ?
+      ORDER BY kind ASC, title ASC
+    `).all(namespace, turnId) as Array<{ kind: TurnContextSource['kind']; ref_id: string; title: string; locator: string | null; detail: string | null; recorded_at: number }>
+    return rows.map((row) => ({ kind: row.kind, refId: row.ref_id, title: row.title, locator: row.locator, detail: row.detail, recordedAt: row.recorded_at }))
+  }
+
+  /** 哪些回合有上下文来源记录；会话加载时一次拉全，避免逐轮探测。 */
+  listContextSourceTurnIds(namespace: string, conversationId: string): string[] {
+    const rows = this.db.prepare('SELECT DISTINCT turn_id FROM turn_context_sources WHERE namespace = ? AND conversation_id = ?').all(namespace, conversationId) as Array<{ turn_id: string }>
+    return rows.map((row) => row.turn_id)
+  }
+
+  /** 会话内闭环的入口信号：这个会话里哪些回合有召回命中或提取产出。 */
+  listMemoryActivityTurnIds(namespace: string, conversationId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT DISTINCT turn_id FROM (
+        SELECT turn_id FROM memory_recall_log WHERE namespace = ? AND conversation_id = ?
+        UNION
+        SELECT source_turn_id FROM memories WHERE namespace = ? AND source_conversation_id = ? AND source_turn_id IS NOT NULL
+      )
+    `).all(namespace, conversationId, namespace, conversationId) as Array<{ turn_id: string }>
+    return rows.map((row) => row.turn_id)
   }
 
   countMemories(namespace: string, scope?: MemoryScope, scopeId?: string | null): number {
@@ -1779,6 +1983,7 @@ export class LocalStore {
       const removeFts = this.db.prepare('DELETE FROM memories_fts WHERE rowid = ?')
       for (const row of rows) removeFts.run(row.rowid)
       this.db.prepare(`DELETE FROM memories WHERE ${where}`).run(...params)
+      this.db.prepare(`DELETE FROM memory_recall_log WHERE namespace = ? AND memory_id NOT IN (SELECT memory_id FROM memories WHERE memories.namespace = memory_recall_log.namespace)`).run(namespace)
     })
     write()
     return rows.length

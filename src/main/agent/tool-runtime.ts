@@ -64,6 +64,11 @@ export interface ToolRuntimeContext {
   skillManifestPaths?: readonly string[]
   /** 记录「本轮用到了这个能力」；调用方负责按轮去重与落库 */
   onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void
+  /**
+   * 用户暂停后在这里挂起，直到恢复或取消。挡的是「下一次工具调用」——
+   * 已经发出的模型请求与正在执行的工具都不受影响。
+   */
+  waitWhilePaused?: (signal: AbortSignal) => Promise<void> | void
 }
 
 export interface ToolRuntimeContextRef {
@@ -332,6 +337,11 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
 
     const onToolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult> = async (event) => {
       const context = runtimeContext(source)
+      // 暂停在这里生效：先挂住再登记与判权限，避免暂停期间往台账里写一条「运行中」的工具调用。
+      // 未暂停时闸门同步返回 void，这里不能无条件 await——多插一个微任务会让
+      // 「同一 tick 内已发出审批请求」这一既有时序失效。
+      const pauseWait = context.waitWhilePaused?.(context.signal)
+      if (pauseWait) await pauseWait
       contextByCall.set(event.toolCallId, context)
       if (doomLoopRunId !== context.runId) {
         doomLoop = new DoomLoopGuard()
@@ -629,7 +639,10 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
               tools,
               beforeHash: baseline.exists ? baseline.hash : null,
               afterHash: current.exists ? current.hash : null,
-              diff: snapshotDiff.text || null
+              diff: snapshotDiff.text || null,
+              // 成果恢复要的是原文本身，不是 diff：diff 已按上下文裁过，拼不回完整文件。
+              // 二进制与超大文件的 lines 为 null，这时不存，界面上的恢复入口随之禁用。
+              beforeText: baseline.exists && baseline.lines ? baseline.lines.join('\n') : null
             })
           } catch (error) {
             console.error('[file-ledger] 记录变更失败:', error)

@@ -19,6 +19,8 @@ interface ResourcePanelProps {
   onClose: () => void
   onNotice: (notice: string) => void
   onPickSuggestion?: (path: string) => void
+  /** 成果「继续修改」：把提示写进输入框，交给用户补充后自己发。 */
+  onContinueEdit?: (text: string) => void
 }
 
 /**
@@ -27,7 +29,7 @@ interface ResourcePanelProps {
  * 文件预览态的 Header 直接承担类型/行数展示与预览源码、换行、复制、关闭操作，内部不再有第二行工具栏。
  */
 /** 打开时父组件会随流式输出每帧重渲染，面板内容与之无关，memo 挡住。 */
-export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, conversationId, file, onPickWorkspace, onOpenFile, onCloseFile, onClose, onNotice, onPickSuggestion }: ResourcePanelProps) {
+export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, conversationId, file, onPickWorkspace, onOpenFile, onCloseFile, onClose, onNotice, onPickSuggestion, onContinueEdit }: ResourcePanelProps) {
   const { panelState, updatePanel, updateTab } = useResourcePanelState()
   const actions = useResponseActions()
   const activeTab = panelState.activeTab
@@ -140,7 +142,7 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
             ? <div className="resource-empty"><Code2 size={23} /><strong>未打开项目</strong><span>打开工作区后在这里管理文件与产物。</span><button className="small-control" onClick={onPickWorkspace}><Code2 size={14} />打开项目</button></div>
             : activeTab === 'workspace'
               ? <WorkspaceTree workspaceRoot={workspaceRoot} tabState={tabState} onTabStateChange={(patch) => updateTab('workspace', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} />
-              : <ArtifactsTree workspaceRoot={workspaceRoot} conversationId={conversationId} tabState={tabState} onTabStateChange={(patch) => updateTab('artifacts', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} />}
+              : <ArtifactsTree workspaceRoot={workspaceRoot} conversationId={conversationId} tabState={tabState} onTabStateChange={(patch) => updateTab('artifacts', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} onContinueEdit={onContinueEdit} />}
         </div>
       </>}
     <div className="resource-resizer" onPointerDown={startResize} aria-hidden="true" />

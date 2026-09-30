@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AppWindow, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, FileCode2, FileText, FileX2, Folder, FolderOpen, LoaderCircle, Trash2, X } from 'lucide-react'
+import { AppWindow, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, FileCode2, FileText, FileX2, Folder, FolderOpen, History, LoaderCircle, PenLine, Trash2, X } from 'lucide-react'
 import type { Artifact, ArtifactGroup } from '../../shared/types'
 import type { FileReference } from '../ai-response/file-reference'
 import { buildArtifactGroups } from '../../shared/artifact'
 import { humanizeFileSize } from '../../shared/format'
 import { ARTIFACT_TYPE_LABEL, filterArtifactGroups } from './artifacts-tree'
 import type { ResourceTabState } from './panel-state'
+import { ArtifactVersions } from './ArtifactVersions'
+import { continueEditPrompt } from './artifact-versions'
 import { TreeContextMenu } from './TreeContextMenu'
 import { MENU_WIDTH, menuHeight, menuPosition } from './tree-menu'
 
@@ -19,6 +21,8 @@ interface ArtifactsTreeProps {
   onNotice: (notice: string) => void
   /** 删掉的文件正被预览时由外层关闭预览。 */
   onFileDeleted?: (path: string) => void
+  /** 「继续修改」：把提示写进输入框，由用户补充要求后自己发。 */
+  onContinueEdit?: (text: string) => void
 }
 
 /** 右键菜单目标：产物条目或它所属的任务组。 */
@@ -29,8 +33,10 @@ type ArtifactMenuTarget =
 type ArtifactMenuState = ArtifactMenuTarget & { x: number; y: number }
 
 /** Artifact 面板：Agent 写文件成功后由主进程登记，这里按会话分组展示并实时刷新。 */
-export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabStateChange, onOpenFile, onNotice, onFileDeleted }: ArtifactsTreeProps) {
+export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabStateChange, onOpenFile, onNotice, onFileDeleted, onContinueEdit }: ArtifactsTreeProps) {
   const [menu, setMenu] = useState<ArtifactMenuState | null>(null)
+  // 版本视图占满整个面板：diff 需要宽度，挤在树里读不了。
+  const [versionsFor, setVersionsFor] = useState<Artifact | null>(null)
   const [artifacts, setArtifacts] = useState<Artifact[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -182,6 +188,12 @@ export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabSt
     return <div className="resource-empty"><FileText size={23} /><strong>未打开工作区</strong><span>打开项目后 Agent 产生的产物会登记在这里。</span></div>
   }
 
+  if (versionsFor) {
+    return <div className="resource-scroll">
+      <ArtifactVersions artifact={versionsFor} onClose={() => setVersionsFor(null)} onNotice={onNotice} />
+    </div>
+  }
+
   return (
     <>
     <div className="resource-scroll" ref={scrollRef} onScroll={onScroll}>
@@ -203,7 +215,7 @@ export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabSt
               onOpen={openArtifact}
               onForget={forgetArtifact}
               onGroupMenu={(event) => openMenuFor(event, { kind: 'group', group }, 2)}
-              onArtifactMenu={(event, artifact) => openMenuFor(event, { kind: 'artifact', artifact }, artifact.missing ? 3 : 6)}
+              onArtifactMenu={(event, artifact) => openMenuFor(event, { kind: 'artifact', artifact }, artifact.missing ? 4 : onContinueEdit ? 8 : 7)}
             />
           ))}
         </div>
@@ -226,6 +238,8 @@ export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabSt
         <button role="menuitem" onClick={() => { void revealInExplorer(menu.artifact.path ?? ''); setMenu(null) }}><FolderOpen size={14} />在资源管理器中显示</button>
       </>}
       <button role="menuitem" onClick={() => { void copyPath(menu.artifact.path ?? ''); setMenu(null) }}><Copy size={14} />复制绝对路径</button>
+      <button role="menuitem" onClick={() => { setVersionsFor(menu.artifact); setMenu(null) }}><History size={14} />版本历史</button>
+      {!menu.artifact.missing && onContinueEdit && menu.artifact.path && <button role="menuitem" onClick={() => { onContinueEdit(continueEditPrompt(menu.artifact.path as string)); setMenu(null) }}><PenLine size={14} />继续修改</button>}
       <div className="tree-context-separator" />
       <button role="menuitem" onClick={() => { forgetArtifact(menu.artifact); setMenu(null) }}><X size={14} />移除记录</button>
       {!menu.artifact.missing && <button role="menuitem" className="danger" onClick={() => { void deleteArtifactFile(menu.artifact); setMenu(null) }}><Trash2 size={14} />删除文件</button>}

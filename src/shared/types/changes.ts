@@ -17,6 +17,24 @@ export interface AgentFileChange {
 }
 
 /** Bar 订阅的聚合状态：一轮一份，UI 不碰底层工具调用。 */
+/**
+ * 一个成果文件的一次改动记录，等价于「一个回合改了它一次」。
+ * 版本号不单独维护：回合本身就是可追溯的版本标识，另起一套编号只会多一处要对齐的真相。
+ */
+export interface FileVersionRecord {
+  turnId: string
+  runId: string
+  conversationId: string
+  operation: FileOperation
+  additions: number
+  deletions: number
+  /** 有逐行 diff 可看；二进制与超大文件为 false。 */
+  hasDiff: boolean
+  /** 存过改动前原文，可恢复；旧记录与超限文件为 false。 */
+  canRestore: boolean
+  changedAt: number
+}
+
 export interface AgentRunChanges {
   turnId: string
   changedFiles: number

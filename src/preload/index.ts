@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, InitProjectResult, LocalMcpServerInput, LocalModelInput, LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SkillDetail, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput, LocalModelInput, LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -106,7 +106,8 @@ const api: FastAgentApi = {
     logout: (id: string) => ipcRenderer.invoke('model-connections:logout', id)
   },
   doctor: {
-    run: () => ipcRenderer.invoke('doctor:run')
+    run: () => ipcRenderer.invoke('doctor:run'),
+    export: (): Promise<string | null> => ipcRenderer.invoke('doctor:export')
   },
   runtime: {
     status: (verify?: boolean): Promise<RuntimeReport> => ipcRenderer.invoke('runtime:status', verify ?? false),
@@ -125,6 +126,10 @@ const api: FastAgentApi = {
     setEnabled: (name, enabled) => ipcRenderer.invoke('skills:set-enabled', name, enabled),
     remove: (name) => ipcRenderer.invoke('skills:remove', name),
     import: (options) => ipcRenderer.invoke('skills:import', options ?? {}),
+    distill: (conversationId: string, modelId: number | null): Promise<SkillDraft> => ipcRenderer.invoke('skills:distill', conversationId, modelId),
+    versions: (name: string): Promise<SkillVersionRecord[]> => ipcRenderer.invoke('skills:versions', name),
+    revert: (name: string, revision: number): Promise<LocalSkillRecord> => ipcRenderer.invoke('skills:revert', name, revision),
+    check: (name: string): Promise<SkillCheckResult> => ipcRenderer.invoke('skills:check', name),
     detail: (name: string): Promise<SkillDetail> => ipcRenderer.invoke('skills:detail', name)
   },
   mcp: {
@@ -175,6 +180,8 @@ const api: FastAgentApi = {
     send: (input) => ipcRenderer.invoke('chat:send', input),
     quickSend: (input) => ipcRenderer.invoke('chat:quick-send', input),
     cancel: (runId: string) => ipcRenderer.invoke('chat:cancel', runId),
+    pause: (runId: string): Promise<boolean> => ipcRenderer.invoke('chat:pause', runId),
+    resume: (runId: string): Promise<boolean> => ipcRenderer.invoke('chat:resume', runId),
     setPermission: (runId: string, preset: PermissionPreset | null) => ipcRenderer.invoke('chat:set-permission', runId, preset),
     respondApproval: (id: string, decision: ApprovalDecision, answer: string | undefined, runId: string) => ipcRenderer.invoke('chat:approval-respond', { id, decision, answer, runId }),
     onEvent: (listener: (event: AgentEvent) => void) => {
@@ -186,6 +193,9 @@ const api: FastAgentApi = {
     listActive: () => ipcRenderer.invoke('chat:list-active'),
     saveState: (state) => ipcRenderer.invoke('run-states:save', state),
     markRead: (conversationId: string) => ipcRenderer.invoke('run-states:read', conversationId)
+  },
+  usage: {
+    overview: (days: number): Promise<ModelUsageOverview> => ipcRenderer.invoke('usage:overview', days)
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
@@ -203,6 +213,8 @@ const api: FastAgentApi = {
     refreshContext: (conversationId, modelId) => ipcRenderer.invoke('conversation:refreshContext', conversationId, modelId),
     modelUsage: (conversationId: string, turnId?: string) => ipcRenderer.invoke('conversation:model-usage', conversationId, turnId),
     listToolCalls: (turnId: string) => ipcRenderer.invoke('conversations:listToolCalls', turnId),
+    contextSources: (turnId: string) => ipcRenderer.invoke('conversations:contextSources', turnId),
+    contextSourceTurns: (conversationId: string) => ipcRenderer.invoke('conversations:contextSourceTurns', conversationId),
     listTodos: (conversationId: string) => ipcRenderer.invoke('conversations:listTodos', conversationId),
     listPermissionRules: () => ipcRenderer.invoke('conversations:listPermissionRules'),
     upsertPermissionRule: (rule) => ipcRenderer.invoke('conversations:upsertPermissionRule', rule),
@@ -218,6 +230,8 @@ const api: FastAgentApi = {
     setModel: (conversationId: string, modelId: number | null) => ipcRenderer.invoke('conversations:setModel', conversationId, modelId),
     openSessionDirectory: (conversationId: string): Promise<string> => ipcRenderer.invoke('conversations:openSessionDirectory', conversationId),
     rename: (conversationId: string, title: string) => ipcRenderer.invoke('conversations:rename', conversationId, title),
+    /** 弹保存对话框把会话导出为 Markdown / HTML（由对话框过滤器决定）；取消时返回 null。 */
+    export: (conversationId: string): Promise<string | null> => ipcRenderer.invoke('conversations:export', conversationId),
     archive: (conversationId: string) => ipcRenderer.invoke('conversations:archive', conversationId),
     remove: (conversationId: string) => ipcRenderer.invoke('conversations:remove', conversationId),
     clear: (conversationId: string) => ipcRenderer.invoke('conversations:clear', conversationId)
@@ -255,9 +269,31 @@ const api: FastAgentApi = {
     archive: (id: string): Promise<void> => ipcRenderer.invoke('projects:archive', id),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id)
   },
+  search: {
+    query: (input: SearchQuery): Promise<SearchResponse> => ipcRenderer.invoke('search:query', input)
+  },
+  knowledgeBase: {
+    list: (projectId: string): Promise<KbEntry[]> => ipcRenderer.invoke('kb:list', projectId),
+    save: (projectId: string, input: { id?: string; title: string; content: string }): Promise<KbEntry> => ipcRenderer.invoke('kb:save', projectId, input),
+    remove: (projectId: string, entryId: string): Promise<void> => ipcRenderer.invoke('kb:remove', projectId, entryId),
+    listSources: (projectId: string): Promise<KbSource[]> => ipcRenderer.invoke('kb:listSources', projectId),
+    pickSource: (kind: KbSourceKind): Promise<KbSourcePreview | null> => ipcRenderer.invoke('kb:pickSource', kind),
+    previewSource: (path: string, kind: KbSourceKind, excludes?: string[]): Promise<KbSourcePreview> => ipcRenderer.invoke('kb:previewSource', path, kind, excludes),
+    addSource: (projectId: string, input: { path: string; kind: KbSourceKind; title?: string; excludes?: string[] }): Promise<KbIndexResult> => ipcRenderer.invoke('kb:addSource', projectId, input),
+    refreshSource: (sourceId: string): Promise<KbIndexResult> => ipcRenderer.invoke('kb:refreshSource', sourceId),
+    removeSource: (sourceId: string): Promise<void> => ipcRenderer.invoke('kb:removeSource', sourceId),
+    onChanged: (listener: (projectId: string) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, projectId: string) => listener(projectId)
+      ipcRenderer.on('kb:changed', handler)
+      return () => ipcRenderer.removeListener('kb:changed', handler)
+    }
+  },
   artifacts: {
     list: (query?: ArtifactQuery) => ipcRenderer.invoke('artifacts:list', query ?? {}),
     remove: (artifactId: string) => ipcRenderer.invoke('artifacts:remove', artifactId),
+    versions: (artifactId: string): Promise<FileVersionRecord[]> => ipcRenderer.invoke('artifacts:versions', artifactId),
+    versionDiff: (artifactId: string, turnId: string): Promise<string | null> => ipcRenderer.invoke('artifacts:versionDiff', artifactId, turnId),
+    restore: (artifactId: string, turnId: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('artifacts:restore', artifactId, turnId),
     onChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('artifacts:changed', handler)
@@ -275,6 +311,8 @@ const api: FastAgentApi = {
     update: (id: string, patch: MemoryUpdateInput) => ipcRenderer.invoke('memories:update', id, patch),
     remove: (id: string) => ipcRenderer.invoke('memories:remove', id),
     clear: (scope?: MemoryScope, scopeId?: string | null) => ipcRenderer.invoke('memories:clear', scope, scopeId ?? null),
+    turnActivity: (turnId: string): Promise<MemoryTurnActivity> => ipcRenderer.invoke('memories:turn-activity', turnId),
+    conversationActivity: (conversationId: string): Promise<string[]> => ipcRenderer.invoke('memories:conversation-activity', conversationId),
     onChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('memories:changed', handler)

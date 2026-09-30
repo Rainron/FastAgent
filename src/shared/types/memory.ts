@@ -33,8 +33,11 @@ export interface MemoryListQuery {
   scope?: MemoryScope
   scopeId?: string | null
   type?: MemoryType
-  status?: MemoryStatus
+  /** 'all' 表示不过滤状态：会话内闭环需要展示被替代/软删的历史。缺省只列 active。 */
+  status?: MemoryStatus | 'all'
   keyword?: string
+  /** 会话内闭环：查某一轮抽取产生的记忆。 */
+  sourceTurnId?: string
   page?: number
   pageSize?: number
 }
@@ -66,4 +69,12 @@ export interface MemorySettings {
   maxRecall: number
   /** 自动提取使用的模型 id；null 表示跟随会话当前模型。 */
   extractModelId: number | null
+}
+
+/** 会话内记忆闭环：某一轮的召回命中与提取产出。 */
+export interface MemoryTurnActivity {
+  /** 本轮注入 prompt 的记忆；记忆后续被删/替代时状态随之变化，内容为当前值。 */
+  recalled: Array<MemoryRecord & { recalledAt: number }>
+  /** 本轮结束后自动抽取写入的记忆（含被后续替代的，状态见 status）。 */
+  extracted: MemoryRecord[]
 }

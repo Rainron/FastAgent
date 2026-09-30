@@ -292,6 +292,7 @@ export function AbilitiesPage({ onNotice }: {
       ability={overlay.ability}
       onClose={() => setOverlay(null)}
       onOpenLocation={() => void openLocation(overlay.ability)}
+      onNotice={onNotice}
     />}
     {overlay?.kind === 'mcp-form' && <McpServerForm
       ability={overlay.ability}

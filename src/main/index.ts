@@ -5,8 +5,10 @@ import { pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { ApiClient, ApiError } from './api-client'
 import { extractDialogueReply } from './model-dialogue'
+import { buildConversationHtml, buildConversationMarkdown, exportFormatFromPath, sanitizeFilename } from './conversation-export'
 import { createAbilitiesService } from './abilities-service'
 import { createApprovalBridge, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
 import { buildEffectiveRules } from './agent/permission/effective-rules'
@@ -51,8 +53,10 @@ import { redactSecrets } from './secret-redaction'
 import { deleteWorkspaceEntry, listWorkspaceDirectory, normalizeWorkspaceRelative, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from './workspace-files'
 import { archiveAttachments } from './attachment-store'
 import { DEFAULT_ATTACHMENT_POLICY } from '../shared/attachment-policy'
+import { DEFAULT_RUN_LIMITS } from './local-store/row-mappers'
 import { resolveToolPath } from './agent/safety/workspace-guard'
 import { clearRunBaselines } from './agent/tool-runtime'
+import { diffSnapshots, snapshotFile } from './agent/file-ledger'
 import { createArtifactId, inferArtifactType } from '../shared/artifact'
 import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState, watchGitMetadata } from './git'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from './external-editor'
@@ -60,7 +64,7 @@ import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFi
 import { buildFaDirectoryContext, mergeAgentContextFiles, readAgentContextFiles } from './agent-context'
 import { restartApplication } from './app-restart'
 import { isExternalHttpUrl } from '../renderer/ai-response/sanitize-url'
-import type { Ability, AbilityType, AgentEvent, AppRuntimeInfo, AppSettings, ApprovalDecision, ArtifactQuery, AuthSnapshot, ConversationPageQuery, ConversationTurn, DoctorCheck, GitStatusEntry, GitWorkspaceState, LocalMcpServerInput, LocalModelInput, LocalModelTestResult, McpAbility, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PermissionPreset, PluginQuery, RendererErrorReport, SandboxSessionInfo, SkillAbility, SkillDetail, StartupPhase, StartupWarning, StartupWarnings, WorkspaceSnapshot } from '../shared/types'
+import type { Ability, AbilityType, AgentEvent, AppRuntimeInfo, AppSettings, ApprovalDecision, ArtifactQuery, AuthSnapshot, ConversationPageQuery, ConversationTurn, DoctorCheck, GitStatusEntry, GitWorkspaceState, KbEntry, KbSource, KbSourceKind, LocalMcpServerInput, LocalModelInput, LocalModelTestResult, McpAbility, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PermissionPreset, PluginQuery, RendererErrorReport, SandboxSessionInfo, SearchQuery, SearchResponse, SkillAbility, SkillDetail, StartupPhase, StartupWarning, StartupWarnings, WorkspaceSnapshot } from '../shared/types'
 import type { PermissionAction, PermissionRuleSet } from '../shared/permission-rules'
 import type { StoredPermissionProfile } from '../shared/permission-profiles'
 import { findProfile, mergeProfiles, sanitizeOverrides, validateProfileDraft } from '../shared/permission-profiles'
@@ -91,11 +95,32 @@ import { normalizeCustomSubAgents, resolveSubAgentConfig } from './agent/subagen
 import { parseSubAgentHandoff, truncateSubAgentOutput } from './agent/subagent/subagent-handoff'
 import { forwardSubAgentEvent, isSubAgentTerminalEvent } from './agent/subagent/subagent-events'
 import { extractMemories, recallMemories } from './agent/memory/memory-service'
-import { withMemoryPrompt } from './agent/memory/memory-prompt'
+import { buildDistillPrompt, parseSkillDraft } from './agent/skill/skill-distiller'
+import { checkSkill } from './agent/skill/skill-check'
+import { parseAllowedTools } from './agent/skill/skill-manifest'
+import { availableToolNames } from './agent/skill/skill-tools'
+import { makeSnippet, runUnifiedSearch } from './search/unified-search'
+import { checkConversationBudget } from './agent/run-budget'
+import { PauseGate } from './agent/pause-gate'
+import { renderDiagnosticsJson } from './diagnostics-export'
+import { buildMemoryQueryPlan, isEmptyQueryPlan } from './agent/memory/memory-query'
+import { renderKbPrompt, withMemoryPrompt } from './agent/memory/memory-prompt'
+import { buildTurnContextSources } from './agent/context-sources'
+import { indexSource, previewSource } from './knowledge/kb-indexer'
+import { DEFAULT_EXCLUDES } from './knowledge/source-scan'
 import { DEFAULT_RECALL } from './agent/memory/memory-rank'
 
 const loadPiRuntime = createLazyModuleLoader(() => import('./pi-runtime'))
 const loadMcpRuntime = createLazyModuleLoader(() => import('./mcp-manager'))
+// pdfjs 体量大且只有导入 PDF 时用得上，与运行时模块一样按需加载。
+const loadPdfText = createLazyModuleLoader(() => import('./knowledge/pdf-text'))
+
+/** 索引一个知识来源；PDF 解析在这里注入，kb-indexer 本身不依赖 pdfjs。 */
+async function runKbIndex(namespace: string, source: KbSource) {
+  return indexSource(store.knowledgeBase, namespace, source, {
+    extractPdfPages: async (data) => (await loadPdfText()).extractPdfPages(data)
+  })
+}
 
 type AbilityUsageSink = (type: 'skill' | 'mcp', id: string) => void
 
@@ -147,6 +172,8 @@ const conversationRuns = new ConversationRunCoordinator()
 // 不同会话并行，同一会话仍由 conversationRuns 保证 Pi session 顺序。
 const runScheduler = new RunScheduler({ maxConcurrent: 4 })
 const activeRunCancels = new Map<string, () => void>()
+/** 运行级暂停闸门；只在有人真的按过暂停时才建。 */
+const runPauseGates = new Map<string, PauseGate>()
 const activeCompactions = new Map<string, AbortController>()
 
 interface CachedConversationRuntime {
@@ -260,7 +287,8 @@ const defaultSettings: AppSettings = {
   subAgents: [],
   memory: { enabled: true, autoExtract: true, maxRecall: DEFAULT_RECALL, extractModelId: null },
   sandbox: defaultSandboxSettings,
-  quickDialogEnabled: true
+  quickDialogEnabled: true,
+  limits: DEFAULT_RUN_LIMITS
 }
 
 /** 连按 Ctrl 唤起快速对话的全局钩子；按设置开关挂载/卸载。 */
@@ -637,6 +665,18 @@ function showRendererLoadError(detail: string, targetUrl: string): void {
   void mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
 }
 
+function appRuntimeInfo(): AppRuntimeInfo {
+  return {
+    version: app.getVersion(),
+    electron: process.versions.electron,
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    platform: `${process.platform} ${process.arch}`,
+    dataRoot: appPaths.dataRoot,
+    backendUrl
+  }
+}
+
 function applySettings(next: AppSettings) {
   const previous = settings
   // sandbox 是嵌套对象，浅合并会让旧库里缺字段的配置变成 undefined，这里单独归一化。
@@ -646,6 +686,7 @@ function applySettings(next: AppSettings) {
     sandbox: normalizeSandboxSettings(next.sandbox).settings
   }
   setTrayClosePolicy(settings.closeToTray)
+  runScheduler.setMaxConcurrent(settings.limits.maxConcurrentRuns)
   void syncQuickDialogShortcut()
   syncGlobalShortcuts(previous)
   app.setLoginItemSettings({ openAtLogin: settings.startAtLogin, openAsHidden: !settings.showOnStartup })
@@ -1100,15 +1141,7 @@ function registerIpc() {
   handle('model-connections:answer-login', (_event, sessionId: string, value: string) => modelConnectionService.answerLogin(sessionId, value))
   handle('model-connections:cancel-login', (_event, sessionId: string) => modelConnectionService.cancelLogin(sessionId))
   handle('model-connections:logout', (_event, id: string) => modelConnectionService.logout(id))
-  handle('app:info', (): AppRuntimeInfo => ({
-    version: app.getVersion(),
-    electron: process.versions.electron,
-    node: process.versions.node,
-    chrome: process.versions.chrome,
-    platform: `${process.platform} ${process.arch}`,
-    dataRoot: appPaths.dataRoot,
-    backendUrl
-  }))
+  handle('app:info', (): AppRuntimeInfo => appRuntimeInfo())
   handle('app:restart', async () => {
     return restartApplication({
       confirm: () => confirmInterruptRuns('重启'),
@@ -1264,6 +1297,7 @@ function registerIpc() {
     return refreshContext(namespace, conversationId, contextWindowFor(namespace, conversationId, modelId), modelId)
   })
   handle('conversation:model-usage', (_event, conversationId: string, turnId?: string) => store.getModelUsage(requireNamespace(), conversationId, turnId))
+  handle('usage:overview', (_event, days: number) => store.getModelUsageOverview(requireNamespace(), days))
   handle('auth:captcha', async (_event, url: string) => {
     return createApiClient(url).captcha()
   })
@@ -1312,16 +1346,106 @@ function registerIpc() {
     skillRegistry.remove(name)
     store.removeAbilityMeta('skill', name)
   })
+  /** Skill 声明的工具能不能用，取决于当前环境；探测一次给校验与详情共用。 */
+  function currentToolNames(): string[] {
+    return availableToolNames({
+      shellToolName: resolveShellToolName(settings.shellPreference, { explicitPath: settings.bashPath, bundledPath: bundledTools.bash }),
+      mcpServers: store.listEnabledMcpRuntimeConfigs().map((config) => ({
+        id: config.id,
+        tools: (store.getMcpStatus(config.id)?.tools ?? []).map((tool) => tool.name)
+      })),
+      cliTools: store.listCliTools().map((tool) => tool.id),
+      subAgentEnabled: settings.subAgentEnabled
+    })
+  }
+  /**
+   * 统一搜索：会话标题、项目知识、Skill、成果各查一次再合并。
+   * 每一类都在库里筛完再截断，不把全量读出来在内存里过滤。
+   */
+  handle('search:query', (_event, query: SearchQuery): SearchResponse => {
+    const namespace = requireNamespace()
+    return runUnifiedSearch(query, {
+      conversation: ({ keyword, projectId, limit }) => store.searchConversationsByTitle(namespace, keyword, projectId, limit)
+        .map((record) => ({
+          kind: 'conversation' as const,
+          id: record.id,
+          title: record.title,
+          snippet: '',
+          projectId: record.projectId,
+          locator: null,
+          updatedAt: Date.parse(record.updatedAt) || 0
+        })),
+      knowledge: ({ keyword, projectId, limit }) => store.knowledgeBase.searchByKeyword(namespace, projectId, keyword, limit)
+        .map((entry) => ({
+          kind: 'knowledge' as const,
+          id: entry.id,
+          title: entry.title,
+          snippet: makeSnippet(entry.content, keyword),
+          projectId: entry.projectId,
+          locator: entry.sourcePath ? `${entry.sourcePath}${entry.locator ? ` ${entry.locator}` : ''}` : null,
+          updatedAt: entry.updatedAt
+        })),
+      skill: ({ keyword, limit }) => {
+        const lowered = keyword.toLowerCase()
+        return skillRegistry.list()
+          .filter((skill) => skill.name.toLowerCase().includes(lowered) || skill.description.toLowerCase().includes(lowered))
+          .slice(0, limit)
+          .map((skill) => ({
+            kind: 'skill' as const,
+            id: skill.name,
+            title: skill.name,
+            snippet: makeSnippet(skill.description, keyword),
+            projectId: null,
+            locator: skill.filePath,
+            updatedAt: 0
+          }))
+      },
+      artifact: ({ keyword, projectId, limit }) => {
+        // 产物按工作区隔离；按项目过滤时用项目路径当 workspaceId。
+        const workspaceId = projectId ? store.listProjects(namespace).find((project) => project.id === projectId)?.path : undefined
+        if (projectId && !workspaceId) return []
+        return store.listArtifacts(namespace, { keyword, workspaceId, limit })
+          .map((artifact) => ({
+            kind: 'artifact' as const,
+            id: artifact.id,
+            title: artifact.name,
+            snippet: artifact.path ?? '',
+            projectId: projectId ?? null,
+            locator: artifact.path ?? null,
+            workspaceId: artifact.workspaceId,
+            updatedAt: artifact.updatedAt
+          }))
+      }
+    })
+  })
+  handle('skills:versions', (_event, name: string) => store.listSkillVersions(name))
+  handle('skills:revert', (_event, name: string, revision: number) => skillRegistry.revert(name, revision))
+  // 静态校验，不是试运行：不启动模型也不执行脚本，只查配置与依赖缺不缺。
+  handle('skills:check', (_event, name: string) => {
+    const detail = skillRegistry.read(name)
+    const directoryName = skillRegistry.directoryOf(name).split(/[\/]/).filter(Boolean).at(-1) ?? name
+    return checkSkill({
+      name: detail.name,
+      content: readFileSync(detail.filePath, 'utf8'),
+      directoryName,
+      files: skillRegistry.files(name).map((file) => file.path),
+      availableTools: currentToolNames()
+    })
+  })
   handle('skills:detail', (_event, name: string): SkillDetail => {
     const detail = skillRegistry.read(name)
     const meta = store.getAbilityMeta('skill', name)
+    const requiredTools = parseAllowedTools(readFileSync(detail.filePath, 'utf8'))
+    const available = new Set(currentToolNames())
     return {
       ...detail,
       files: skillRegistry.files(name),
       source: meta?.source ?? 'imported',
       pluginId: meta?.pluginId,
       installedAt: meta?.installedAt,
-      builtin: meta?.source === 'builtin'
+      builtin: meta?.source === 'builtin',
+      requiredTools,
+      missingTools: requiredTools.filter((tool) => !available.has(tool))
     }
   })
   handle('skills:import', async (_event, options: { format?: 'directory' | 'zip'; onConflict?: 'overwrite' | 'save-as' } = {}) => {
@@ -1335,6 +1459,30 @@ function registerIpc() {
     const record = skillRegistry.importFromPath(result.filePaths[0], { onConflict: options.onConflict })
     store.upsertAbilityMeta({ abilityType: 'skill', abilityId: record.name, source: 'imported', version: record.version })
     return record
+  })
+  // 技能蒸馏：拿会话末尾若干回合让模型出 SKILL.md 草稿；只返草稿不落库，用户确认后走 skills:create。
+  handle('skills:distill', async (_event, conversationId: string, modelId: number | null) => {
+    const namespace = requireNamespace()
+    const conversation = store.getConversation(namespace, conversationId)
+    if (!conversation) throw new Error('会话不存在')
+    // 一次性用户动作，整段读出来可接受；只挑有助手产出的完整回合。
+    const turns = store.listTurns(namespace, conversationId)
+      .filter((turn) => turn.assistantMessage?.text?.trim())
+      .map((turn) => ({ user: turn.userMessage.text, assistant: turn.assistantMessage?.text ?? '' }))
+    if (!turns.length) throw new Error('会话里没有可提炼的完整回合')
+    const credentials = modelId === null ? null : (() => { try { return resolveModelCredentials(modelId) } catch { return null } })()
+    if (!credentials) throw new Error('无法解析当前模型的凭证，请重新选择模型')
+    const { promptModelOnce } = await loadPiRuntime()
+    const raw = await promptModelOnce({
+      credentials,
+      prompt: buildDistillPrompt({ title: conversation.title || '未命名会话', turns }),
+      agentDir: appPaths.agentDir,
+      createModelRuntime: createModelRuntimeForCredentials
+    })
+    if (/^none$/i.test(raw.trim())) throw new Error('这段会话里没有值得沉淀为技能的方法论')
+    const draft = parseSkillDraft(raw)
+    if (!draft) throw new Error('提炼结果不符合格式，请重试或换一段会话')
+    return draft
   })
   handle('mcp:list', () => store.listMcpServers())
   handle('mcp:save', (_event, input) => {
@@ -1550,6 +1698,9 @@ function registerIpc() {
     if (!store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
     // 守卫放在建 turn 之前：先建后拒会留下一条永远 working 的孤儿回合。
     if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
+    // 预算同理：跑到一半才发现超预算，钱已经花了，拦不住任何东西。
+    const budget = checkConversationBudget(store.getModelUsage(namespace, input.conversationId).session, settings.limits)
+    if (!budget.allowed) throw new Error(budget.reason)
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: store.getConversationRoot(namespace, input.conversationId) }
     const attachments = archiveAttachments(appPaths.attachmentsDir, input.conversationId, input.attachments || [], settings)
@@ -1612,8 +1763,68 @@ function registerIpc() {
     breadcrumb('run', `cancel ${runId}`)
     activeRunCancels.get(runId)?.()
     activeRunCancels.delete(runId)
+    // 暂停中的运行也要能取消：先放行闸门，abort 之后的收尾才跑得下去。
+    runPauseGates.get(runId)?.resume()
+    runPauseGates.delete(runId)
     activeRuns.get(runId)?.controller.abort()
     activeRuns.delete(runId)
+  })
+  /**
+   * 暂停 / 继续。
+   *
+   * 能挡住的只有「下一次工具调用」：已经发出的模型请求没有中断通道，
+   * 正在执行的工具也不会被打断。返回值与事件文案都按这个边界写，
+   * 不在按下的瞬间宣称已经停住。
+   */
+  handle('chat:pause', (_event, runId: string): boolean => {
+    const run = activeRuns.get(runId)
+    if (!run) return false
+    const gate = runPauseGates.get(runId) ?? new PauseGate()
+    runPauseGates.set(runId, gate)
+    gate.pause()
+    store.saveRunState(run.namespace, {
+      conversationId: run.conversationId,
+      projectId: store.getConversation(run.namespace, run.conversationId)?.projectId ?? null,
+      status: 'paused',
+      hasUnreadResult: false,
+      updatedAt: Date.now()
+    })
+    mainWindow?.webContents.send('agent:event', {
+      runId,
+      conversationId: run.conversationId,
+      turnId: run.turnId,
+      type: 'run_phase',
+      phase: 'prompting',
+      detail: '已请求暂停：当前这一步跑完后停在下一次工具调用前',
+      status: 'running',
+      timestamp: Date.now()
+    } satisfies AgentEvent)
+    return true
+  })
+  handle('chat:resume', (_event, runId: string): boolean => {
+    const gate = runPauseGates.get(runId)
+    const run = activeRuns.get(runId)
+    if (!gate || !run) return false
+    gate.resume()
+    runPauseGates.delete(runId)
+    store.saveRunState(run.namespace, {
+      conversationId: run.conversationId,
+      projectId: store.getConversation(run.namespace, run.conversationId)?.projectId ?? null,
+      status: 'running',
+      hasUnreadResult: false,
+      updatedAt: Date.now()
+    })
+    mainWindow?.webContents.send('agent:event', {
+      runId,
+      conversationId: run.conversationId,
+      turnId: run.turnId,
+      type: 'run_phase',
+      phase: 'prompting',
+      detail: '已继续执行',
+      status: 'running',
+      timestamp: Date.now()
+    } satisfies AgentEvent)
+    return true
   })
   handle('chat:approval-respond', (_event, input: { id: string; decision: ApprovalDecision; answer?: string; runId: string }) => {
     respondPendingApproval(input)
@@ -1660,6 +1871,54 @@ function registerIpc() {
     return { ...project, agentContextFiles: contextFiles }
   })
   handle('projects:archive', (_event, id: string) => store.archiveProject(requireNamespace(), id))
+  handle('kb:list', (_event, projectId: string) => store.listKbEntries(requireNamespace(), projectId))
+  handle('kb:save', (_event, projectId: string, input: { id?: string; title: string; content: string }) => {
+    const saved = store.saveKbEntry(requireNamespace(), projectId, input)
+    mainWindow?.webContents.send('kb:changed', projectId)
+    return saved
+  })
+  handle('kb:remove', (_event, projectId: string, entryId: string) => {
+    store.removeKbEntry(requireNamespace(), projectId, entryId)
+    mainWindow?.webContents.send('kb:changed', projectId)
+  })
+  handle('kb:listSources', (_event, projectId: string) => store.knowledgeBase.listSources(requireNamespace(), projectId))
+  // 导入按「先选路径 → 预览范围 → 确认后建来源并索引」三步；预览不写库。
+  handle('kb:pickSource', async (_event, kind: KbSourceKind) => {
+    const result = await dialog.showOpenDialog({
+      title: kind === 'directory' ? '选择要绑定的目录' : '选择要导入的文件',
+      properties: [kind === 'directory' ? 'openDirectory' : 'openFile'],
+      filters: kind === 'file' ? [{ name: '可索引文档', extensions: ['md', 'markdown', 'mdx', 'txt', 'text', 'pdf', 'json', 'yaml', 'yml', 'ts', 'tsx', 'js', 'py', 'go', 'rs', 'java', 'sql'] }] : undefined
+    })
+    if (result.canceled || !result.filePaths.length) return null
+    return previewSource(result.filePaths[0], kind)
+  })
+  handle('kb:previewSource', (_event, path: string, kind: KbSourceKind, excludes?: string[]) => previewSource(path, kind, excludes))
+  handle('kb:addSource', async (_event, projectId: string, input: { path: string; kind: KbSourceKind; title?: string; excludes?: string[] }) => {
+    const namespace = requireNamespace()
+    const source = store.knowledgeBase.createSource(namespace, {
+      projectId,
+      kind: input.kind,
+      path: input.path,
+      title: input.title?.trim() || basename(input.path) || input.path,
+      excludes: input.excludes ?? DEFAULT_EXCLUDES
+    })
+    const result = await runKbIndex(namespace, source)
+    mainWindow?.webContents.send('kb:changed', projectId)
+    return result
+  })
+  handle('kb:refreshSource', async (_event, sourceId: string) => {
+    const namespace = requireNamespace()
+    const source = store.knowledgeBase.requireSource(namespace, sourceId)
+    const result = await runKbIndex(namespace, source)
+    mainWindow?.webContents.send('kb:changed', source.projectId)
+    return result
+  })
+  handle('kb:removeSource', (_event, sourceId: string) => {
+    const namespace = requireNamespace()
+    const source = store.knowledgeBase.getSource(namespace, sourceId)
+    store.knowledgeBase.removeSource(namespace, sourceId)
+    if (source) mainWindow?.webContents.send('kb:changed', source.projectId)
+  })
   handle('projects:remove', (_event, id: string) => store.removeProject(requireNamespace(), id))
   handle('shell:open-path', (_event, path: string) => shell.openPath(path))
   // Ctrl+G 外部编辑：草稿写入系统临时目录，配置了编辑器就用它打开，否则交给系统默认应用。
@@ -1773,6 +2032,64 @@ function registerIpc() {
     store.removeArtifact(requireNamespace(), artifactId)
     mainWindow?.webContents.send('artifacts:changed')
   })
+  // 成果版本：一条记录 = 一个回合改过这个文件一次。不另起版本号，回合本身就是可追溯的标识。
+  handle('artifacts:versions', (_event, artifactId: string) => {
+    const namespace = requireNamespace()
+    const artifact = store.getArtifact(namespace, artifactId)
+    if (!artifact?.path) return []
+    return store.listFileVersions(namespace, artifact.path, artifact.conversationId ?? null)
+  })
+  handle('artifacts:versionDiff', (_event, artifactId: string, turnId: string) => {
+    const namespace = requireNamespace()
+    const artifact = store.getArtifact(namespace, artifactId)
+    if (!artifact?.path) return null
+    return store.getFileChangeDiff(namespace, turnId, artifact.path)
+  })
+  /**
+   * 恢复到某一回合改动之前：把当时记下的原文写回去。
+   * 这是一次真实写盘，因此走与工具链同一套路径校验，越界路径直接拒绝；
+   * 恢复本身也被记为一次新变更，用户还能再退回来。
+   */
+  handle('artifacts:restore', async (_event, artifactId: string, turnId: string) => {
+    const namespace = requireNamespace()
+    const artifact = store.getArtifact(namespace, artifactId)
+    if (!artifact?.path) return { ok: false, error: '这条成果没有对应的文件' }
+    const original = store.getFileChangeBeforeText(namespace, turnId, artifact.path)
+    if (original === null) return { ok: false, error: '这一版没有留下改动前的原文，无法恢复' }
+    let resolved: ReturnType<typeof resolveToolPath>
+    try {
+      resolved = resolveToolPath(artifact.path, artifact.workspaceId)
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '路径无效' }
+    }
+    if (resolved.external) return { ok: false, error: '目标不在工作区内，拒绝写入' }
+    try {
+      const before = snapshotFile(resolved.absolutePath)
+      await writeFile(resolved.absolutePath, original, 'utf8')
+      const after = snapshotFile(resolved.absolutePath)
+      const diff = diffSnapshots(before, after)
+      // 恢复动作自己也进变更台账：turnId 用恢复回合的合成 id，和 Agent 写入区分开。
+      store.upsertFileChange(namespace, {
+        turnId: `restore-${turnId}`,
+        conversationId: artifact.conversationId ?? '',
+        runId: '',
+        path: artifact.path,
+        operation: 'update',
+        additions: diff.additions,
+        deletions: diff.deletions,
+        tools: ['restore'],
+        beforeHash: before.exists ? before.hash : null,
+        afterHash: after.exists ? after.hash : null,
+        diff: diff.text || null,
+        beforeText: before.exists && before.lines ? before.lines.join('\n') : null
+      })
+      store.upsertArtifact(namespace, { ...artifact, size: after.size })
+      mainWindow?.webContents.send('artifacts:changed')
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '恢复失败' }
+    }
+  })
   // 台账只读：运行与任务由 runLocalRun / executeSubAgent 写入，界面不修改它们。
   handle('agent-runs:list', (_event, conversationId: string, limit?: number) => store.listAgentRunLedger(requireNamespace(), conversationId, limit ?? 20))
   handle('agent-tasks:list', (_event, query: { runId?: string; conversationId?: string; turnId?: string; limit?: number } = {}) => store.listAgentTasks(requireNamespace(), query))
@@ -1786,6 +2103,38 @@ function registerIpc() {
     const checks = await probeTools(undefined, bundledTools)
     checks.push(...await environmentChecks())
     return buildDoctorReport(checks)
+  })
+  /**
+   * 导出诊断信息。内容由 diagnostics-export 显式挑字段拼出来，
+   * 后端地址、本机路径与凭据都不落进文件——白名单漏字段只是少一条信息，
+   * 黑名单漏字段就是把密钥写进去。
+   */
+  handle('doctor:export', async () => {
+    const checks = await probeTools(undefined, bundledTools)
+    checks.push(...await environmentChecks())
+    const doctor = buildDoctorReport(checks)
+    const namespace = requireNamespace()
+    const payload = renderDiagnosticsJson({
+      app: appRuntimeInfo(),
+      settings,
+      doctor,
+      runtime: buildRuntimeReport({ installDir: runtimeInstallDir(), verify: false }),
+      counts: {
+        conversations: store.conversationStats(namespace, true).total,
+        projects: store.listProjects(namespace).length,
+        skills: skillRegistry.list().length,
+        mcpServers: store.listMcpServers().length
+      },
+      generatedAt: Date.now()
+    })
+    const result = await dialog.showSaveDialog({
+      title: '导出诊断信息',
+      defaultPath: `fastagent-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: 'JSON', extensions: ['json'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    writeFileSync(result.filePath, payload, 'utf8')
+    return result.filePath
   })
   handle('agent-runs:resumable', (_event, conversationId: string) => {
     const candidate = store.findResumableRun(requireNamespace(), conversationId)
@@ -1806,6 +2155,11 @@ function registerIpc() {
     })
   })
   handle('memories:list', (_event, query: MemoryListQuery = {}) => store.listMemories(requireNamespace(), query))
+  handle('memories:turn-activity', (_event, turnId: string) => ({
+    recalled: store.listMemoryRecallsForTurn(requireNamespace(), turnId),
+    extracted: store.listMemories(requireNamespace(), { sourceTurnId: turnId, status: 'all', pageSize: 50 }).items
+  }))
+  handle('memories:conversation-activity', (_event, conversationId: string) => store.listMemoryActivityTurnIds(requireNamespace(), conversationId))
   handle('memories:update', (_event, id: string, patch: MemoryUpdateInput) => {
     const updated = store.updateMemory(requireNamespace(), id, patch)
     mainWindow?.webContents.send('memories:changed')
@@ -1846,6 +2200,8 @@ function registerIpc() {
   handle('turns:delete', (_event, turnId: string) => store.deleteTurn(requireNamespace(), turnId))
   handle('turns:restore', (_event, turn: ConversationTurn) => store.restoreTurn(requireNamespace(), turn))
   handle('conversations:listToolCalls', (_event, turnId: string) => store.listToolCalls(requireNamespace(), turnId))
+  handle('conversations:contextSources', (_event, turnId: string) => store.listTurnContextSources(requireNamespace(), turnId))
+  handle('conversations:contextSourceTurns', (_event, conversationId: string) => store.listContextSourceTurnIds(requireNamespace(), conversationId))
   handle('conversations:listTodos', (_event, conversationId: string) => store.listTodos(requireNamespace(), conversationId))
   handle('conversations:listPermissionRules', () => store.listPermissionRules(requireNamespace()))
   handle('conversations:upsertPermissionRule', (_event, rule: { toolKey: string; pattern: string; action: PermissionAction }) => {
@@ -1912,6 +2268,27 @@ function registerIpc() {
     return shell.openPath(directory)
   })
   handle('conversations:rename', (_event, conversationId: string, title: string) => store.renameConversation(requireNamespace(), conversationId, title))
+  // 弹保存对话框导出会话；格式由对话框选的过滤器（扩展名）决定，取消时返回 null。
+  handle('conversations:export', async (_event, conversationId: string) => {
+    const namespace = requireNamespace()
+    const conversation = store.getConversation(namespace, conversationId)
+    if (!conversation) throw new Error('会话不存在')
+    const turns = store.listTurns(namespace, conversationId)
+    const options: Electron.SaveDialogOptions = {
+      defaultPath: join(appPaths.exportsDir, `${sanitizeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.md`),
+      filters: [
+        { name: 'Markdown', extensions: ['md'] },
+        { name: 'HTML', extensions: ['html'] },
+      ],
+    }
+    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return null
+    const content = exportFormatFromPath(result.filePath) === 'html'
+      ? buildConversationHtml(conversation, turns)
+      : buildConversationMarkdown(conversation, turns)
+    writeFileSync(result.filePath, content, 'utf8')
+    return result.filePath
+  })
   handle('conversations:archive', (_event, conversationId: string) => store.archiveConversation(requireNamespace(), conversationId))
   handle('conversations:remove', (_event, conversationId: string) => {
     const namespace = requireNamespace()
@@ -2156,6 +2533,8 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
     // 本轮结束后基线快照没用了，留着只会一直占内存。
     if (projection.ledgerStatus) {
       clearRunBaselines(turnId)
+      // 终态之后闸门没有意义；留着只会让同 id 的后续查询看到一个永远暂停的门。
+      runPauseGates.delete(runId)
       // 台账收尾与 turn 状态同源；finishAgentRun 只认第一次终态，重复调用不会覆盖结局。
       store.finishAgentRun(namespace, runId, projection.ledgerStatus, event.detail ?? null, timestamp, event.errorKind ?? null)
     }
@@ -2248,7 +2627,23 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
     const recalled = memorySettings.enabled
       ? recallMemories(store, { namespace, workspaceId: memoryProjectId, text: prompt, maxRecall: memorySettings.maxRecall })
       : { hits: [], prompt: '' }
-    const effectivePrompt = withMemoryPrompt(prompt, recalled.prompt)
+    // 召回命中落日志表：会话内闭环要能回答「这一轮注入了什么」。失败不影响主流程。
+    if (recalled.hits.length) {
+      try { store.recordMemoryRecalls(namespace, conversationId, turnId, recalled.hits.map((hit) => hit.memory.id)) } catch (error) { console.warn('[memory] 召回日志写入失败:', error) }
+    }
+    // 项目知识库检索：与记忆同层注入（拼在本轮输入前），查询计划复用记忆的同一套分词。
+    let kbPrompt = ''
+    let kbEntries: KbEntry[] = []
+    if (memoryProjectId) {
+      try {
+        const kbPlan = buildMemoryQueryPlan(prompt)
+        if (!isEmptyQueryPlan(kbPlan)) {
+          kbEntries = store.searchKbEntries(namespace, memoryProjectId, kbPlan, 3)
+          kbPrompt = renderKbPrompt(kbEntries)
+        }
+      } catch (error) { console.warn('[kb] 知识库检索失败:', error) }
+    }
+    const effectivePrompt = withMemoryPrompt(`${kbPrompt ? `${kbPrompt}\n\n` : ''}${prompt}`, recalled.prompt)
     const bashPath = resolveBashPath({ explicitPath: settings.bashPath, bundledPath: bundledTools.bash }) ?? undefined
     const shellToolName = resolveShellToolName(settings.shellPreference, { explicitPath: settings.bashPath, bundledPath: bundledTools.bash })
     let allowedAbilities: Ability[] = []
@@ -2258,6 +2653,14 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
     allowedAbilities = resolveAgentAbilities(settings.agentAbilityPolicy, await listAbilities())
     const allowedMcpIds = new Set(allowedAbilities.filter((ability) => ability.type === 'mcp').map((ability) => ability.id))
     mcpConfigs = store.listEnabledMcpRuntimeConfigs().filter((config) => allowedMcpIds.has(config.id))
+    // 本轮上下文来源落库：知识条目、可选中的 Skill、注入的规则文件。
+    // 与记忆召回日志同样的定位——运行结束后没有第二个地方能回答「这一轮用了什么」。失败不影响主流程。
+    try {
+      const skillRevisions = new Map(allowedAbilities
+        .filter((ability) => ability.type === 'skill' && ability.enabled)
+        .map((ability) => [ability.id, store.latestSkillRevision(ability.id)] as const))
+      store.recordTurnContextSources(namespace, conversationId, turnId, buildTurnContextSources({ kbEntries, abilities: allowedAbilities, ruleFiles: agentContext.files, skillRevisions }))
+    } catch (error) { console.warn('[context] 上下文来源写入失败:', error) }
     const signature = createHash('sha256').update(JSON.stringify({
       namespace,
       conversationId,
@@ -2396,6 +2799,9 @@ async function runLocalRun(runId: string, turnId: string, conversationId: string
           onEvent: emit,
           onCompaction: recordRuntimeCompaction,
           onRetry: () => store.bumpAgentRunRetry(namespace, runId),
+          retryLimits: { maxEmptyRetries: settings.limits.maxEmptyRetries, maxLengthContinuations: settings.limits.maxLengthContinuations },
+          // 闸门按需创建：没人按过暂停就不产生任何等待开销。
+          waitWhilePaused: (childSignal) => runPauseGates.get(runId)?.wait(childSignal),
           namespace,
           conversationId,
           turnId,

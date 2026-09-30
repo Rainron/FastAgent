@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, CircleAlert, CircleCheck, CircleHelp, LoaderCircle, RefreshCw } from 'lucide-react'
+import { AlertTriangle, CircleAlert, CircleCheck, CircleHelp, Download, LoaderCircle, RefreshCw } from 'lucide-react'
 import type { DoctorCategory, DoctorCheck, DoctorReport, DoctorStatus } from '../../shared/types'
 import { CATEGORY_LABEL, groupChecks, overallLabel, STATUS_LABEL } from './doctor-view'
 
@@ -28,6 +28,17 @@ function CheckRow({ check }: { check: DoctorCheck }) {
 export function DoctorSettings({ onNotice }: { onNotice: (notice: string) => void }) {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [running, setRunning] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  async function exportReport() {
+    setExporting(true)
+    try {
+      const path = await window.fastAgent.doctor.export()
+      onNotice(path ? `诊断信息已导出到 ${path}` : '已取消导出')
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : '导出失败')
+    } finally { setExporting(false) }
+  }
 
   const run = useCallback(() => {
     setRunning(true)
@@ -48,10 +59,15 @@ export function DoctorSettings({ onNotice }: { onNotice: (notice: string) => voi
         <h2 id="settings-doctor">环境体检</h2>
         <p>检查 Agent 依赖的外部工具与运行环境。只探测，不安装、不修改任何配置。</p>
       </div>
-      <button className="secondary" onClick={run} disabled={running}>
-        {running ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
-        {running ? '检查中…' : '重新检查'}
-      </button>
+      <div className="model-settings-actions">
+        <button className="secondary" onClick={() => void exportReport()} disabled={exporting}>
+          <Download size={14} />{exporting ? '导出中…' : '导出诊断信息'}
+        </button>
+        <button className="secondary" onClick={run} disabled={running}>
+          {running ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
+          {running ? '检查中…' : '重新检查'}
+        </button>
+      </div>
     </div>
 
     {report && <div className={`doctor-overall ${report.overall}`}>{overallLabel(report)}</div>}
@@ -62,6 +78,8 @@ export function DoctorSettings({ onNotice }: { onNotice: (notice: string) => voi
       <h4>{CATEGORY_LABEL[category as DoctorCategory]}</h4>
       {checks.map((check) => <CheckRow check={check} key={check.id} />)}
     </div>)}
+
+    <p className="settings-hint">导出内容只含版本、体检结论与运行上限；后端地址、本机路径与凭据不会写进文件。</p>
 
     {report && report.overall !== 'ok' && <p className="doctor-foot">
       标记为「{STATUS_LABEL.missing}」的项不影响应用启动，但相关的 Agent 命令会失败。

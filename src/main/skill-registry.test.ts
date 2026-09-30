@@ -11,10 +11,19 @@ function setup() {
   const skillsDir = mkdtempSync(join(tmpdir(), 'fastagent-skills-'))
   roots.push(skillsDir)
   const enabled = new Map<string, boolean>()
+  const versions = new Map<string, string[]>()
   const store: SkillStateStore = {
     isSkillEnabled: (name) => enabled.get(name) ?? false,
     setSkillEnabled: (name, value) => { enabled.set(name, value) },
-    removeSkillState: (name) => { enabled.delete(name) }
+    removeSkillState: (name) => { enabled.delete(name) },
+    recordSkillVersion: (name, input) => {
+      const list = versions.get(name) ?? []
+      list.push(input.content)
+      versions.set(name, list)
+      return list.length
+    },
+    readSkillVersion: (name, revision) => versions.get(name)?.[revision - 1] ?? null,
+    removeSkillVersions: (name) => { versions.delete(name) }
   }
   return new LocalSkillRegistry(skillsDir, store)
 }
@@ -171,5 +180,53 @@ describe('local skill registry', () => {
     expect(record.name).toBe('zipped-skill')
     expect(record.enabled).toBe(false)
     expect(readFileSync(join(record.filePath, '..', 'docs', 'usage.md'), 'utf8')).toBe('用法')
+  })
+})
+
+describe('LocalSkillRegistry 版本与回退', () => {
+  it('编辑前把旧内容存成快照，回退能拿回原样', () => {
+    const registry = setup()
+    registry.create({ name: 'demo', description: '初版描述', instructions: '初版正文' })
+    registry.update('demo', { description: '第二版描述', instructions: '第二版正文' })
+    expect(registry.read('demo').instructions).toBe('第二版正文')
+
+    registry.revert('demo', 1)
+    const reverted = registry.read('demo')
+    expect(reverted.instructions).toBe('初版正文')
+    expect(reverted.description).toBe('初版描述')
+  })
+
+  it('回退本身也存快照，可以再退回去', () => {
+    const registry = setup()
+    registry.create({ name: 'demo', description: 'd1', instructions: 'v1' })
+    registry.update('demo', { instructions: 'v2' })
+    registry.revert('demo', 1)
+    // 修订 2 是回退前的 v2
+    registry.revert('demo', 2)
+    expect(registry.read('demo').instructions).toBe('v2')
+  })
+
+  it('回退到不存在的修订号直接报错', () => {
+    const registry = setup()
+    registry.create({ name: 'demo', description: 'd', instructions: 'v1' })
+    expect(() => registry.revert('demo', 9)).toThrow('找不到 Skill 版本')
+  })
+
+  it('删除 Skill 时连同历史快照一起清掉', () => {
+    const registry = setup()
+    registry.create({ name: 'demo', description: 'd', instructions: 'v1' })
+    registry.update('demo', { instructions: 'v2' })
+    registry.remove('demo')
+    registry.create({ name: 'demo', description: 'd', instructions: '全新的' })
+    expect(() => registry.revert('demo', 1)).toThrow('找不到 Skill 版本')
+  })
+
+  it('覆盖导入前留一份旧内容', () => {
+    const registry = setup()
+    registry.create({ name: 'demo', description: '旧描述', instructions: '旧正文' })
+    registry.installFiles({ 'SKILL.md': ['---', 'name: demo', 'description: 新描述', '---', '', '新正文'].join(String.fromCharCode(10)) }, { onConflict: 'overwrite' })
+    expect(registry.read('demo').instructions).toBe('新正文')
+    registry.revert('demo', 1)
+    expect(registry.read('demo').instructions).toBe('旧正文')
   })
 })

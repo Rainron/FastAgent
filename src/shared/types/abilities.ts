@@ -203,6 +203,48 @@ export interface SkillDetail extends LocalSkillRecord {
   pluginId?: string
   installedAt?: string
   builtin: boolean
+  /** 前言 allowed-tools 声明的工具；未声明时为空数组。 */
+  requiredTools: string[]
+  /** 声明了但当前环境不可用的工具。 */
+  missingTools: string[]
+}
+
+/** 静态校验的一条结论。error 会让 ok 为 false，warning 与 info 只提示。 */
+export interface SkillCheckIssue {
+  level: 'error' | 'warning' | 'info'
+  message: string
+  hint?: string
+}
+
+/**
+ * Skill 静态校验结果。只检查配置与依赖，不启动模型也不执行脚本——
+ * 通过不代表这个 Skill 真的能完成任务。
+ */
+export interface SkillCheckResult {
+  ok: boolean
+  requiredTools: string[]
+  missingTools: string[]
+  issues: SkillCheckIssue[]
+}
+
+/** 一份历史版本快照：每次改写 SKILL.md 之前把旧内容存下来，供回退。 */
+export interface SkillVersionRecord {
+  name: string
+  /** 自增修订号，越大越新。 */
+  revision: number
+  /** 前言里标注的版本号；未标注为 null。 */
+  version: string | null
+  description: string
+  createdAt: number
+  /** 产生这份快照的动作。 */
+  reason: 'edit' | 'import' | 'revert'
+}
+
+/** 蒸馏产出的 SKILL.md 草稿；确认前可编辑，落库走 skills.create。 */
+export interface SkillDraft {
+  name: string
+  description: string
+  instructions: string
 }
 
 export interface McpSecretKeyInfo {

@@ -160,15 +160,18 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, onSelec
           <label className="model-connection-field">接口协议<select value={protocol} onChange={(event) => setProtocol(event.target.value as LocalModelApi)}><option value="openai">OpenAI 兼容</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic">Anthropic</option></select></label>
           <label className="model-connection-field">API Key<input type="password" autoComplete="new-password" value={apiKey} required={!initial?.hasCredentials} onChange={(event) => setApiKey(event.target.value)} placeholder={initial?.hasCredentials ? '留空保留已保存的密钥' : '输入厂商 API Key'} /></label>
         </>}
-        {mode === 'oauth' && <div className="model-connection-actions">
-          <button type="button" className="quick-secondary" onClick={() => void run(async () => { setLogin(await window.fastAgent.modelConnections.startLogin(providerId, initial?.id)) })}>{initial?.hasCredentials || login?.status === 'success' ? '重新登录账号' : '在浏览器中登录'}</button>
-          {initial?.hasCredentials && <button type="button" className="small-control" onClick={() => void run(async () => { await window.fastAgent.modelConnections.logout(initial.id); await onChanged(initial.id) })}>退出此账号</button>}
-        </div>}
+        {mode === 'oauth' && <>
+          {provider.description && <p className="settings-hint">{provider.description}</p>}
+          <div className="model-connection-actions">
+            <button type="button" className="quick-secondary" onClick={() => void run(async () => { setLogin(await window.fastAgent.modelConnections.startLogin(providerId, initial?.id)) })}>{initial?.hasCredentials || login?.status === 'success' ? '重新登录账号' : '在浏览器中登录'}</button>
+            {initial?.hasCredentials && <button type="button" className="small-control" onClick={() => void run(async () => { await window.fastAgent.modelConnections.logout(initial.id); await onChanged(initial.id) })}>退出此账号</button>}
+          </div>
+        </>}
       </fieldset>
       {login && <div className="model-login-status" role="status">
-        <p>{login.status === 'success' ? '账号授权成功，可以选择模型。' : login.error ?? login.message ?? (login.status === 'pending' ? '已在系统浏览器打开授权页，请完成授权…' : login.status === 'cancelled' ? '已取消授权' : login.status === 'expired' ? '授权已过期，请重新登录' : '等待账号授权')}</p>
+        <p>{login.status === 'success' ? login.message ?? '账号授权成功，可以选择模型。' : login.error ?? login.message ?? (login.status === 'pending' ? '已在系统浏览器打开授权页，请完成授权…' : login.status === 'cancelled' ? '已取消授权' : login.status === 'expired' ? '授权已过期，请重新登录' : '等待账号授权')}</p>
         {login.url && <p className="model-login-url">未自动打开可手动访问：{login.url}</p>}
-        {login.userCode && <p>设备验证码：<strong>{login.userCode}</strong></p>}
+        {login.userCode && <p>设备验证码：<strong>{login.userCode}</strong> <button type="button" className="small-control" onClick={() => void navigator.clipboard?.writeText(login.userCode!)}>复制</button></p>}
         {login.status === 'input-required' && login.prompt?.options && <div className="model-connection-actions">{login.prompt.options.map((option) => <button type="button" className="small-control" disabled={busy} key={option.id} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, option.id); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>{option.label}</button>)}</div>}
         {login.status === 'input-required' && <label className="model-connection-field">{login.prompt?.message ?? '输入验证码'}<input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={login.prompt?.placeholder} /><button type="button" className="small-control" disabled={busy || (!answer.trim() && !login.prompt?.allowEmpty)} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, answer); setAnswer(''); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>提交验证码</button></label>}
         {authorizing && <button type="button" className="small-control" onClick={() => void run(async () => { await window.fastAgent.modelConnections.cancelLogin(login.sessionId); setLogin({ ...login, status: 'cancelled' }) })}>取消授权</button>}

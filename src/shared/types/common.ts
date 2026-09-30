@@ -12,7 +12,7 @@ export type ContextStrategy = 'auto' | 'conservative' | 'aggressive' | 'disabled
 
 export type ApprovalDecision = 'reject' | 'once' | 'session' | 'always'
 
-export type RunStatus = 'idle' | 'running' | 'waiting_user' | 'completed' | 'failed' | 'cancelled'
+export type RunStatus = 'idle' | 'running' | 'waiting_user' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 export interface ConversationRunState {
   conversationId: string

@@ -4,6 +4,7 @@ import * as contextManager from './context-manager'
 import type { AppSettings, ContextPolicy, ContextState, ConversationTurn } from '../shared/types'
 import { defaultSandboxSettings } from '../shared/sandbox'
 import { DEFAULT_ATTACHMENT_POLICY } from '../shared/attachment-policy'
+import { DEFAULT_RUN_LIMITS } from './local-store/row-mappers'
 
 const settings: AppSettings = {
   ...DEFAULT_ATTACHMENT_POLICY,
@@ -24,6 +25,7 @@ const settings: AppSettings = {
   memory: { enabled: true, autoExtract: true, maxRecall: 5, extractModelId: null },
   sandbox: defaultSandboxSettings,
   quickDialogEnabled: true,
+  limits: DEFAULT_RUN_LIMITS,
   accentColor: 'green',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',

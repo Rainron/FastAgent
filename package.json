@@ -1,6 +1,6 @@
 {
   "name": "fastagent-desktop",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "FastAgent AI Workspace",
   "main": "out/main/index.js",
@@ -24,6 +24,7 @@
     "better-sqlite3": "^13.0.3",
     "fflate": "^0.8.3",
     "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^4.10.38",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
