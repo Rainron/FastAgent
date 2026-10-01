@@ -7,8 +7,3 @@ export function addModel<T extends { modelId: string; name?: string }>(models: T
   const modelId = value.trim()
   return !modelId || models.some((model) => model.modelId === modelId) ? models : [...models, { modelId, name: modelId }]
 }
-
-export function visibleLegacyModels<T extends { id: number }>(models: T[], connections: Array<{ models: Array<{ id: number }> }>): T[] {
-  const managed = new Set(connections.flatMap((connection) => connection.models.map((model) => model.id)))
-  return models.filter((model) => !managed.has(model.id))
-}

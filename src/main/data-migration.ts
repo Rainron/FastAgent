@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { copyFileSync, cpSync, existsSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { ensureAppDirectories, type AppPaths } from './app-paths'
@@ -25,6 +25,26 @@ function verifyDatabase(path: string) {
   } finally {
     db.close()
   }
+}
+
+/**
+ * 删临时库必须连 -shm / -wal 一起删：verifyDatabase 打开过它，SQLite 会在旁边建这两个文件，
+ * 只 rm 主文件会把它们留成孤儿（历史上就在 data/ 下积了一对 .migrating-shm/-wal）。
+ */
+function removeDatabaseFiles(path: string) {
+  for (const suffix of ['', '-shm', '-wal']) rmSync(`${path}${suffix}`, { force: true })
+}
+
+/** 清掉历史版本遗留的 *.migrating 及其边车文件；失败不影响启动。 */
+export function sweepMigrationResidue(dataDir: string): string[] {
+  if (!existsSync(dataDir)) return []
+  const removed: string[] = []
+  for (const name of readdirSync(dataDir)) {
+    if (!/\.migrating(-shm|-wal)?$/.test(name)) continue
+    rmSync(join(dataDir, name), { force: true })
+    removed.push(name)
+  }
+  return removed
 }
 
 function copyTreeIfPresent(source: string, destination: string) {
@@ -58,7 +78,7 @@ export function migrateLegacyData(paths: AppPaths): LegacyMigrationResult {
       verifyDatabase(temporaryDatabase)
       renameSync(temporaryDatabase, paths.databasePath)
     } finally {
-      rmSync(temporaryDatabase, { force: true })
+      removeDatabaseFiles(temporaryDatabase)
     }
     status = 'migrated'
   }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GitWorkspaceState } from '../../shared/types'
+import type { GitWorkspaceState } from '../../../shared/types'
 
 /**
  * 当前工作区的 Git 状态；null 表示非仓库或读取失败，工具栏直接不渲染入口。

@@ -204,6 +204,17 @@ export function buildExecutionTrace(events: AgentEvent[]): ExecutionTrace {
   }
 }
 
+/**
+ * 轨迹里有没有真正的工具/子代理动作（思考不算）。
+ * chat 模式现在也能调工具，用它决定该渲染执行轨迹还是轻量的分析过程卡：
+ * 只有思考的旧对话回合仍走旧展示，不会因为放开工具而整体换样式。
+ */
+export function hasToolAction(trace: ExecutionTrace): boolean {
+  const groupHasTool = (group: TraceGroup) => group.actions.some((action) => action.kind !== 'thinking')
+  return trace.segments.some((segment) => segment.kind === 'group' && groupHasTool(segment.group))
+    || (trace.pendingGroup !== null && groupHasTool(trace.pendingGroup))
+}
+
 /** 组在轨迹里的位置：数字是 segments 下标，'pending' 是尚未收尾的组。 */
 export type ThinkingGroupKey = number | 'pending'
 

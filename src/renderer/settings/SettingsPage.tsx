@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Boxes, Brain, ChartColumn, CircleUserRound, Database, FileText, Keyboard, LibraryBig, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
 import type { ComponentType } from 'react'
-import type { AppSettings, AppTheme, AuthSnapshot, ConversationMode, LocalModelInput, LocalModelSummary, LocalModelTestResult, ModelOption } from '../../shared/types'
+import type { AppSettings, AppTheme, AuthSnapshot, ConversationMode,  LocalModelSummary, LocalModelTestResult, ModelOption } from '../../shared/types'
 import { mergeModelOptions } from '../model-picker'
 import type { ModePrompts } from '../mode-prompts'
 import { AppearanceSettings } from './AppearanceSettings'
@@ -44,7 +44,7 @@ const categories: Array<{ key: SettingsCategory; label: string; desc: string; ic
 // 分组渲染顺序：导航按组分段，组内保持上面数组的相对顺序
 const groupOrder = ['通用', '运行时', '系统']
 
-export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onNotice, onLock, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onCreateLocal, onUpdateLocal, onDeleteLocal, onTestDialogue }: {
+export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onNotice, onLock, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue }: {
   settings: AppSettings | null
   theme: AppTheme
   models: ModelOption[]
@@ -65,9 +65,6 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
   favoriteModelIds: number[]
   onSelectModel: (modelId: number) => void
   onToggleFavoriteModel: (modelId: number) => void
-  onCreateLocal: (input: LocalModelInput) => Promise<void>
-  onUpdateLocal: (id: number, input: LocalModelInput) => Promise<void>
-  onDeleteLocal: (id: number) => Promise<void>
   onTestDialogue: (id: number) => Promise<LocalModelTestResult>
 }) {
   const [category, setCategory] = useState<SettingsCategory>(requestedCategory)
@@ -96,7 +93,7 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'general' && settings && <GeneralSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'connection' && <ConnectionSettings auth={auth} onNotice={onNotice} />}
             {category === 'appearance' && settings && <AppearanceSettings settings={settings} theme={theme} onThemeChange={onThemeChange} onChange={onSettingsChange} />}
-            {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onCreateLocal={onCreateLocal} onUpdateLocal={onUpdateLocal} onDeleteLocal={onDeleteLocal} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
+            {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
             {category === 'usage' && <><UsageSettings onNotice={onNotice} /><RunLimitSettings settings={settings} onSettingsChange={onSettingsChange} /></>}
             {category === 'context' && settings && <ContextSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'permissions' && settings && <PermissionSettings settings={settings} onChange={onSettingsChange} />}

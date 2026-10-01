@@ -10,7 +10,36 @@ import { projectRunStatus, runStatusPresentation } from '../run-status'
 import { useDelayedUnmount } from '../use-delayed-unmount'
 import { MOTION_DURATIONS } from '../motion'
 import type { SidebarSectionState } from '../sidebar-sections'
+import { useEventCallback } from '../use-event-callback'
+import { filterConversations, filterProjects } from './sidebar-filter'
 import type { WorkspaceConversation, WorkspaceProject, WorkspaceSection } from './workspace-types'
+
+/** 搜索开着时点分区以外的任何地方就收起并清空；onDismiss 需引用稳定，否则每次渲染都要重挂监听。 */
+function useDismissOutside<T extends HTMLElement>(active: boolean, onDismiss: () => void) {
+  const ref = useRef<T>(null)
+  useEffect(() => {
+    if (!active) return
+    const close = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) onDismiss() }
+    document.addEventListener('pointerdown', close)
+    return () => document.removeEventListener('pointerdown', close)
+  }, [active, onDismiss])
+  return ref
+}
+
+/** 分区头里的搜索输入框：打开即聚焦，Esc 关闭并清空，交给父组件收敛开关状态。 */
+function SidebarSearchInput({ value, placeholder, onChange, onClose }: { value: string; placeholder: string; onChange: (value: string) => void; onClose: () => void }) {
+  return <div className="sidebar-search">
+    <Search size={13} aria-hidden="true" />
+    <input
+      value={value}
+      autoFocus
+      placeholder={placeholder}
+      aria-label={placeholder}
+      onChange={(event) => onChange(event.target.value)}
+      onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); onClose() } }}
+    />
+  </div>
+}
 
 /** 未按项目筛选时列表是混排的，给项目会话打个标记才能和快速对话区分开。 */
 export function ConversationProjectTag({ projects, projectId }: { projects: WorkspaceProject[]; projectId: string | null }) {
@@ -62,6 +91,27 @@ export const Sidebar = React.memo(function Sidebar({ collapsed, sectionStates, o
   // 每个项目都要按全部 run 判定状态，展开一次复用，不在循环里反复 Object.values。
   const runStateList = useMemo(() => Object.values(runStates), [runStates])
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [projectQuery, setProjectQuery] = useState('')
+  const [projectSearchOpen, setProjectSearchOpen] = useState(false)
+  const [recentQuery, setRecentQuery] = useState('')
+  const [recentSearchOpen, setRecentSearchOpen] = useState(false)
+  const visibleProjects = useMemo(
+    () => filterProjects(projects.filter((project) => !project.archived), projectSearchOpen ? projectQuery : ''),
+    [projects, projectQuery, projectSearchOpen]
+  )
+  const visibleConversations = useMemo(
+    () => filterConversations(conversations.filter((conversation) => !conversation.archived), recentSearchOpen ? recentQuery : ''),
+    [conversations, recentQuery, recentSearchOpen]
+  )
+  // 分区收起时点搜索，先展开分区，否则输入框和结果都藏着
+  const openSearch = (key: keyof SidebarSectionState, open: () => void) => {
+    open()
+    if (!sectionStates[key]) onToggleSection(key)
+  }
+  const closeProjectSearch = useEventCallback(() => { setProjectSearchOpen(false); setProjectQuery('') })
+  const closeRecentSearch = useEventCallback(() => { setRecentSearchOpen(false); setRecentQuery('') })
+  const workspaceSectionRef = useDismissOutside<HTMLElement>(projectSearchOpen, closeProjectSearch)
+  const recentSectionRef = useDismissOutside<HTMLElement>(recentSearchOpen, closeRecentSearch)
   return <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
     <div className="sidebar-top"><button className="brand-button" onClick={onToggle} aria-label="切换侧栏" title="切换侧栏"><span className="brand-logo" aria-hidden="true"><Sparkles size={15} /></span><span>FastAgent</span></button><button className="icon-button" onClick={onToggle} aria-label="收起侧栏" title="收起侧栏"><ChevronLeft size={16} /></button></div>
     <nav className="nav-list" aria-label="主导航">
@@ -71,8 +121,11 @@ export const Sidebar = React.memo(function Sidebar({ collapsed, sectionStates, o
       <button className={`nav-item ${section === 'projects' ? 'active' : ''}`} onClick={() => onNavigate('projects')} aria-label="工作区" title="工作区"><Folder size={16} /><span>工作区</span></button>
       <button className={`nav-item ${section === 'capabilities' ? 'active' : ''}`} onClick={() => onNavigate('capabilities')} aria-label="能力" title="能力"><Puzzle size={16} /><span>能力</span>{abilityAlerts > 0 && <span className="nav-badge" title={`${abilityAlerts} 个能力需要处理`}>{abilityAlerts}</span>}</button>
     </nav>
-    <section className="sidebar-section"><button className="section-label" onClick={() => onToggleSection('workspace')} aria-expanded={sectionStates.workspace}><span className="section-label-title"><span>工作区</span><ChevronDown size={13} className={sectionStates.workspace ? '' : 'collapsed'} /></span><span className="section-label-actions"><span className="mini-button" onClick={(event) => { event.stopPropagation(); onPickWorkspace() }} aria-label="添加工作区" title="添加工作区"><Plus size={14} /></span></span></button>{sectionStates.workspace && projects.filter((project) => !project.archived).map((project) => <div className={`workspace-item project-item ${selectedProjectId === project.id ? 'active' : ''}`} key={project.id}><button className="workspace-item-main" onClick={() => onSelectProject(project)}><span className="run-status-slot">{(() => { const presentation = runStatusPresentation(projectRunStatus(runStateList, project.id)); return presentation ? <span className={`run-status-dot ${presentation.tone}`} title={presentation.label} /> : null })()}</span><span>{project.name}</span></button><button className="item-open-folder" onClick={() => onOpenProjectFolder(project.path)} aria-label={`打开 ${project.name} 的本地目录`} title="打开本地目录"><FolderOpen size={14} /></button><ItemActions onDelete={() => onDeleteProject(project.id)} onArchive={() => onArchiveProject(project.id)} onBatch={() => onStartBatch('projects')} onOpenFolder={() => onOpenProjectFolder(project.path)} /></div>)}</section>
-    <section className="sidebar-section recent"><button className="section-label" onClick={() => onToggleSection('recent')} aria-expanded={sectionStates.recent}><span className="section-label-title"><span>最近对话</span><ChevronDown size={13} className={sectionStates.recent ? '' : 'collapsed'} /></span></button>{sectionStates.recent && <>{conversations.filter((conversation) => !conversation.archived).map((conversation) => <div className={`workspace-item recent-item ${selectedConversationId === conversation.id ? 'active' : ''}`} key={conversation.id}>{renamingId === conversation.id ? <RecentTitleEditor title={conversation.title} onCommit={(value) => { setRenamingId(null); onRenameConversation(conversation.id, value) }} onCancel={() => setRenamingId(null)} /> : <><button className="workspace-item-main" onClick={() => { void window.fastAgent.chat.markRead(conversation.id); onReadRun(conversation.id); onSelectConversation(conversation) }}><span className="run-status-slot">{compactionStates[conversation.id]?.status === 'running' ? <span className="run-status-dot running" title="压缩中" /> : (() => { const presentation = runStatusPresentation(runStates[conversation.id]); return presentation ? <span className={`run-status-dot ${presentation.tone}`} title={presentation.label} /> : null })()}</span><span className="recent-copy"><span className="recent-title">{conversation.title}</span><small>{<ConversationProjectTag projects={projects} projectId={conversation.projectId} />}</small></span><time>{conversation.meta}</time></button><ItemActions onDelete={() => onDeleteConversation(conversation.id)} onArchive={() => onArchiveConversation(conversation.id)} onBatch={() => onStartBatch('conversations')} onInspect={() => onInspectConversation(conversation.id)} onOpenFolder={() => onOpenConversationFolder(conversation.id)} openFolderLabel="打开会话目录" onRename={() => setRenamingId(conversation.id)} onExport={() => onExportConversation(conversation.id)} onDistill={() => onDistillSkill(conversation.id)} /></>}</div>)}<button className="recent-more" onClick={onOpenConversations}>查看全部<ChevronRight size={13} /></button></>}</section>
+    {/* 两个列表分区共用一段弹性高度：工作区封顶后剩余全给最近对话，短窗口下后者不会被压没 */}
+    <div className="sidebar-lists">
+    <section className={`sidebar-section workspace${sectionStates.workspace ? ' open' : ''}`} ref={workspaceSectionRef}><button className="section-label" onClick={() => onToggleSection('workspace')} aria-expanded={sectionStates.workspace}><span className="section-label-title"><span>工作区</span><ChevronDown size={13} className={sectionStates.workspace ? '' : 'collapsed'} /></span><span className="section-label-actions"><span className="mini-button" onClick={(event) => { event.stopPropagation(); onPickWorkspace() }} aria-label="添加工作区" title="添加工作区"><Plus size={14} /></span><span className={`mini-button${projectSearchOpen ? ' on' : ''}`} onClick={(event) => { event.stopPropagation(); if (projectSearchOpen) closeProjectSearch(); else openSearch('workspace', () => setProjectSearchOpen(true)) }} aria-label="搜索工作区" title="搜索工作区" aria-pressed={projectSearchOpen}><Search size={14} /></span></span></button>{sectionStates.workspace && projectSearchOpen && <SidebarSearchInput value={projectQuery} placeholder="搜索项目目录" onChange={setProjectQuery} onClose={closeProjectSearch} />}{sectionStates.workspace && <div className="sidebar-scroll-list">{visibleProjects.map((project) => <div className={`workspace-item project-item ${selectedProjectId === project.id ? 'active' : ''}`} key={project.id}><button className="workspace-item-main" onClick={() => { closeProjectSearch(); onSelectProject(project) }}><span className="run-status-slot">{(() => { const presentation = runStatusPresentation(projectRunStatus(runStateList, project.id)); return presentation ? <span className={`run-status-dot ${presentation.tone}`} title={presentation.label} /> : null })()}</span><span>{project.name}</span></button><button className="item-open-folder" onClick={() => onOpenProjectFolder(project.path)} aria-label={`打开 ${project.name} 的本地目录`} title="打开本地目录"><FolderOpen size={14} /></button><ItemActions onDelete={() => onDeleteProject(project.id)} onArchive={() => onArchiveProject(project.id)} onBatch={() => onStartBatch('projects')} onOpenFolder={() => onOpenProjectFolder(project.path)} /></div>)}{projectSearchOpen && !visibleProjects.length && <p className="sidebar-search-empty">没有匹配的项目目录</p>}</div>}</section>
+    <section className={`sidebar-section recent${sectionStates.recent ? ' open' : ''}`} ref={recentSectionRef}><button className="section-label" onClick={() => onToggleSection('recent')} aria-expanded={sectionStates.recent}><span className="section-label-title"><span>最近对话</span><ChevronDown size={13} className={sectionStates.recent ? '' : 'collapsed'} /></span><span className="section-label-actions"><span className={`mini-button${recentSearchOpen ? ' on' : ''}`} onClick={(event) => { event.stopPropagation(); if (recentSearchOpen) closeRecentSearch(); else openSearch('recent', () => setRecentSearchOpen(true)) }} aria-label="搜索最近对话" title="搜索最近对话" aria-pressed={recentSearchOpen}><Search size={14} /></span></span></button>{sectionStates.recent && <>{recentSearchOpen && <SidebarSearchInput value={recentQuery} placeholder="搜索对话标题" onChange={setRecentQuery} onClose={closeRecentSearch} />}<div className="recent-list">{visibleConversations.map((conversation) => <div className={`workspace-item recent-item ${selectedConversationId === conversation.id ? 'active' : ''}`} key={conversation.id}>{renamingId === conversation.id ? <RecentTitleEditor title={conversation.title} onCommit={(value) => { setRenamingId(null); onRenameConversation(conversation.id, value) }} onCancel={() => setRenamingId(null)} /> : <><button className="workspace-item-main" onClick={() => { closeRecentSearch(); void window.fastAgent.chat.markRead(conversation.id); onReadRun(conversation.id); onSelectConversation(conversation) }}><span className="run-status-slot">{compactionStates[conversation.id]?.status === 'running' ? <span className="run-status-dot running" title="压缩中" /> : (() => { const presentation = runStatusPresentation(runStates[conversation.id]); return presentation ? <span className={`run-status-dot ${presentation.tone}`} title={presentation.label} /> : null })()}</span><span className="recent-copy"><span className="recent-title">{conversation.title}</span><small>{<ConversationProjectTag projects={projects} projectId={conversation.projectId} />}</small></span><time>{conversation.meta}</time></button><ItemActions onDelete={() => onDeleteConversation(conversation.id)} onArchive={() => onArchiveConversation(conversation.id)} onBatch={() => onStartBatch('conversations')} onInspect={() => onInspectConversation(conversation.id)} onOpenFolder={() => onOpenConversationFolder(conversation.id)} openFolderLabel="打开会话目录" onRename={() => setRenamingId(conversation.id)} onExport={() => onExportConversation(conversation.id)} onDistill={() => onDistillSkill(conversation.id)} /></>}</div>)}{recentSearchOpen && !visibleConversations.length && <p className="sidebar-search-empty">没有匹配的对话</p>}</div><button className="recent-more" onClick={onOpenConversations}>查看全部<ChevronRight size={13} /></button></>}</section>
+    </div>
     <div className="sidebar-bottom side-foot"><div className="account-row"><div className="avatar">{auth.user?.display_name?.slice(0, 1) || auth.user?.username?.slice(0, 1) || 'F'}</div><div className="account-copy"><strong>{auth.user?.display_name || auth.user?.username || '账户'}</strong></div><button className="icon-button" onClick={onAccountAction} aria-label="账户菜单" title="账户菜单"><MoreHorizontal size={16} /></button></div></div>
   </aside>
 })

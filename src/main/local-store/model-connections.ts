@@ -135,7 +135,7 @@ export class ModelConnectionStore {
         const old = model.id === undefined ? existing.find((m) => JSON.parse(m.payload).model_name === model.modelId) : existing.find((m) => m.id === -model.id!)
         if (model.id !== undefined && !old) throw new Error('模型不属于该连接')
         const previous = old ? JSON.parse(old.payload) : {}
-        const payload = { ...previous, connectionId: id, name: model.name?.trim() || model.modelId.trim(), provider: modelProvider(metadata.providerId).name, protocol: metadata.protocol, model_name: model.modelId.trim(), model_kind: 'chat', base_url: metadata.baseUrl, context_window: model.contextWindow ?? previous.context_window, max_tokens: model.maxTokens ?? previous.max_tokens, supports_thinking: model.reasoning ?? previous.supports_thinking ?? true, thinking_level_map: model.thinkingLevelMap ?? previous.thinking_level_map, thinking_default: model.thinkingDefault ?? previous.thinking_default, thinking_profiles: model.thinkingProfiles === undefined ? previous.thinking_profiles : model.thinkingProfiles }
+        const payload = { ...previous, connectionId: id, name: model.name?.trim() || model.modelId.trim(), provider: modelProvider(metadata.providerId).name, protocol: metadata.protocol, model_name: model.modelId.trim(), model_kind: (model.vision ?? previous.model_kind === 'multimodal') ? 'multimodal' : 'chat', base_url: metadata.baseUrl, context_window: model.contextWindow ?? previous.context_window, max_tokens: model.maxTokens ?? previous.max_tokens, supports_thinking: model.reasoning ?? previous.supports_thinking ?? true, thinking_level_map: model.thinkingLevelMap ?? previous.thinking_level_map, thinking_default: model.thinkingDefault ?? previous.thinking_default, thinking_profiles: model.thinkingProfiles === undefined ? previous.thinking_profiles : model.thinkingProfiles, temperature: model.temperature ?? previous.temperature, timeout: model.timeout ?? previous.timeout, max_retries: model.maxRetries ?? previous.max_retries, extra_body: model.extraBody === undefined ? previous.extra_body : model.extraBody, compat: model.compat === undefined ? previous.compat : model.compat }
         if (old) { this.db.prepare('UPDATE local_models SET payload=?,secrets=NULL,updated_at=? WHERE id=?').run(JSON.stringify(payload), now, old.id); kept.add(old.id) }
         else kept.add(Number(this.db.prepare('INSERT INTO local_models(payload,secrets,updated_at) VALUES(?,NULL,?)').run(JSON.stringify(payload), now).lastInsertRowid))
       }
@@ -149,6 +149,15 @@ export class ModelConnectionStore {
       this.db.prepare("DELETE FROM local_models WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,'$.connectionId') END = ?").run(id)
       this.db.prepare('DELETE FROM model_connections WHERE id = ?').run(id)
     })()
+  }
+
+  /** 单独改 model_kind：能力标记要能在不重新保存整条连接的前提下补齐。 */
+  setModelKind(dbId: number, kind: 'chat' | 'multimodal'): void {
+    const row = this.db.prepare('SELECT payload FROM local_models WHERE id=?').get(dbId) as { payload: string } | undefined
+    if (!row) return
+    const payload = JSON.parse(row.payload)
+    if (payload.model_kind === kind) return
+    this.db.prepare('UPDATE local_models SET payload=? WHERE id=?').run(JSON.stringify({ ...payload, model_kind: kind }), dbId)
   }
 
   runtimeConfig(dbId: number): Omit<ModelCredentials, 'id'> | null {

@@ -57,6 +57,11 @@ pub fn run(payload: &str) -> Result<()> {
     let writer = Arc::new(Writer::new());
     let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
 
+    // 会话级 Job：本次会话派生的每一个进程都落进来，KILL_ON_JOB_CLOSE 挂在它身上。
+    // 生命周期是「整个会话」而不是「单条命令」——命令级 Job 一关就把 Agent 刚起的
+    // 开发服务器一并回收，长任务里根本没法先起服务再验证。会话结束仍然一个不剩。
+    let session_job = create_job(session.max_processes, true)?;
+
     // 握手帧：Host 据此判断沙箱身份确实建立起来了。缺少它就不放行本次任务，
     // 避免「会话创建成功、第一条命令才失败」这种迟到的错误。
     writer.send(&Response::Ready { session: session.session_id.clone(), account: session.account.clone() });
@@ -76,6 +81,7 @@ pub fn run(payload: &str) -> Result<()> {
                     &session,
                     &writer,
                     &registry,
+                    session_job,
                     id.clone(),
                     command,
                     cwd,
@@ -106,11 +112,11 @@ pub fn run(payload: &str) -> Result<()> {
         }
     }
 
-    // Host 关闭 stdin 即会话结束，清掉所有仍在运行的进程树。
-    if let Ok(map) = registry.lock() {
-        for entry in map.values() {
-            unsafe { let _ = TerminateJobObject(entry.job, 1); }
-        }
+    // Host 关闭 stdin 即会话结束。终止会话级 Job 一次到位：它覆盖了所有命令，
+    // 包括已经从 registry 里摘掉、但仍在后台跑的服务进程。
+    unsafe {
+        let _ = TerminateJobObject(session_job, 1);
+        let _ = CloseHandle(session_job);
     }
     Ok(())
 }
@@ -262,6 +268,7 @@ fn spawn_command(
     session: &SessionArgs,
     writer: &Arc<Writer>,
     registry: &Registry,
+    session_job: HANDLE,
     id: String,
     command: String,
     cwd: String,
@@ -274,7 +281,9 @@ fn spawn_command(
     let (stderr_read, stderr_write) = create_pipe(true)?;
     let (stdin_read, stdin_write) = create_pipe(false)?;
 
-    let job = create_job(session.max_processes)?;
+    // 命令级 Job 只作为「取消 / 超时」的终止目标，不带 KILL_ON_JOB_CLOSE：
+    // 命令正常退出时关掉它不应该牵连仍在后台运行的子孙进程，那由会话级 Job 兜底。
+    let job = create_job(session.max_processes, false)?;
     let token = restricted_token();
     let mut environment = environment_block(&env);
     let directory = to_wide(&cwd);
@@ -338,7 +347,11 @@ fn spawn_command(
     created.map_err(|error| SandboxCoreError::with("在沙箱内启动命令失败", error))?;
 
     // 挂起态先入 Job，保证子孙进程无一例外落在同一个安全上下文与生命周期里。
+    // 顺序不能反：先入会话级 Job 使其成为外层，命令级 Job 再作为嵌套子 Job 加入，
+    // 这样终止命令级 Job 只影响这一条命令，而会话级 Job 始终罩住全部。
     unsafe {
+        AssignProcessToJobObject(session_job, information.hProcess)
+            .map_err(|error| SandboxCoreError::with("加入会话 Job Object 失败", error))?;
         AssignProcessToJobObject(job, information.hProcess)
             .map_err(|error| SandboxCoreError::with("加入 Job Object 失败", error))?;
         ResumeThread(information.hThread);
@@ -379,7 +392,8 @@ fn spawn_command(
         }
         unsafe {
             let _ = CloseHandle(process);
-            // 关闭 Job 句柄触发 KILL_ON_JOB_CLOSE，回收命令派生的后台进程。
+            // 命令级 Job 没有 KILL_ON_JOB_CLOSE：关掉它不动仍在跑的后台进程，
+            // 回收的责任交给会话级 Job。
             let _ = CloseHandle(job);
         }
         // 先等待输出管道读完，再发结束帧，避免调用方看到退出后仍丢失尾部输出。
@@ -401,12 +415,16 @@ fn spawn_pump(writer: Arc<Writer>, id: String, handle: OwnedHandle, stream: &'st
     })
 }
 
-fn create_job(max_processes: u32) -> Result<HANDLE> {
+/// kill_on_close 只给会话级 Job 用：命令级 Job 带上它就等于「命令一结束清空后台」。
+fn create_job(max_processes: u32, kill_on_close: bool) -> Result<HANDLE> {
     let job = unsafe { CreateJobObjectW(None, None) }
         .map_err(|error| SandboxCoreError::with("创建 Job Object 失败", error))?;
     let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-    limits.BasicLimitInformation.LimitFlags =
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+    limits.BasicLimitInformation.LimitFlags = if kill_on_close {
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+    } else {
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+    };
     limits.BasicLimitInformation.ActiveProcessLimit = max_processes.max(1);
     unsafe {
         SetInformationJobObject(

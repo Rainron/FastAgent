@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
-import { ensureAppDirectories, readDataRootLocator, resolveAppPaths, writeDataRootLocator } from './app-paths'
+import { ensureAppDirectories, healAgentSettings, readDataRootLocator, resolveAppPaths, withCompactionEnabled, writeDataRootLocator } from './app-paths'
 
 const roots: string[] = []
 
@@ -26,6 +26,8 @@ describe('app paths', () => {
     expect(paths.databasePath).toBe(join(home, '.fa', 'data', 'fastagent.db'))
     expect(paths.sessionsDir).toBe(join(home, '.fa', 'sessions'))
     expect(paths.skillsDir).toBe(join(home, '.fa', 'skills'))
+    // 未绑定项目的 agent 运行落在这里，不能回落到应用安装目录
+    expect(paths.quickWorkspaceDir).toBe(join(home, '.fa', 'quick-workspace'))
     expect(paths.cacheDir).toBe(join(home, 'cache'))
     expect(paths.logsDir).toBe(join(home, 'logs'))
     expect(paths.locatorPath).toBe(join(userData, 'data-location.json'))
@@ -56,7 +58,7 @@ describe('app paths', () => {
     writeDataRootLocator(paths.platformUserDataDir, paths.dataRoot)
 
     expect(JSON.parse(readFileSync(paths.locatorPath, 'utf8'))).toMatchObject({ schemaVersion: 1, dataRoot: paths.dataRoot })
-    for (const path of [paths.dataDir, paths.sessionsDir, paths.skillsDir, paths.attachmentsDir, paths.backupsDir, paths.exportsDir]) {
+    for (const path of [paths.dataDir, paths.sessionsDir, paths.skillsDir, paths.attachmentsDir, paths.quickWorkspaceDir, paths.backupsDir, paths.exportsDir]) {
       expect(() => writeFileSync(join(path, '.probe'), '', 'utf8')).not.toThrow()
     }
   })
@@ -73,5 +75,34 @@ describe('app paths', () => {
     writeDataRootLocator(userData, dataRoot)
 
     expect(readFileSync(locatorPath, 'utf8')).toBe(original)
+  })
+})
+
+describe('withCompactionEnabled', () => {
+  it('只在 compaction.enabled 为 false 时改写，其余字段原样保留', () => {
+    const healed = withCompactionEnabled(JSON.stringify({ theme: 'dark', compaction: { enabled: false, reserveTokens: 100 } }))
+    expect(JSON.parse(healed as string)).toEqual({ theme: 'dark', compaction: { enabled: true, reserveTokens: 100 } })
+  })
+
+  it('已启用、无该字段、内容损坏、文件不存在时都不写', () => {
+    expect(withCompactionEnabled(JSON.stringify({ compaction: { enabled: true } }))).toBeNull()
+    expect(withCompactionEnabled(JSON.stringify({ theme: 'dark' }))).toBeNull()
+    expect(withCompactionEnabled('broken')).toBeNull()
+    expect(withCompactionEnabled(null)).toBeNull()
+  })
+})
+
+describe('healAgentSettings', () => {
+  it('修复 agentDir 下被关闭的自动压缩，无文件时不报错', () => {
+    const root = tempRoot('fastagent-heal-')
+    const paths = resolveAppPaths({ home: join(root, 'home'), userData: join(root, 'user-data'), cache: join(root, 'cache'), logs: join(root, 'logs'), temp: join(root, 'temp') })
+    ensureAppDirectories(paths)
+
+    expect(() => healAgentSettings(paths)).not.toThrow()
+
+    const settingsPath = join(paths.agentDir, 'settings.json')
+    writeFileSync(settingsPath, JSON.stringify({ compaction: { enabled: false } }), 'utf8')
+    healAgentSettings(paths)
+    expect(JSON.parse(readFileSync(settingsPath, 'utf8'))).toEqual({ compaction: { enabled: true } })
   })
 })

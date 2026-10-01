@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSummarySourceText, contextTargetRatio, heuristicSummary, projectCompactedState, resolvePolicy, shouldCompact, splitTurns, triggerRatioFor } from './context-manager'
+import { buildSummarySourceText, contextTargetRatio, heuristicSummary, piCompactionSettings, projectCompactedState, resolvePolicy, splitTurns, targetRatioFor, triggerRatioFor } from './context-manager'
 import * as contextManager from './context-manager'
 import type { AppSettings, ContextPolicy, ContextState, ConversationTurn } from '../shared/types'
 import { defaultSandboxSettings } from '../shared/sandbox'
@@ -16,6 +16,7 @@ const settings: AppSettings = {
   autoSummary: true,
   contextStrategy: 'disabled',
   triggerRatio: null,
+  targetRatio: null,
   keepRecentTurns: null,
   shellPreference: 'bash',
   bashPath: '',
@@ -29,6 +30,8 @@ const settings: AppSettings = {
   accentColor: 'green',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',
+  surfaceLevel: 'standard',
+  bodyTextContrast: 'standard',
   sidebarGlass: false
 }
 
@@ -51,10 +54,8 @@ function turn(id: string, patch: Partial<ConversationTurn> = {}): ConversationTu
 }
 
 function policy(patch: Partial<ContextPolicy> = {}): ContextPolicy {
-  return { conversationId: 'conversation-1', strategy: 'auto', autoSummary: true, triggerRatio: null, keepRecentTurns: null, inheritGlobal: true, ...patch }
+  return { conversationId: 'conversation-1', strategy: 'auto', autoSummary: true, triggerRatio: null, targetRatio: null, keepRecentTurns: null, inheritGlobal: true, ...patch }
 }
-
-const state: Pick<ContextState, 'estimatedTokens' | 'contextWindow'> = { estimatedTokens: 120_000, contextWindow: 128_000 }
 
 describe('resolvePolicy', () => {
   it('maps global contextStrategy onto the policy strategy field', () => {
@@ -63,6 +64,7 @@ describe('resolvePolicy', () => {
       strategy: 'disabled',
       autoSummary: true,
       triggerRatio: null,
+      targetRatio: null,
       keepRecentTurns: null,
       inheritGlobal: true
     })
@@ -74,24 +76,41 @@ describe('resolvePolicy', () => {
   })
 })
 
-describe('shouldCompact', () => {
-  it('never compacts when the strategy is disabled', () => {
-    expect(shouldCompact(policy({ strategy: 'disabled' }), state)).toBe(false)
-    expect(shouldCompact(resolvePolicy(settings, null, 'conversation-1'), state)).toBe(false)
+describe('piCompactionSettings', () => {
+  // Pi 的判定是 tokens > contextWindow - reserveTokens，所以 reserveTokens 就是触发占比的补数。
+  it('把策略默认阈值换算成 Pi 的 reserveTokens', () => {
+    expect(piCompactionSettings(policy({ strategy: 'conservative' }), 128_000)).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+    expect(piCompactionSettings(policy({ strategy: 'aggressive' }), 128_000)).toEqual({ enabled: true, reserveTokens: 40_960, keepRecentTokens: 16_640 })
   })
 
-  it('never compacts when auto summary is off', () => {
-    expect(shouldCompact(policy({ autoSummary: false }), state)).toBe(false)
+  it('显式 triggerRatio 优先于策略默认值', () => {
+    expect(piCompactionSettings(policy({ strategy: 'conservative', triggerRatio: 0.5 }), 128_000).reserveTokens).toBe(64_000)
   })
 
-  it('compacts once usage reaches the strategy threshold', () => {
-    expect(shouldCompact(policy(), { estimatedTokens: 100_000, contextWindow: 128_000 })).toBe(true)
-    expect(shouldCompact(policy({ strategy: 'conservative' }), { estimatedTokens: 100_000, contextWindow: 128_000 })).toBe(false)
-    expect(shouldCompact(policy({ strategy: 'conservative' }), state)).toBe(true)
+  it('显式 targetRatio 决定压缩后保留多少原文', () => {
+    // 触发点仍是 conservative 的 85%（reserve 19200），保留区按目标 45% 算：57600 - 19200
+    expect(piCompactionSettings(policy({ strategy: 'conservative', targetRatio: 0.45 }), 128_000)).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 38_400 })
+    expect(targetRatioFor(policy({ strategy: 'conservative' }))).toBe(0.68)
+    expect(targetRatioFor(policy({ strategy: 'conservative', targetRatio: 0.4 }))).toBe(0.4)
   })
 
-  it('lets an explicit trigger ratio win over the strategy default', () => {
-    expect(shouldCompact(policy({ strategy: 'conservative', triggerRatio: 0.5 }), { estimatedTokens: 70_000, contextWindow: 128_000 })).toBe(true)
+  it('策略关闭或自动摘要关闭时 enabled 为 false', () => {
+    expect(piCompactionSettings(policy({ strategy: 'disabled' }), 128_000).enabled).toBe(false)
+    expect(piCompactionSettings(policy({ autoSummary: false }), 128_000).enabled).toBe(false)
+  })
+
+  it('窗口未知时沿用 Pi 默认值，不做猜测', () => {
+    expect(piCompactionSettings(policy(), 0)).toEqual({ enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 })
+  })
+
+  it('任何窗口下预留区与保留区之和都不顶穿窗口', () => {
+    for (const contextWindow of [8_000, 32_000, 128_000, 200_000, 1_000_000]) {
+      for (const strategy of ['auto', 'aggressive', 'conservative'] as const) {
+        const result = piCompactionSettings(policy({ strategy }), contextWindow)
+        expect(result.reserveTokens + result.keepRecentTokens).toBeLessThan(contextWindow)
+        expect(result.keepRecentTokens).toBeGreaterThan(0)
+      }
+    }
   })
 })
 

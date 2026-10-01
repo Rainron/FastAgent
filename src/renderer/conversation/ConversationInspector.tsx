@@ -13,7 +13,7 @@ export interface ConversationInspectorData {
   summary?: { text: string; version: number; createdAt: string } | null
   history: CompactionHistoryItem[]
   agent?: { toolCalls: number; latestStep?: string | null; failureReason?: string | null; startedAt?: string | null; finishedAt?: string | null; toolCallsDetailed?: ToolCallRecord[] }
-  policy?: { strategy: string; triggerRatio: number | null; keepRecentTurns: number | null; autoSummary: boolean; inheritGlobal: boolean }
+  policy?: { strategy: string; triggerRatio: number | null; targetRatio: number | null; autoSummary: boolean; inheritGlobal: boolean }
 }
 
 export function ConversationInspector({ data, onClose, onRefresh, onCompact, onCancelCompaction, compaction }: { data: ConversationInspectorData; onClose: () => void; onRefresh?: () => void; onCompact?: () => void; onCancelCompaction?: () => void; compaction?: CompactionState | null }) {

@@ -9,9 +9,18 @@ export interface DiscoveredConnectionModel {
   contextWindow?: number
   maxTokens?: number
   reasoning?: boolean
+  /** 模型是否接受图片输入；缺省时按纯文本处理，图片会被运行时替换成占位文本。 */
+  vision?: boolean
   thinkingLevelMap?: ThinkingLevelMap
   thinkingDefault?: string
   thinkingProfiles?: Record<string, unknown> | null
+  temperature?: number
+  /** 单位秒；运行时映射为 pi 的 provider 超时（毫秒）。 */
+  timeout?: number
+  maxRetries?: number
+  extraBody?: Record<string, unknown> | null
+  /** 厂商兼容配置（thinkingFormat / maxTokensField 等），直接透传给 pi 模型定义。 */
+  compat?: Record<string, unknown> | null
 }
 export interface ModelProviderPreset {
   id: string

@@ -37,7 +37,7 @@ If you would like to contribute, please read [CONTRIBUTING.md](CONTRIBUTING.md).
 Includes presets for OpenAI, Anthropic, DeepSeek, Qwen, Zhipu GLM, Kimi, MiniMax, Google Gemini, and OpenRouter. Any OpenAI-compatible endpoint can also be configured. API keys are stored in a dedicated encrypted table rather than a plaintext cache.
 
 **Chat and agent modes**  
-`chat` is read-only. `agent` enables file editing, shell commands, and todo management. The active mode controls which tools the model can access.
+`chat` provides read-only tools and shell commands without file writes. `agent` adds file editing and todo management, plus background shell for long-running processes such as dev servers. The active mode controls which tools the model can access.
 
 **Plan mode**  
 Write operations are rejected outside the permission layer while plan mode is active. The agent can inspect the code and produce a step-by-step plan, then execute only after confirmation.
@@ -63,7 +63,7 @@ Run state can be reconciled after a reload, allowing in-progress tasks to be pic
 
 **Motion and session experience**
 
-Session lists support pagination, while page transitions, message actions, and workspace interactions include more feedback and motion. Conversations support in-page search with Ctrl+F (F3 / F4 to step through matches), attachment images can be previewed, and appearance settings include accent color, font size, and density.
+Session lists support pagination, while page transitions, message actions, and workspace interactions include more feedback and motion. Conversations support in-page search with Ctrl+F (F3 / F4 to step through matches), attachment images can be previewed, and appearance settings include accent color, font size, density, and background tone. Window controls are drawn by the app, and the sidebar can search sessions.
 
 **Model self-test**
 
@@ -86,7 +86,7 @@ Turn a successful conversation into a reusable Skill, with static validation for
 Concurrency, retry, and continuation limits stop a run with an explicit reason instead of silently continuing. The origin of each turn's context can be traced. Conversations can be exported, and artifact files keep per-turn versions that can be restored.
 
 **Context management and local workflow tools**  
-Provider-reported usage drives context accounting, with automatic summarization and manual compaction. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
+Provider-reported usage drives context accounting, with automatic summarization and manual compaction (trigger ratio, post-compaction target, and retained turns are configurable). Cloud model parameters such as context window and output limit can be overridden locally. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
 
 ## Quick start
 

@@ -35,6 +35,19 @@ export function respondPendingApproval(input: { id: string; decision: ApprovalDe
   pending.resolve(decision, input.answer)
 }
 
+/**
+ * 仍在等待用户答复的审批与提问。
+ *
+ * 这些请求只在发起那一刻推过一次事件，界面重载后渲染层的弹层就没了，
+ * 而主进程这边还在 await——整轮会一直停在「准备中」，既没有弹窗也没有进展。
+ * 重载后靠这个通道把它们重新取回来。
+ */
+export function listPendingApprovals(runIds?: ReadonlySet<string>): Array<{ runId: string; request: ApprovalRequest }> {
+  return [...pendingRequests.values()]
+    .filter((pending) => !runIds || runIds.has(pending.runId))
+    .map((pending) => ({ runId: pending.runId, request: pending.request }))
+}
+
 /** run 被 cancel 或窗口关闭时，所有挂起审批/提问以 reject 结算，避免永久悬挂。 */
 export function settlePendingRequests(reason: unknown) {
   for (const pending of pendingRequests.values()) pending.reject(reason)

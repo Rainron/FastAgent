@@ -6,9 +6,11 @@ export interface ResponseActions {
   openFile: (reference: FileReference) => void
   copyText: (text: string) => void
   notify: (message: string) => void
+  /** 跳到「能力」页并展开该 Skill 的详情；回合内的来源清单只留标题，正文去那边看。 */
+  openSkill: (abilityId: string) => void
 }
 
-const fallback: ResponseActions = { openFile: () => undefined, copyText: () => undefined, notify: () => undefined }
+const fallback: ResponseActions = { openFile: () => undefined, copyText: () => undefined, notify: () => undefined, openSkill: () => undefined }
 
 export const ResponseActionsContext = createContext<ResponseActions>(fallback)
 

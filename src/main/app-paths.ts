@@ -21,6 +21,8 @@ export interface AppPaths {
   mcpDir: string
   pluginsDir: string
   attachmentsDir: string
+  /** 未绑定项目的会话（快速对话的 agent 模式是主要来源）的工作目录，避免落到应用安装目录。 */
+  quickWorkspaceDir: string
   backupsDir: string
   exportsDir: string
   cacheDir: string
@@ -91,6 +93,7 @@ export function resolveAppPaths(platform: PlatformAppPaths, dataRoot = readDataR
     mcpDir: join(normalizedRoot, 'mcp'),
     pluginsDir: join(normalizedRoot, 'plugins'),
     attachmentsDir: join(normalizedRoot, 'attachments'),
+    quickWorkspaceDir: join(normalizedRoot, 'quick-workspace'),
     backupsDir: join(normalizedRoot, 'backups'),
     exportsDir: join(normalizedRoot, 'exports'),
     cacheDir: platform.cache,
@@ -104,8 +107,41 @@ export function resolveAppPaths(platform: PlatformAppPaths, dataRoot = readDataR
   }
 }
 
+/**
+ * 历史版本调用过 pi 的 setAutoCompactionEnabled(false)，该 API 会把 compaction.enabled=false
+ * 落盘到 agentDir/settings.json；代码删掉后文件还在，用户看到的仍是「自动压缩已关闭」。
+ * 只在确实是 false 时返回改写后的文本，其余情况返回 null 表示不写。
+ */
+export function withCompactionEnabled(raw: string | null): string | null {
+  if (raw === null) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const settings = parsed as { compaction?: { enabled?: unknown } }
+  if (settings.compaction?.enabled !== false) return null
+  return `${JSON.stringify({ ...settings, compaction: { ...settings.compaction, enabled: true } }, null, 2)}\n`
+}
+
+/** withCompactionEnabled 的读写薄壳；失败只告警，不阻断启动。 */
+export function healAgentSettings(paths: AppPaths) {
+  const settingsPath = join(paths.agentDir, 'settings.json')
+  try {
+    if (!existsSync(settingsPath)) return
+    const healed = withCompactionEnabled(readFileSync(settingsPath, 'utf8'))
+    if (!healed) return
+    writeFileSync(settingsPath, healed, 'utf8')
+    console.info('[compaction] 已修复 agent settings.json 中被关闭的自动压缩')
+  } catch (error) {
+    console.warn('[compaction] 修复 agent settings.json 失败:', error)
+  }
+}
+
 export function ensureAppDirectories(paths: AppPaths) {
-  for (const path of [paths.dataDir, paths.sessionsDir, paths.agentDir, paths.skillsDir, paths.mcpDir, paths.pluginsDir, paths.attachmentsDir, paths.backupsDir, paths.exportsDir]) {
+  for (const path of [paths.dataDir, paths.sessionsDir, paths.agentDir, paths.skillsDir, paths.mcpDir, paths.pluginsDir, paths.attachmentsDir, paths.quickWorkspaceDir, paths.backupsDir, paths.exportsDir]) {
     mkdirSync(path, { recursive: true })
   }
 }

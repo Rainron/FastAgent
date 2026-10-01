@@ -67,8 +67,10 @@ const TYPE_CHIPS: Array<[MineTypeFilter, string]> = [
 ]
 
 /** 「能力」一级页面：发现与我的能力两个 Tab，统计与筛选只针对 Skill 与 MCP。 */
-export function AbilitiesPage({ onNotice }: {
+export function AbilitiesPage({ onNotice, focusRequest = null }: {
   onNotice: (notice: string) => void
+  /** 外部深链：定位并展开某个能力的详情；nonce 变化才触发，重复点同一个也生效。 */
+  focusRequest?: { abilityId: string; nonce: number } | null
 }) {
   const [tab, setTab] = useState<AbilitiesPageTab>(() => resolveInitialAbilitiesTab(readStoredAbilitiesTab(), null) ?? 'discover')
   const [typeFilter, setTypeFilter] = useState<MineTypeFilter>('all')
@@ -145,6 +147,14 @@ export function AbilitiesPage({ onNotice }: {
     focusAbility(target)
     setPendingFocusId(null)
   }, [pendingFocusId, abilities, focusAbility])
+
+  // 深链只认 nonce：页面本身常驻在分区里，靠 abilityId 变化会漏掉「连点同一个」。
+  const handledFocusNonce = useRef(0)
+  useEffect(() => {
+    if (!focusRequest || focusRequest.nonce === handledFocusNonce.current) return
+    handledFocusNonce.current = focusRequest.nonce
+    openAbilityById(focusRequest.abilityId)
+  }, [focusRequest, openAbilityById])
 
   async function importMcp() {
     const created = await actions.run('mcp-import', () => mcpService.import())

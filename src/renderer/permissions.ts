@@ -31,8 +31,9 @@ export interface PermissionSummary {
 
 export const permissionPresets: PermissionPreset[] = BUILTIN_PRESET_IDS
 
-export function defaultPermissionForMode(mode: ConversationMode): PermissionPreset | null {
-  return mode === 'chat' ? null : 'ask'
+/** chat 也有 shell 工具，同样需要权限档位兜底，否则命令没有审批闸门。 */
+export function defaultPermissionForMode(_mode: ConversationMode): PermissionPreset | null {
+  return 'ask'
 }
 
 export function permissionSummary(preset: PermissionPreset): PermissionSummary {

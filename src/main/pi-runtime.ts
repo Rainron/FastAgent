@@ -12,10 +12,10 @@ import {
   type AgentSessionEvent
 } from '@earendil-works/pi-coding-agent'
 import type { Api, Message, Model } from '@earendil-works/pi-ai'
-import type { AgentEvent, ApprovalDecision, ApprovalRequest, Attachment, ConversationMode, ConversationTurn, ModelCredentials, PermissionPreset, QuestionAnswer, QuestionItem, ThinkingLevel } from '../shared/types'
+import type { AgentEvent, ApprovalDecision, ApprovalRequest, Attachment, ContextPolicy, ConversationMode, ConversationTurn, ModelCredentials, PermissionPreset, QuestionAnswer, QuestionItem, ThinkingLevel } from '../shared/types'
 import type { PermissionAction, PermissionRuleSet } from '../shared/permission-rules'
 import { buildModeRuntimePrompt } from '../renderer/mode-prompts'
-import { buildSummarySourceText } from './context-manager'
+import { buildSummarySourceText, piCompactionSettings } from './context-manager'
 import { mergeAgentContextFiles, readAgentContextFiles } from './agent-context'
 import { ContextMeter, type ContextMeasurement } from './context-meter'
 import type { LocalStore } from './local-store'
@@ -23,6 +23,7 @@ import type { McpToolBinding } from './mcp-manager'
 import { createToolRuntimeExtension, modeSystemPrompt, type ToolRuntimeContext, type ToolRuntimeContextRef } from './agent/tool-runtime'
 import type { SandboxManager } from './agent/sandbox/sandbox-manager'
 import type { SandboxSession } from './agent/sandbox/sandbox-types'
+import { BACKGROUND_SHELL_TOOL_NAMES } from './agent/tools/background-shell'
 import { createMcpBridgeExtension } from './mcp-bridge'
 import { createStreamTextRepair } from './stream-text-repair'
 import { createInlineThinkStream, createThinkTagSplitter, type ThinkPart, type ThinkStreamEvent } from './think-tags'
@@ -31,9 +32,14 @@ import type { SubAgentToolContext } from './agent/tools/subagent'
 import { suggestReadOnlyDecomposition } from './agent/subagent/subagent-decomposer'
 import { createModelUsageCollector } from './model-usage'
 import { resolveThinkingLevel } from '../shared/thinking-level'
+import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../shared/model-context-windows'
 
-const DEFAULT_CONTEXT_WINDOW = 128_000
 const DEFAULT_MAX_TOKENS = 8_192
+
+/** 凭证没带窗口时按模型名推断，避免所有模型都按 128k 算触发点与余量。 */
+function credentialContextWindow(credentials: Pick<ModelCredentials, 'context_window' | 'model_name'>): number {
+  return resolveContextWindow(credentials.context_window, credentials.model_name)
+}
 
 function protocolForCredentials(credentials: Pick<ModelCredentials, 'provider' | 'protocol'>): NonNullable<ModelCredentials['protocol']> {
   // 旧缓存没有 protocol，只能识别历史协议值；新提供商名称不能再被当作协议。
@@ -65,7 +71,7 @@ function modelDefinition(provider: string, credentials: ModelCredentials) {
     thinkingLevelMap: credentials.thinking_level_map,
     input: ['text', ...(provider === 'multimodal' ? ['image'] : [])] as ('text' | 'image')[],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: credentials.context_window || DEFAULT_CONTEXT_WINDOW,
+    contextWindow: credentialContextWindow(credentials),
     maxTokens: credentials.max_tokens || DEFAULT_MAX_TOKENS,
     samplingParams: credentials.temperature === undefined && !credentials.extra_body ? undefined : { ...(credentials.temperature === undefined ? {} : { temperature: credentials.temperature }), ...(credentials.extra_body || {}) },
     // 厂商兼容配置（thinkingFormat / maxTokensField 等）直接透传给 pi 模型定义
@@ -104,7 +110,7 @@ function jsonForContext(value: unknown): string {
 }
 
 /** 按 Pi 当前真正送入模型的消息计算分类，总量优先采用 provider usage。 */
-export function measureRuntimeContext(session: Pick<AgentSession, 'systemPrompt' | 'messages' | 'getContextUsage'>, credentials: Pick<ModelCredentials, 'id' | 'provider' | 'context_window'>): ContextMeasurement {
+export function measureRuntimeContext(session: Pick<AgentSession, 'systemPrompt' | 'messages' | 'getContextUsage'>, credentials: Pick<ModelCredentials, 'id' | 'provider' | 'context_window' | 'model_name'>): ContextMeasurement {
   const userParts: string[] = []
   const assistantParts: string[] = []
   const summaries: string[] = []
@@ -138,7 +144,7 @@ export function measureRuntimeContext(session: Pick<AgentSession, 'systemPrompt'
   return new ContextMeter().measure({
     modelId: credentials.id,
     provider: credentials.provider,
-    contextWindow: usage?.contextWindow || credentials.context_window || DEFAULT_CONTEXT_WINDOW,
+    contextWindow: usage?.contextWindow || credentialContextWindow(credentials),
     systemPrompt: session.systemPrompt,
     summary: summaries.join('\n'),
     turns: [{ user: userParts.join('\n'), assistant: assistantParts.join('\n'), tools }],
@@ -171,6 +177,8 @@ export interface RuntimeRunOptions {
   thinkingLevel: ThinkingLevel
   thinkingEnabled?: boolean
   autoCompaction?: boolean
+  /** 会话上下文策略：带上它才能把触发阈值与压缩深度传给 Pi 的会话内压缩。 */
+  contextPolicy?: ContextPolicy
   permission: PermissionPreset | null
   attachments: Attachment[]
   workspaceRoot: string | null
@@ -183,7 +191,7 @@ export interface RuntimeRunOptions {
   onSessionFile?: (path: string) => void
   onEvent: (event: Omit<AgentEvent, 'runId'>) => void
   /** Pi 会话内压缩完成后同步给桌面持久层。 */
-  onCompaction?: (event: { reason: 'manual' | 'threshold' | 'overflow'; tokensBefore: number; estimatedTokensAfter: number; durationMs: number; measurement: ContextMeasurement }) => void
+  onCompaction?: (event: { reason: 'manual' | 'threshold' | 'overflow'; summary: string; tokensBefore: number; estimatedTokensAfter: number; durationMs: number; measurement: ContextMeasurement }) => void
   /** 运行时内部自动重试时回调一次，供调用方把次数记进台账；不影响重试本身。 */
   onRetry?: (reason: 'empty-response' | 'length-continuation') => void
   /** 用户暂停时挂起下一次工具调用；闸门由调用方持有，取消优先于暂停。 */
@@ -201,6 +209,8 @@ export interface RuntimeRunOptions {
   bashPath?: string
   /** 现取规则集：运行途中改权限档位要立刻生效，不能在 run 开始时定死。 */
   resolveRuleSet: () => PermissionRuleSet
+  /** 当前档位是否完全访问；为真时死循环守卫整体豁免。 */
+  resolveFullAccess?: () => boolean
   sessionOverrides: Map<string, ApprovalDecision>
   requestApproval: (input: Omit<ApprovalRequest, 'id'>, signal: AbortSignal, recheck?: () => PermissionAction) => Promise<ApprovalDecision>
   requestQuestion: (toolCallId: string, questions: QuestionItem[], signal: AbortSignal) => Promise<QuestionAnswer[]>
@@ -225,10 +235,12 @@ export interface RuntimeRunOptions {
 }
 
 export function toolNamesForMode(mode: ConversationMode, shellToolName: 'bash' | 'powershell'): string[] {
-  // chat 也保留 read：skill 是按需用 read 加载 SKILL.md 的，没有 read 加载了也无法展开。
+  // chat 拿全套只读工具加 shell：没有 shell 连 cp、git log 这类查看类命令都跑不了。
+  // 写入类（edit/write/patch）仍只给 agent——两个模式的差别就落在这里，破坏性改动必须显式切模式。
   return mode === 'chat'
-    ? ['read']
-    : ['read', 'grep', 'find', 'ls', 'edit', 'write', 'question', 'todowrite', 'patch', shellToolName, 'subagent']
+    ? ['read', 'grep', 'find', 'ls', shellToolName]
+    // 后台命令只给 agent：起服务、看日志、停进程都是执行类操作，chat 模式不提供。
+    : ['read', 'grep', 'find', 'ls', 'edit', 'write', 'question', 'todowrite', 'patch', shellToolName, 'subagent', ...BACKGROUND_SHELL_TOOL_NAMES]
 }
 
 /**
@@ -294,6 +306,17 @@ async function textAttachmentContext(attachments: Attachment[]) {
   return result.textContext
 }
 
+/**
+ * 把连接里声明的多模态能力对齐到 pi 的模型定义。
+ * 只做并集：账号连接的模型定义来自 pi 自带目录，那里已知的视觉能力不能被本地标记降级；
+ * 反过来目录不认识的模型（自建网关、新发布的模型）只能靠用户勾选，否则 pi 会在发请求前
+ * 把图片块替换成「image omitted」占位文本，模型只会回答自己没收到图片。
+ */
+export function withDeclaredVision<T extends Api>(model: Model<T>, credentials: Pick<ModelCredentials, 'model_kind'>): Model<T> {
+  if (credentials.model_kind !== 'multimodal' || model.input.includes('image')) return model
+  return { ...model, input: [...model.input, 'image'] }
+}
+
 export async function createModelRuntime(credentials: ModelCredentials) {
   const providerId = modelId(credentials.provider, credentials)
   const protocol = protocolForCredentials(credentials)
@@ -311,11 +334,56 @@ export async function createModelRuntime(credentials: ModelCredentials) {
   return { runtime, model }
 }
 
-export function createRuntimeSettingsManager(cwd: string, agentDir: string, compactionEnabled = true): SettingsManager {
+type SettingsOverrides = Parameters<SettingsManager['applyOverrides']>[0]
+
+const runtimeOverrides = new WeakMap<SettingsManager, SettingsOverrides>()
+const reloadPatched = new WeakSet<SettingsManager>()
+
+/**
+ * SettingsManager.reload() 会用磁盘内容整体重建 settings，applyOverrides 打进去的值会被静默抹掉；
+ * DefaultResourceLoader.reload() 内部就会调它，所以直接 applyOverrides 的覆写活不过运行时创建。
+ * 这里把覆写记在实例上并接管 reload，保证每次重载后重新生效。
+ */
+export function applyPersistentOverrides(settingsManager: SettingsManager, overrides: SettingsOverrides): SettingsManager {
+  const merged = { ...runtimeOverrides.get(settingsManager), ...overrides }
+  runtimeOverrides.set(settingsManager, merged)
+  settingsManager.applyOverrides(merged)
+  if (!reloadPatched.has(settingsManager)) {
+    reloadPatched.add(settingsManager)
+    const reload = settingsManager.reload.bind(settingsManager)
+    settingsManager.reload = async (...args: Parameters<SettingsManager['reload']>) => {
+      const result = await reload(...args)
+      const current = runtimeOverrides.get(settingsManager)
+      if (current) settingsManager.applyOverrides(current)
+      return result
+    }
+  }
+  return settingsManager
+}
+
+export interface RuntimeCompactionSettings {
+  enabled: boolean
+  reserveTokens?: number
+  keepRecentTokens?: number
+}
+
+/** 本轮实际生效的会话内压缩参数：带策略时按策略换算，否则退回布尔开关。 */
+export function runtimeCompactionSettings(options: Pick<RuntimeRunOptions, 'contextPolicy' | 'autoCompaction' | 'credentials'>): RuntimeCompactionSettings {
+  return options.contextPolicy
+    ? piCompactionSettings(options.contextPolicy, credentialContextWindow(options.credentials))
+    : { enabled: options.autoCompaction !== false }
+}
+
+export function createRuntimeSettingsManager(cwd: string, agentDir: string, compaction: RuntimeCompactionSettings = { enabled: true }): SettingsManager {
   const settingsManager = SettingsManager.create(cwd, agentDir)
   // 桌面层只能按应用回合压缩；启用自动摘要时，单个长回合中的工具消息由 Pi 在循环内部压缩。
-  settingsManager.applyOverrides({ compaction: { enabled: compactionEnabled } })
-  return settingsManager
+  return applyPersistentOverrides(settingsManager, {
+    compaction: {
+      enabled: compaction.enabled,
+      ...(compaction.reserveTokens === undefined ? {} : { reserveTokens: compaction.reserveTokens }),
+      ...(compaction.keepRecentTokens === undefined ? {} : { keepRecentTokens: compaction.keepRecentTokens })
+    }
+  })
 }
 
 const SUMMARY_INSTRUCTION = [
@@ -381,6 +449,73 @@ export async function summarizeTurns(options: { credentials: ModelCredentials; t
   return summary
 }
 
+/** 一次会话内压缩的结果，自动与手动两条路共用同一种形状，方便调用方统一落库。 */
+export interface SessionCompactionOutcome {
+  summary: string
+  tokensBefore: number
+  estimatedTokensAfter: number
+  durationMs: number
+  measurement: ContextMeasurement
+}
+
+/**
+ * 在给定 session 上执行一次手动压缩。
+ * 压缩后必须重新测量：`compact()` 已经把 agent.state.messages 换成压缩后的消息树，
+ * 继续沿用压缩前那次 provider usage 会让记录里的 after 比实际大一整段历史。
+ */
+async function runSessionCompaction(session: AgentSession, credentials: ModelCredentials, signal?: AbortSignal): Promise<SessionCompactionOutcome> {
+  const started = Date.now()
+  const abort = () => session.abortCompaction()
+  signal?.addEventListener('abort', abort, { once: true })
+  try {
+    const result = await session.compact()
+    const measurement = measureRuntimeContext(session, credentials)
+    return {
+      summary: result.summary,
+      tokensBefore: result.tokensBefore,
+      estimatedTokensAfter: result.estimatedTokensAfter ?? measurement.estimatedTokens,
+      durationMs: Date.now() - started,
+      measurement
+    }
+  } finally {
+    signal?.removeEventListener('abort', abort)
+  }
+}
+
+/**
+ * 没有活跃运行时时的旁路手动压缩：打开已有 session 文件，压完即弃。
+ * 与 promptModelOnce 同属「一次性任务」，不建沙箱、不连 MCP、不挂工具——压缩只需要模型和历史。
+ * 调用方压完必须作废该会话的运行时缓存，否则缓存里的 agent.state 与刚写入的 compaction entry 分叉。
+ */
+export async function compactSessionFile(options: {
+  credentials: ModelCredentials
+  sessionFile: string
+  sessionDir: string
+  agentDir: string
+  cwd: string
+  compaction: RuntimeCompactionSettings
+  signal?: AbortSignal
+  createModelRuntime?: (credentials: ModelCredentials) => Promise<{ runtime: ModelRuntime; model: Model<Api> }>
+}): Promise<SessionCompactionOutcome> {
+  if (!existsSync(options.sessionFile)) throw new Error('会话运行时记录不存在')
+  const { runtime, model } = await (options.createModelRuntime ?? createModelRuntime)(options.credentials)
+  const { session } = await createAgentSession({
+    cwd: options.cwd,
+    agentDir: options.agentDir,
+    settingsManager: createRuntimeSettingsManager(options.cwd, options.agentDir, options.compaction),
+    model,
+    modelRuntime: runtime,
+    sessionManager: SessionManager.open(options.sessionFile, options.sessionDir, options.cwd),
+    tools: [],
+    thinkingLevel: 'off' as never
+  })
+  try {
+    return await runSessionCompaction(session, options.credentials, options.signal)
+  } finally {
+    session.dispose()
+  }
+}
+
 /** 摘要生成与 agent 运行共用的隔离配置：只加载内联 tool-runtime 扩展，不读 pi CLI 的全局扩展/skills/prompts。 */
 export function createDesktopResourceLoader(options: { cwd: string; agentDir: string; settingsManager: SettingsManager; mode?: ConversationMode; toolRuntime?: ToolRuntimeContext | ToolRuntimeContextRef; skillPaths?: string[]; mcpBindings?: McpToolBinding[]; agentContextPrompt?: string; onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void }) {
   const currentToolRuntime = options.toolRuntime && 'current' in options.toolRuntime ? options.toolRuntime.current : options.toolRuntime
@@ -427,6 +562,7 @@ function toolRuntimeContext(options: RuntimeRunOptions): ToolRuntimeContext {
     shellToolName: options.shellToolName,
     bashPath: options.bashPath,
     resolveRuleSet: options.resolveRuleSet,
+    resolveFullAccess: options.resolveFullAccess,
     sessionOverrides: options.sessionOverrides,
     store: options.store,
     emit: options.onEvent,
@@ -454,6 +590,8 @@ export interface PiSessionRuntime {
   toolRuntimeRef: ToolRuntimeContextRef | null
   run(options: RuntimeRunOptions): Promise<void>
   getContextMeasurement(): ContextMeasurement
+  /** 手动压缩当前会话；活跃运行时优先走这条，状态与 session 文件天然一致。 */
+  compact(signal?: AbortSignal): Promise<SessionCompactionOutcome>
   dispose(): Promise<void>
 }
 
@@ -480,10 +618,12 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
   const sessionModel = sessionManager.buildSessionContext().model
   const modelChanged = !sessionModel || sessionModel.provider !== sessionProviderId || sessionModel.modelId !== options.credentials.model_name
   if (modelChanged && sessionManager.getEntries().length) sessionManager.appendModelChange(sessionProviderId, options.credentials.model_name)
-  const settingsManager = createRuntimeSettingsManager(cwd, options.agentDir, options.autoCompaction !== false)
+  const contextWindow = credentialContextWindow(options.credentials)
+  // 会话内压缩的触发点与压缩深度由会话策略决定；没带策略时退回布尔开关（子 agent 走这条）。
+  const settingsManager = createRuntimeSettingsManager(cwd, options.agentDir, runtimeCompactionSettings(options))
   // 超时/重试按当前模型的凭证注入：运行时每轮新建，互不覆盖，云端模型下发同样生效。
   if (options.credentials.timeout || options.credentials.max_retries) {
-    settingsManager.applyOverrides({
+    applyPersistentOverrides(settingsManager, {
       retry: {
         provider: {
           timeoutMs: options.credentials.timeout ? options.credentials.timeout * 1000 : undefined,
@@ -525,6 +665,8 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
   })
   // print 模式：无对话框 UI（ctx.hasUI = false），审批/提问走 IPC 通道
   await session.bindExtensions({ mode: 'print', onError: (error) => console.error('[tool-runtime]', error.extensionPath, error.event, error.error) })
+  // 自动压缩被磁盘 settings.json 悄悄关掉过一次，且没有任何外部迹象；把最终生效值打出来。
+  console.info('[compaction] 生效设置', { ...settingsManager.getCompactionSettings(), contextWindow })
   if (session.sessionFile && session.sessionFile !== options.sessionFile) options.onSessionFile?.(session.sessionFile)
   return {
     modelRuntime: runtime,
@@ -544,6 +686,9 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     },
     getContextMeasurement() {
       return measureRuntimeContext(session, options.credentials)
+    },
+    compact(signal) {
+      return runSessionCompaction(session, options.credentials, signal)
     },
     async dispose() {
       if (!session.isIdle) await session.abort().catch(() => undefined)
@@ -648,6 +793,8 @@ export interface RunOutcome {
   kind: RunOutcomeKind
   text: string
   reason: string
+  /** 结局是上下文被撑满导致的截断；调用方据此判断自动压缩是否该介入而没介入。 */
+  contextPressure?: boolean
 }
 
 /**
@@ -683,7 +830,7 @@ export function classifyRunOutcome(last: unknown, limits: { contextWindow?: numb
     const contextPressure = contextWindow > 0 && remaining <= 4_096 + Math.max(1_024, outputTokens)
     if (contextPressure) {
       const percent = Math.min(100, Math.round(inputTokens / contextWindow * 100))
-      return { kind: 'interrupted', text, reason: `上下文空间不足（约 ${percent}%），输出被提前截断` }
+      return { kind: 'interrupted', text, reason: `上下文空间不足（约 ${percent}%），输出被提前截断`, contextPressure: true }
     }
     const maxTokens = limits.maxTokens || DEFAULT_MAX_TOKENS
     return { kind: 'interrupted', text, reason: `单次输出达到 ${maxTokens} token 上限，内容可能被截断` }
@@ -774,6 +921,9 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
   let sawAgentEnd = false
   let lastAssistantMessage: unknown = null
   let compactionStartedAt: number | null = null
+  // Pi 在「没有模型」「保留区之外无可摘要消息」时会直接 return false，连 compaction_start 都不发。
+  // 长任务现在全靠会话内压缩兜底，这条静默路径必须能被结局判定看见。
+  let sawCompaction = false
   const collectUsage = createModelUsageCollector({
     conversationId: options.conversationId, turnId: options.turnId, runId: options.runId,
     modelId: options.credentials.id, provider: options.credentials.provider, modelName: options.credentials.model_name,
@@ -785,6 +935,7 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
     if (event.type === 'message_end') collectUsage(event.message)
     ensureAborted()
     if (event.type === 'compaction_start') {
+      sawCompaction = true
       compactionStartedAt = Date.now()
       options.onEvent({ type: 'run_phase', phase: 'compacting', detail: event.reason === 'overflow' ? '上下文不足，正在压缩并恢复执行' : '长任务上下文正在自动压缩', status: 'running' })
       return
@@ -795,7 +946,7 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
       if (event.result) {
         const measurement = measureRuntimeContext(session, options.credentials)
         try {
-          options.onCompaction?.({ reason: event.reason, tokensBefore: event.result.tokensBefore, estimatedTokensAfter: event.result.estimatedTokensAfter ?? measurement.estimatedTokens, durationMs, measurement })
+          options.onCompaction?.({ reason: event.reason, summary: event.result.summary, tokensBefore: event.result.tokensBefore, estimatedTokensAfter: event.result.estimatedTokensAfter ?? measurement.estimatedTokens, durationMs, measurement })
         } catch (error) {
           // 压缩已经在 Pi 内生效，桌面统计落库失败不能反过来中止 Agent 恢复。
           console.error('[runtime-compaction] 同步压缩记录失败:', error)
@@ -853,7 +1004,7 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
       : ''
     const prompt = `${basePrompt}${delegationHint}`
     const promptArgs = images.length ? { images } : undefined
-    const limits = { contextWindow: options.credentials.context_window || DEFAULT_CONTEXT_WINDOW, maxTokens: options.credentials.max_tokens || DEFAULT_MAX_TOKENS }
+    const limits = { contextWindow: credentialContextWindow(options.credentials), maxTokens: options.credentials.max_tokens || DEFAULT_MAX_TOKENS }
     const continuationPrompt = '输出令牌上限已到。直接从截断处继续，不要道歉、不要回顾、不要重复已完成内容；把剩余工作拆成更小步骤并持续更新待办。'
     // 空响应自动重试最多 2 次；真正吃满输出预算时自动续写最多 3 次。
     const MAX_EMPTY_RETRIES = options.retryLimits?.maxEmptyRetries ?? 2
@@ -900,6 +1051,12 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
         options.onRetry?.('empty-response')
         options.onEvent({ type: 'run_phase', phase: 'prompting', detail: `模型返回空响应，自动重试（${emptyRetries}/${MAX_EMPTY_RETRIES}）`, status: 'running' })
         continue
+      }
+      // 压缩本该介入却一次都没触发：Pi 那边是静默 return，不留任何事件，只能在这里补出可见信号。
+      if (outcome.contextPressure && runtimeCompactionSettings(options).enabled && !sawCompaction) {
+        console.warn('[compaction] 上下文已满但本轮自动压缩一次都没触发', { runId: options.runId, conversationId: options.conversationId, contextWindow: limits.contextWindow })
+        emitOutcome({ ...outcome, reason: `${outcome.reason}；本轮自动压缩未触发` }, options)
+        return
       }
       emitOutcome(outcome, options)
       return

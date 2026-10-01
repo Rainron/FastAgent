@@ -1,4 +1,4 @@
-import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, AgentRunStatus, RunErrorKind, AgentTaskRecord, AgentTaskStatus, AppSettings, ClientPreferences, ConversationMode, ExecutionSnapshot, McpConnectionSnapshot, MemoryRecord, MemoryScope, MemorySettings, MemoryStatus, MemoryType, RunLimits, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../../shared/types'
+import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, AgentRunStatus, RunErrorKind, AgentTaskRecord, AgentTaskStatus, AppSettings, ClientPreferences, ContextSummary, ConversationMode, ExecutionSnapshot, McpConnectionSnapshot, MemoryRecord, MemoryScope, MemorySettings, MemoryStatus, MemoryType, RunLimits, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../../shared/types'
 import { defaultSandboxSettings } from '../../shared/sandbox'
 import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
 import { clampRecallLimit, DEFAULT_RECALL } from '../agent/memory/memory-rank'
@@ -45,10 +45,13 @@ export const defaultSettings: AppSettings = {
   accentColor: 'green',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',
+  surfaceLevel: 'standard',
+  bodyTextContrast: 'standard',
   sidebarGlass: false,
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,
+  targetRatio: null,
   keepRecentTurns: null,
   shellPreference: 'bash',
   bashPath: '',
@@ -84,6 +87,35 @@ export interface TurnRow {
   status: TurnStatus
   created_at: string
   updated_at: string
+}
+
+export interface SummaryRow {
+  id: string
+  conversation_id: string
+  version: number
+  summary_text: string
+  covered_turn_start: string | null
+  covered_turn_end: string | null
+  input_tokens: number
+  output_tokens: number
+  /** 旧库补列前读出来是 undefined，按既有语义算 turns。 */
+  source?: string | null
+  created_at: string
+}
+
+export function mapSummaryRow(row: SummaryRow): ContextSummary {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    version: row.version,
+    summaryText: row.summary_text,
+    coveredTurnStart: row.covered_turn_start,
+    coveredTurnEnd: row.covered_turn_end,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    source: row.source === 'session' ? 'session' : 'turns',
+    createdAt: row.created_at
+  }
 }
 
 export interface ConversationRow {

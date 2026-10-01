@@ -9,6 +9,14 @@ const strategies: Array<{ value: ContextStrategy; label: string; description: st
   { value: 'disabled', label: '关闭', description: '不自动压缩。接近上限时只显示警告，需要手动执行「立即压缩」。' }
 ]
 
+/** 与主进程 contextTargetRatio 同一组档位；这里只用于输入框的占位提示。 */
+export function strategyTargetRatio(strategy: ContextStrategy) {
+  if (strategy === 'aggressive') return 0.45
+  if (strategy === 'conservative') return 0.68
+  if (strategy === 'disabled') return 1
+  return 0.55
+}
+
 export function ContextSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const active = strategies.find((item) => item.value === settings.contextStrategy) ?? strategies[0]
@@ -37,9 +45,9 @@ export function ContextSettings({ settings, onChange }: { settings: AppSettings;
         <small>上下文使用率达到该百分比时触发压缩，留空则跟随所选策略。</small>
       </label>
       <label>
-        <span>保留最近回合数</span>
-        <input type="number" min={2} max={40} step={1} value={settings.keepRecentTurns ?? ''} placeholder="跟随策略（8）" onChange={(event) => { const value = Number(event.target.value); onChange({ keepRecentTurns: event.target.value === '' || Number.isNaN(value) ? null : Math.max(2, Math.round(value)) }) }} />
-        <small>这些回合始终保留原文，不进入摘要。</small>
+        <span>压缩后目标占比</span>
+        <input type="number" min={10} max={95} step={1} value={settings.targetRatio === null ? '' : Math.round(settings.targetRatio * 100)} placeholder={`跟随策略（${Math.round(strategyTargetRatio(settings.contextStrategy) * 100)}%）`} onChange={(event) => { const value = Number(event.target.value); onChange({ targetRatio: event.target.value === '' || Number.isNaN(value) ? null : Math.min(0.95, Math.max(0.1, value / 100)) }) }} />
+        <small>压缩后期望回落到的上下文使用率；越低保留的原文越少，留空则跟随所选策略。</small>
       </label>
     </div>}
   </section>

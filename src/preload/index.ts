@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput, LocalModelInput, LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -51,6 +51,17 @@ const api: FastAgentApi = {
     hideToTray: (): Promise<boolean> => ipcRenderer.invoke('app:hideToTray'),
     quit: (): Promise<boolean> => ipcRenderer.invoke('app:quit')
   },
+  window: {
+    minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+    toggleMaximize: (): Promise<boolean> => ipcRenderer.invoke('window:toggle-maximize'),
+    close: (): Promise<void> => ipcRenderer.invoke('window:close'),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:is-maximized'),
+    onMaximizedChange: (listener: (maximized: boolean) => void) => {
+      const handler = (_event: unknown, maximized: boolean) => listener(maximized)
+      ipcRenderer.on('window:maximized-changed', handler)
+      return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+    }
+  },
   startup: {
     ready: (): Promise<void> => ipcRenderer.invoke('startup:ready'),
     warnings: (): Promise<StartupWarnings> => ipcRenderer.invoke('startup:warnings'),
@@ -87,10 +98,9 @@ const api: FastAgentApi = {
       ipcRenderer.on('models:changed', handler)
       return () => ipcRenderer.removeListener('models:changed', handler)
     },
-    localCreate: (input: LocalModelInput) => ipcRenderer.invoke('models:localCreate', input),
-    localUpdate: (id: number, input: LocalModelInput) => ipcRenderer.invoke('models:localUpdate', id, input),
-    localDelete: (id: number) => ipcRenderer.invoke('models:localDelete', id),
-    testDialogue: (id: number): Promise<LocalModelTestResult> => ipcRenderer.invoke('models:testDialogue', id)
+    testDialogue: (id: number): Promise<LocalModelTestResult> => ipcRenderer.invoke('models:testDialogue', id),
+    listOverrides: () => ipcRenderer.invoke('models:listOverrides'),
+    setOverride: (provider: string, modelName: string, override) => ipcRenderer.invoke('models:setOverride', provider, modelName, override)
   },
   modelConnections: {
     providers: () => ipcRenderer.invoke('model-connections:providers'),
@@ -191,6 +201,7 @@ const api: FastAgentApi = {
     },
     listStates: () => ipcRenderer.invoke('run-states:list'),
     listActive: () => ipcRenderer.invoke('chat:list-active'),
+    listPendingApprovals: () => ipcRenderer.invoke('chat:list-pending-approvals'),
     saveState: (state) => ipcRenderer.invoke('run-states:save', state),
     markRead: (conversationId: string) => ipcRenderer.invoke('run-states:read', conversationId)
   },
@@ -266,6 +277,7 @@ const api: FastAgentApi = {
     list: (): Promise<ProjectRecord[]> => ipcRenderer.invoke('projects:list'),
     listPage: (query?: PageQuery) => ipcRenderer.invoke('projects:list-page', query ?? {}),
     add: (input: { path: string; name?: string }): Promise<ProjectRecord> => ipcRenderer.invoke('projects:add', input),
+    touch: (id: string): Promise<ProjectRecord | null> => ipcRenderer.invoke('projects:touch', id),
     archive: (id: string): Promise<void> => ipcRenderer.invoke('projects:archive', id),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id)
   },
@@ -328,7 +340,8 @@ const api: FastAgentApi = {
     readExternalEditor: (path: string) => ipcRenderer.invoke('composer:external-edit-read', path)
   },
   quick: {
-    hide: () => ipcRenderer.invoke('quick:hide')
+    hide: () => ipcRenderer.invoke('quick:hide'),
+    setPinned: (pinned: boolean) => ipcRenderer.invoke('quick:setPinned', pinned)
   },
   shell: {
     openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open-path', path),

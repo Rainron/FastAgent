@@ -22,6 +22,9 @@
 .model-connection-models { list-style: none; padding: 0; margin: 0 0 20px; }
 .model-connection-models li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .model-connection-models li > span { min-width: 0; flex: 1; }
+/* 参数面板整宽换行，不参与行内按钮的横向分配 */
+.model-connection-models li > .model-parameter-fields { flex-basis: 100%; margin-top: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.model-connection-vision { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
 .model-login-status, .model-connection-delete { margin: 16px 0; padding: 12px; border-left: 2px solid var(--accent-tech); background: var(--hover); }
 .model-login-url { overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); }
 .model-connections-entry { flex-direction: column; margin: 0; }

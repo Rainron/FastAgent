@@ -16,6 +16,12 @@ export function contextTargetRatio(strategy: ContextStrategy) {
   return 0.55
 }
 
+/** 压缩后目标占比，会话级 targetRatio 优先于策略默认值。与 triggerRatioFor 同形。 */
+export function targetRatioFor(policy: ContextPolicy) {
+  if (typeof policy.targetRatio === 'number') return policy.targetRatio
+  return contextTargetRatio(policy.strategy)
+}
+
 /** 自动压缩的触发占比，会话级 triggerRatio 优先于策略默认值。 */
 export function triggerRatioFor(policy: ContextPolicy) {
   if (typeof policy.triggerRatio === 'number') return policy.triggerRatio
@@ -36,20 +42,44 @@ export function resolvePolicy(settings: AppSettings, stored: ContextPolicy | nul
     strategy: settings.contextStrategy,
     autoSummary: settings.autoSummary,
     triggerRatio: settings.triggerRatio,
+    targetRatio: settings.targetRatio,
     keepRecentTurns: settings.keepRecentTurns,
     inheritGlobal: true
   }
 }
 
-export function contextUsageRatio(state: Pick<ContextState, 'estimatedTokens' | 'contextWindow'>) {
-  if (state.contextWindow <= 0) return 0
-  return state.estimatedTokens / state.contextWindow
+/** Pi 自带的压缩参数默认值，窗口未知时原样沿用，不做猜测。 */
+const PI_DEFAULT_RESERVE_TOKENS = 16_384
+const PI_DEFAULT_KEEP_RECENT_TOKENS = 20_000
+/** 触发点与保留区的下限：再小就会压完立刻又触发。窗口很小时按占比退让，避免两者之和顶穿窗口。 */
+const MIN_RESERVE_TOKENS = 8_192
+const MIN_KEEP_RECENT_TOKENS = 4_096
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), Math.max(min, max))
 }
 
-export function shouldCompact(policy: ContextPolicy, state: Pick<ContextState, 'estimatedTokens' | 'contextWindow'>) {
-  if (policy.strategy === 'disabled') return false
-  if (!policy.autoSummary) return false
-  return contextUsageRatio(state) >= triggerRatioFor(policy)
+/**
+ * 把桌面侧的策略/阈值翻译成 Pi 的会话内压缩参数。
+ * Pi 的判定是 `tokens > contextWindow - reserveTokens`，只认绝对量；
+ * 不做这层换算的话，设置里的触发占比对单个长回合完全不起作用。
+ */
+export function piCompactionSettings(policy: ContextPolicy, contextWindow: number) {
+  const enabled = policy.autoSummary && policy.strategy !== 'disabled'
+  if (!(contextWindow > 0)) {
+    return { enabled, reserveTokens: PI_DEFAULT_RESERVE_TOKENS, keepRecentTokens: PI_DEFAULT_KEEP_RECENT_TOKENS }
+  }
+  const reserveTokens = clamp(
+    Math.round(contextWindow * (1 - triggerRatioFor(policy))),
+    Math.min(MIN_RESERVE_TOKENS, Math.round(contextWindow * 0.1)),
+    Math.round(contextWindow * 0.5)
+  )
+  const keepRecentTokens = clamp(
+    Math.round(contextWindow * targetRatioFor(policy)) - reserveTokens,
+    Math.min(MIN_KEEP_RECENT_TOKENS, Math.round(contextWindow * 0.05)),
+    contextWindow - reserveTokens - Math.round(contextWindow * 0.05)
+  )
+  return { enabled, reserveTokens, keepRecentTokens }
 }
 
 /** 按保留回合数把历史切成可压缩区与必须保留区。 */

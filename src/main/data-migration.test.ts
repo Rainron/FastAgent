@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveAppPaths } from './app-paths'
-import { migrateLegacyData } from './data-migration'
+import { migrateLegacyData, sweepMigrationResidue } from './data-migration'
 
 const roots: string[] = []
 
@@ -64,6 +64,27 @@ describe('legacy data migration', () => {
     expect(first.status).toBe('adopted-current')
     expect(second.status).toBe('not-needed')
     expect(value).toBe('current')
+  })
+
+  it('迁移后不留下临时库的 -shm / -wal 边车', () => {
+    const { paths } = setup()
+    createDatabase(paths.legacyDatabasePath, 'legacy')
+    migrateLegacyData(paths)
+    expect(readdirSync(paths.dataDir).filter((name) => name.includes('.migrating'))).toEqual([])
+  })
+
+  it('sweepMigrationResidue 清掉历史遗留的 .migrating 文件，不动正常文件', () => {
+    const { paths } = setup()
+    mkdirSync(paths.dataDir, { recursive: true })
+    writeFileSync(join(paths.dataDir, 'fastagent.db.abc.migrating-shm'), 'x', 'utf8')
+    writeFileSync(join(paths.dataDir, 'fastagent.db.abc.migrating-wal'), 'x', 'utf8')
+    writeFileSync(join(paths.dataDir, 'fastagent.db.abc.migrating'), 'x', 'utf8')
+    writeFileSync(join(paths.dataDir, 'legacy-migration.json'), '{}', 'utf8')
+
+    expect(sweepMigrationResidue(paths.dataDir).sort()).toEqual([
+      'fastagent.db.abc.migrating', 'fastagent.db.abc.migrating-shm', 'fastagent.db.abc.migrating-wal'
+    ])
+    expect(readdirSync(paths.dataDir)).toEqual(['legacy-migration.json'])
   })
 
   it('没有旧数据时只创建目录', () => {

@@ -60,7 +60,7 @@ interface Harness {
   toolCalls: Array<{ id: string; status: string; permissionResult?: string }>
 }
 
-function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<string, ApprovalDecision>; approve?: ApprovalDecision; failApproval?: boolean; mcpRisk?: ReadonlyMap<string, 'read' | 'write'>; shellToolName?: 'bash' | 'powershell'; planMode?: boolean; store?: LocalStore } = {}): Harness {
+function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<string, ApprovalDecision>; approve?: ApprovalDecision; failApproval?: boolean; mcpRisk?: ReadonlyMap<string, 'read' | 'write'>; shellToolName?: 'bash' | 'powershell'; planMode?: boolean; store?: LocalStore; fullAccess?: boolean } = {}): Harness {
   const workspace = makeWorkspace()
   const harness = {
     cwd: workspace,
@@ -95,6 +95,7 @@ function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<s
     planMode: options.planMode ?? false,
     shellToolName: options.shellToolName ?? 'bash',
     resolveRuleSet: () => options.ruleSet ?? presetRuleSet('ask'),
+    resolveFullAccess: () => options.fullAccess ?? false,
     sessionOverrides: options.overrides ?? new Map(),
     store,
     signal: new AbortController().signal,
@@ -121,29 +122,32 @@ function toolCall(patch: Partial<ToolCallEvent> & { toolName: string; input: Rec
 
 describe('tool runtime extension', () => {
   it('为两种模式提供不同的内置系统提示词', () => {
-    expect(modeSystemPrompt('chat')).toContain('不修改、不创建、不删除任何文件')
+    expect(modeSystemPrompt('chat')).toContain('写入类工具不提供')
     expect(modeSystemPrompt('agent')).toContain('任务执行型智能体')
     expect(modeSystemPrompt('chat')).not.toBe(modeSystemPrompt('agent'))
   })
   it('注册自定义工具与 shell 工具，共两个钩子', () => {
     const harness = createHarness()
     // shell 工具改由扩展注册（而非 pi 内置白名单），才能注入沙箱执行后端。
-    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'bash'])
+    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'bash', 'shell_background', 'shell_background_output', 'shell_background_stop'])
     expect(harness.tools.every((tool) => typeof tool.execute === 'function')).toBe(true)
   })
 
   it('shell 偏好切到 powershell 时注册 powershell 工具', () => {
     const harness = createHarness({ shellToolName: 'powershell' })
-    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'powershell'])
+    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'powershell', 'shell_background', 'shell_background_output', 'shell_background_stop'])
   })
 
-  it('agent 模式注入工具清单说明，chat 模式不注入', () => {
+  it('两种模式都注入工具清单说明，chat 版不含写类工具', () => {
     const agent = toolAvailabilityNote({ mode: 'agent', planMode: false, shellToolName: 'bash' })
     expect(agent).toContain('当前可用工具')
     expect(agent).toContain('edit')
     expect(agent).toContain('bash')
     expect(agent).not.toContain('系统沙箱')
-    expect(toolAvailabilityNote({ mode: 'chat', planMode: false, shellToolName: 'bash' })).toBe('')
+    const chat = toolAvailabilityNote({ mode: 'chat', planMode: false, shellToolName: 'bash' })
+    expect(chat).toContain('当前可用工具')
+    expect(chat).toContain('bash')
+    expect(chat).toContain('切到 Agent 模式')
   })
 
   it('沙箱会话存在时在工具说明里声明隔离状态', () => {
@@ -350,6 +354,14 @@ describe('tool runtime extension', () => {
     // session 决策后豁免：第四次不再弹
     await harness.onToolCall(toolCall({ toolCallId: 'c4', toolName: 'bash', input: { command: 'npm test' } }))
     expect(harness.approvals).toHaveLength(1)
+  })
+
+  it('完全访问档位下重复操作不再触发 doom_loop 审批', async () => {
+    const harness = createHarness({ ruleSet: presetRuleSet('full'), fullAccess: true })
+    for (const id of ['f1', 'f2', 'f3', 'f4']) {
+      expect(await harness.onToolCall(toolCall({ toolCallId: id, toolName: 'bash', input: { command: 'npm test' } }))).toBeUndefined()
+    }
+    expect(harness.approvals).toHaveLength(0)
   })
 
   it('扩展复用时读取当前 run 的动态上下文', async () => {

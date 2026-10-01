@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
-import type { InAppShortcutAction, ShortcutSettings } from '../../shared/types'
-import { COMPOSER_SCOPED_ACTIONS, DEFAULT_IN_APP_BINDINGS, matchKeyboardBinding, matchMouseBinding } from '../shortcuts'
-import { useEventCallback } from '../use-event-callback'
+import type { InAppShortcutAction, ShortcutSettings } from '../../../shared/types'
+import { COMPOSER_SCOPED_ACTIONS, DEFAULT_IN_APP_BINDINGS, matchKeyboardBinding, matchMouseBinding } from '../../shortcuts'
+import { useEventCallback } from '../../use-event-callback'
 
 export interface AppShortcutHandlers {
   newConversation: () => void

@@ -26,6 +26,18 @@ const densities: Array<{ value: NonNullable<AppSettings['uiDensity']>; label: st
   { value: 'compact', label: '紧凑' }
 ]
 
+const surfaceLevels: Array<{ value: NonNullable<AppSettings['surfaceLevel']>; label: string }> = [
+  { value: 'dim', label: '沉稳' },
+  { value: 'standard', label: '标准' },
+  { value: 'bright', label: '明亮' }
+]
+
+const bodyContrasts: Array<{ value: NonNullable<AppSettings['bodyTextContrast']>; label: string }> = [
+  { value: 'soft', label: '柔和' },
+  { value: 'standard', label: '标准' },
+  { value: 'strong', label: '强烈' }
+]
+
 export function AppearanceSettings({ settings, theme, onThemeChange, onChange }: { settings: AppSettings; theme: AppTheme; onThemeChange: (theme: AppTheme) => void; onChange: (patch: Partial<AppSettings>) => void }) {
   return <section className="settings-panel appearance" aria-labelledby="settings-appearance">
     <div className="settings-section-heading"><div><h2 id="settings-appearance">主题</h2><p>主题会同步应用到窗口标题栏，并在重启后保持。</p></div></div>
@@ -46,6 +58,19 @@ export function AppearanceSettings({ settings, theme, onThemeChange, onChange }:
     <div className="settings-row">
       <div><strong>侧栏毛玻璃</strong><span>窗口失焦或移动时透出桌面；性能优先可关闭。</span></div>
       <label className="switch-row"><input type="checkbox" checked={Boolean(settings.sidebarGlass)} onChange={(event) => onChange({ sidebarGlass: event.target.checked })} /><span className="switch-visual" aria-hidden="true" /></label>
+    </div>
+    <div className="settings-section-heading"><div><h2>底色与正文</h2><p>浅色与深色各有一套取值，切主题后按当前主题生效。</p></div></div>
+    <div className="settings-row">
+      <div><strong>底色明度</strong><span>整条底色阶梯一起平移：画布、侧栏、卡片与分隔线。深色下「明亮」即不那么黑。</span></div>
+      <div className="reasoning-segmented settings-segmented" role="group" aria-label="底色明度">
+        {surfaceLevels.map((item) => <button key={item.value} className={settings.surfaceLevel === item.value ? 'active' : ''} onClick={() => onChange({ surfaceLevel: item.value })} aria-pressed={settings.surfaceLevel === item.value}>{item.label}</button>)}
+      </div>
+    </div>
+    <div className="settings-row">
+      <div><strong>正文对比</strong><span>只作用于对话区正文，侧栏与设置页文字不变。深色下越强越亮，浅色下越强越暗。</span></div>
+      <div className="reasoning-segmented settings-segmented" role="group" aria-label="对话正文对比">
+        {bodyContrasts.map((item) => <button key={item.value} className={settings.bodyTextContrast === item.value ? 'active' : ''} onClick={() => onChange({ bodyTextContrast: item.value })} aria-pressed={settings.bodyTextContrast === item.value}>{item.label}</button>)}
+      </div>
     </div>
     <div className="settings-section-heading"><div><h2>排版</h2><p>字号与密度立即生效。</p></div></div>
     <div className="settings-row">

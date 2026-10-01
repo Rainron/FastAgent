@@ -59,7 +59,9 @@ function App() {
     root.dataset.fontSize = settings?.baseFontSize ?? 'medium'
     root.dataset.density = settings?.uiDensity ?? 'comfortable'
     root.dataset.glass = settings?.sidebarGlass ? 'true' : 'false'
-  }, [settings?.accentColor, settings?.baseFontSize, settings?.uiDensity, settings?.sidebarGlass])
+    root.dataset.surfaceLevel = settings?.surfaceLevel ?? 'standard'
+    root.dataset.bodyContrast = settings?.bodyTextContrast ?? 'standard'
+  }, [settings?.accentColor, settings?.baseFontSize, settings?.uiDensity, settings?.sidebarGlass, settings?.surfaceLevel, settings?.bodyTextContrast])
 
   useEffect(() => {
     const root = document.documentElement

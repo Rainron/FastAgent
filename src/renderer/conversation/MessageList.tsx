@@ -8,7 +8,7 @@ import { openExternalLink, useResponseActions } from '../ai-response/response-co
 import { sanitizeLinkHref } from '../ai-response/sanitize-url'
 import { appendAttachments, attachmentsFromClipboard } from '../composer/attachments'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
-import { buildExecutionTrace } from '../execution-trace'
+import { buildExecutionTrace, hasToolAction } from '../execution-trace'
 import { useDismiss } from '../use-dismiss'
 import { useDelayedUnmount } from '../use-delayed-unmount'
 import { MOTION_DURATIONS } from '../motion'
@@ -50,10 +50,12 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
   const todoStatus: TodoRunStatus = activity?.status === 'working' ? 'working' : activity?.status === 'failed' || activity?.status === 'cancelled' || activity?.status === 'interrupted' ? 'failed' : 'done'
   // 回车即显示：不等 thinking 事件，chat/agent 都在提交后立即出现计时卡片。
   const showActivity = Boolean(activity && activityStatus !== 'idle')
-  // 对话模式没有 Agent 那套动作编排，沿用轻量的「分析过程」折叠卡；执行轨迹只给 Agent 模式。
+  // 对话模式没有 Agent 那套动作编排，只思考不调工具时沿用轻量的「分析过程」折叠卡。
   const isChat = turn.runtimeConfig.mode === 'chat'
   // 执行轨迹：从事件流重建动作组与文本段，正文区只渲染从 answerStart 开始的未归档内容。
   const trace = useMemo(() => buildExecutionTrace(activity?.events ?? []), [activity?.events])
+  // chat 调了工具就得看到执行轨迹，否则命令跑了什么完全不可见
+  const lightweightActivity = isChat && !hasToolAction(trace)
   // 中断原因来自事件流里最后一条 interrupted 事件；没有事件（历史库）时回退到通用文案。
   const interruption = turn.status === 'interrupted' ? activity?.events.filter((event) => event.type === 'interrupted').at(-1)?.detail || '执行被意外中断' : null
   const shareText = `${turn.userMessage.text}\n\n${turn.assistantMessage?.text || ''}`.trim()
@@ -85,12 +87,12 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
     {hasContextSources && <ContextSourceBar turnId={turn.id} onNotice={onNotice} />}
     {interruption && <InterruptionBanner turn={turn} todos={todos} detail={interruption} onContinue={() => onContinue(turn)} />}
     {todos && todos.length > 0 && activity && <TodoPanel items={todos} execution={activity.execution} status={todoStatus} startedAt={Date.parse(activity.startedAt || turn.createdAt)} finishedAt={activity.finishedAt ? Date.parse(activity.finishedAt) : null} />}
-    {showActivity && activity && (isChat
+    {showActivity && activity && (lightweightActivity
       ? <AgentActivity turnId={turn.id} events={activity.events} thinking={activity.thinking} status={activityStatus} />
       : <ExecutionTraceView turn={turn} trace={trace} startedAt={Date.parse(activity.startedAt || turn.createdAt)} finishedAt={activity.finishedAt ? Date.parse(activity.finishedAt) : null} kind={activity.status !== 'idle' ? activity.status : 'done'} />)}
     <section className="message assistant">
-      {/* 对话模式不切分正文：没有执行轨迹承接前段说明，正文区必须拿到完整回答。 */}
-      <AssistantMessageView turn={turn} modelName={modelName} textStart={isChat || turn.status !== 'working' ? 0 : trace.answerStart} onRegenerate={() => onRegenerate(turn)} onDelete={() => onDelete(turn.id)} onCopyPair={() => onCopy(shareText)} />
+      {/* 走轻量卡时不切分正文：没有执行轨迹承接前段说明，正文区必须拿到完整回答。 */}
+      <AssistantMessageView turn={turn} modelName={modelName} textStart={lightweightActivity || turn.status !== 'working' ? 0 : trace.answerStart} onRegenerate={() => onRegenerate(turn)} onDelete={() => onDelete(turn.id)} onCopyPair={() => onCopy(shareText)} />
       {turn.artifacts.length > 0 && <div className="turn-results">{turn.artifacts.map((artifact, index) => <button className="result-reference" key={artifact.id || index}><span>{artifact.name || artifact.path || 'Result'}</span><span>打开</span></button>)}</div>}
       {turn.citations.length > 0 && <div className="turn-citations">{turn.citations.map((citation, index) => <CitationLink key={citation.id || index} index={index} citation={citation} />)}</div>}
     </section>

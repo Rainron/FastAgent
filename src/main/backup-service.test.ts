@@ -39,6 +39,28 @@ describe('backup service', () => {
     expect(readdirSync(backupsDir).filter((name) => name.endsWith('.db'))).toHaveLength(1)
   })
 
+  it('轮换过期备份时连带删掉它的 -shm / -wal 边车', () => {
+    const { backupsDir, dataDir } = setup()
+    createDailyBackup({ backupsDir, databasePath: join(dataDir, 'fastagent.db'), now: new Date('2026-08-30T10:00:00Z') })
+    createDailyBackup({ backupsDir, databasePath: join(dataDir, 'fastagent.db'), now: new Date('2026-08-31T10:00:00Z') })
+    writeFileSync(join(backupsDir, 'fastagent-2026-08-30.db-shm'), 'x', 'utf8')
+    writeFileSync(join(backupsDir, 'fastagent-2026-08-30.db-wal'), 'x', 'utf8')
+    // 仍被保留的那份，边车不能动
+    writeFileSync(join(backupsDir, 'fastagent-2026-08-31.db-wal'), 'x', 'utf8')
+
+    const pruned = pruneBackups(backupsDir, 1)
+    expect(pruned.sort()).toEqual(['fastagent-2026-08-30.db', 'fastagent-2026-08-30.db-shm', 'fastagent-2026-08-30.db-wal'])
+    expect(readdirSync(backupsDir).sort()).toEqual(['fastagent-2026-08-31.db', 'fastagent-2026-08-31.db-wal', 'latest-backup-day'])
+  })
+
+  it('主文件已不存在的孤儿边车一并清掉', () => {
+    const { backupsDir, dataDir } = setup()
+    createDailyBackup({ backupsDir, databasePath: join(dataDir, 'fastagent.db'), now: new Date('2026-08-30T10:00:00Z') })
+    writeFileSync(join(backupsDir, 'fastagent-before-activity-strip-2026-09-04.db-shm'), 'x', 'utf8')
+
+    expect(pruneBackups(backupsDir, 14)).toEqual(['fastagent-before-activity-strip-2026-09-04.db-shm'])
+  })
+
   it('同一天重复备份返回同一路径', () => {
     const { backupsDir, dataDir } = setup()
     const first = createDailyBackup({ backupsDir, databasePath: join(dataDir, 'fastagent.db'), now: new Date('2026-08-30T10:00:00Z') })

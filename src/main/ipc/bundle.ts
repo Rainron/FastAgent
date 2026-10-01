@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { createBundleService, BundleExportOptions, BundleImportPlan } from '../bundle/bundle-service'
 import { bundleNeedsPassphrase } from '../bundle/ability-bundle'
-import type { IpcRegistrar } from './hub'
+import type { IpcRegistrar } from '../app-context'
 
 export interface BundleIpcDeps {
   bundles: ReturnType<typeof createBundleService>

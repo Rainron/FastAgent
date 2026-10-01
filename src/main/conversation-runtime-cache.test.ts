@@ -14,6 +14,7 @@ function api() {
     ConversationRuntimeCache: new <T extends { dispose(): void | Promise<void> }>(options?: { capacity?: number; idleMs?: number; now?: () => number }) => {
       get(conversationId: string, signature: string, create: () => Promise<T>): Promise<T>
       getWithStatus(conversationId: string, signature: string, create: () => Promise<T>): Promise<{ value: T; cacheHit: boolean }>
+      peek(conversationId: string): T | null
       invalidate(conversationId: string): Promise<void>
       prune(): Promise<void>
       disposeAll(): Promise<void>
@@ -135,6 +136,32 @@ describe('ConversationRuntimeCache', () => {
     expect(one.dispose).toHaveBeenCalledTimes(1)
     expect(two.dispose).not.toHaveBeenCalled()
     await cache.disposeAll()
+  })
+
+  it('peek 只看不建：无实例返回 null，signature 不匹配也返回现有实例', async () => {
+    const { ConversationRuntimeCache } = api()
+    let now = 0
+    const cache = new ConversationRuntimeCache<Runtime>({ idleMs: 100, now: () => ++now })
+    expect(cache.peek('c1')).toBeNull()
+    const value = runtime('one')
+    await cache.get('c1', 'sig', async () => value)
+    // 手动压缩拿的是「当前活着的那个 session」，与本轮运行配置是否变化无关
+    expect(cache.peek('c1')).toBe(value)
+    expect(value.dispose).not.toHaveBeenCalled()
+    await cache.disposeAll()
+  })
+
+  it('peek 不刷新空闲计时，不影响淘汰', async () => {
+    const { ConversationRuntimeCache } = api()
+    let now = 0
+    const cache = new ConversationRuntimeCache<Runtime>({ idleMs: 100, now: () => now })
+    const value = runtime('one')
+    await cache.get('c1', 'sig', async () => value)
+    now = 90
+    cache.peek('c1')
+    now = 101
+    await cache.prune()
+    expect(value.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('空闲淘汰释放超时实例', async () => {

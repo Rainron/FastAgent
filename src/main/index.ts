@@ -1,113 +1,69 @@
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, shell } from 'electron'
 import { homedir, hostname } from 'node:os'
-import { basename, dirname, extname, join } from 'node:path'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { randomUUID } from 'node:crypto'
-import { createHash } from 'node:crypto'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { ApiClient, ApiError } from './api-client'
 import { extractDialogueReply } from './model-dialogue'
-import { buildConversationHtml, buildConversationMarkdown, exportFormatFromPath, sanitizeFilename } from './conversation-export'
 import { createAbilitiesService } from './abilities-service'
-import { createApprovalBridge, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
+import { settlePendingRequests } from './approval-bridge'
 import { buildEffectiveRules } from './agent/permission/effective-rules'
 import { LocalStore } from './local-store'
 import { ModelConnectionService } from './model-connections'
-import { listLocalModelCatalog } from './model-catalog'
-import { normalizeModelUsage } from './model-usage'
 import { WORKSPACE_NAMESPACE } from './local-store/shared-workspace'
 import { migrateConversationSessions } from './session-layout-migration'
 import { conversationSessionDir as conversationSessionPath, sessionUserSegment } from './session-paths'
-import { persistableEvent } from './turn-activity'
-import type { PiSessionRuntime, RuntimeRunOptions } from './pi-runtime'
-import type { SubAgentResult } from './agent/subagent/subagent-types'
-import type { ScheduledSubAgentTask } from './agent/subagent/subagent-scheduler'
-import { estimateTokens, heuristicSummary, projectCompactedState, resolvePolicy, shouldCompact, splitTurns, turnsAfterCoveredTurn } from './context-manager'
+import type { PiSessionRuntime, SessionCompactionOutcome } from './pi-runtime'
+import { estimateTokens, heuristicSummary, piCompactionSettings, projectCompactedState, resolvePolicy, splitTurns, turnsAfterCoveredTurn } from './context-manager'
 import { ContextMeter, type ContextMeasurement } from './context-meter'
-import { createTray, destroyTray, handleWindowClose, hideToTray, isQuitting, setQuitting, setTrayClosePolicy, showWindow } from './tray'
+import { createTray, destroyTray, handleWindowClose, isQuitting, setQuitting, setTrayClosePolicy, showWindow } from './tray'
 import { startDoubleCtrlHook, type DoubleCtrlHook } from './double-key'
 import { applyGlobalShortcuts, hasGlobalMouseBinding, startGlobalMouseShortcuts, unregisterAllGlobalShortcuts, type GlobalMouseHook, type MouseHookSource } from './global-shortcuts'
 import { acquireUiohook, releaseUiohook } from './hook-lifecycle'
-import { hideQuickWindow, sendQuickWindowEvent, showQuickWindow } from './quick-window'
+import { hideQuickWindow, showQuickWindow } from './quick-window'
 import { createSplashWindow, destroySplashWindow, dismissSplashWindow, showSplashWindow, updateSplashWindow } from './splash-window'
 import { createRevealCoordinator, splashUpdate, SPLASH_SLOW_DELAY_MS, SPLASH_STATUS_DELAY_MS, type RevealCoordinator, type RevealReason } from './startup-progress'
 import { breadcrumb, initLogging, logAppError, logIntegrationError, writeCrashReport, type CrashKind } from './logging/logger'
 import type { CrashProcessMetric, CrashRuntimeInfo } from './logging/crash-report'
 import { appIcon } from './app-icon'
-import { migrateLegacyData } from './data-migration'
-import { moveManagedData } from './data-directory'
+import { migrateLegacyData, sweepMigrationResidue } from './data-migration'
 import { createDailyBackup, pruneBackups } from './backup-service'
-import { defaultDataRoot, resolveAppPaths, writeDataRootLocator, type AppPaths } from './app-paths'
+import { healAgentSettings, resolveAppPaths, writeDataRootLocator, type AppPaths } from './app-paths'
 import { LocalSkillRegistry } from './skill-registry'
 import type { LocalMcpManager, McpToolBinding } from './mcp-manager'
-import { parseMcpImport } from './mcp-import'
-import { emptyConnection, resolveAgentAbilities } from './abilities'
-import { BuiltinCatalogProvider, listCategories, searchPlugins } from './plugins/catalog'
+import { BuiltinCatalogProvider } from './plugins/catalog'
 import { PluginInstaller } from './plugins/installer'
 import { createHubService } from './hub/hub-service'
 import { createBundleService } from './bundle/bundle-service'
-import { registerHubIpc } from './ipc/hub'
-import { registerBundleIpc } from './ipc/bundle'
+import { registerAllIpc } from './ipc'
+import type { MainContext } from './app-context'
 import { redactSecrets } from './secret-redaction'
-import { deleteWorkspaceEntry, listWorkspaceDirectory, normalizeWorkspaceRelative, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from './workspace-files'
-import { archiveAttachments } from './attachment-store'
 import { DEFAULT_ATTACHMENT_POLICY } from '../shared/attachment-policy'
+import { canvasColor } from '../shared/surface-level'
 import { DEFAULT_RUN_LIMITS } from './local-store/row-mappers'
-import { resolveToolPath } from './agent/safety/workspace-guard'
-import { clearRunBaselines } from './agent/tool-runtime'
-import { diffSnapshots, snapshotFile } from './agent/file-ledger'
-import { createArtifactId, inferArtifactType } from '../shared/artifact'
-import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState, watchGitMetadata } from './git'
-import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from './external-editor'
-import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from './agent-init'
-import { buildFaDirectoryContext, mergeAgentContextFiles, readAgentContextFiles } from './agent-context'
-import { restartApplication } from './app-restart'
+import { watchGitMetadata } from './git'
+import { CompactionError } from './compaction-error'
+import { runLocalRun as runLocalRunWith } from './run/local-run'
+import { runQuickChat as runQuickChatWith } from './run/quick-chat'
+import type { RunContext } from './run/context'
+import { registerArtifactForPath as registerArtifact, removeArtifactsUnderPath as removeArtifacts } from './artifact-registry'
+import { environmentChecks as runEnvironmentChecks } from './doctor-environment'
 import { isExternalHttpUrl } from '../renderer/ai-response/sanitize-url'
-import type { Ability, AbilityType, AgentEvent, AppRuntimeInfo, AppSettings, ApprovalDecision, ArtifactQuery, AuthSnapshot, ConversationPageQuery, ConversationTurn, DoctorCheck, GitStatusEntry, GitWorkspaceState, KbEntry, KbSource, KbSourceKind, LocalMcpServerInput, LocalModelInput, LocalModelTestResult, McpAbility, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PermissionPreset, PluginQuery, RendererErrorReport, SandboxSessionInfo, SearchQuery, SearchResponse, SkillAbility, SkillDetail, StartupPhase, StartupWarning, StartupWarnings, WorkspaceSnapshot } from '../shared/types'
-import type { PermissionAction, PermissionRuleSet } from '../shared/permission-rules'
-import type { StoredPermissionProfile } from '../shared/permission-profiles'
-import { findProfile, mergeProfiles, sanitizeOverrides, validateProfileDraft } from '../shared/permission-profiles'
+import type { AppRuntimeInfo, AppSettings, ApprovalDecision, AuthSnapshot, ContextStrategy, KbSource, LocalModelTestResult, ModelCredentials, PermissionPreset, StartupPhase, StartupWarning } from '../shared/types'
+import type { PermissionRuleSet } from '../shared/permission-rules'
+import { findProfile, mergeProfiles } from '../shared/permission-profiles'
+import { DEFAULT_CONTEXT_WINDOW, inferContextWindow, resolveContextWindow } from '../shared/model-context-windows'
+import { applyOverride, overrideKey } from '../shared/model-parameters'
 import { defaultSandboxSettings, normalizeSandboxSettings } from '../shared/sandbox'
-import { normalizePageSize, pageOffset, resolvePage } from '../shared/pagination'
-import { RUN_CONFLICT_MESSAGE } from '../shared/active-runs'
-import { staleRunStates } from './run-state-reconcile'
 import { SandboxManager } from './agent/sandbox/sandbox-manager'
-import { buildSandboxPolicy } from './agent/sandbox/sandbox-policy'
-import { describeSandboxError, SANDBOX_DEGRADED_NOTICE } from './agent/sandbox/sandbox-errors'
-import { describeSession, sandboxBlockedEvent, sandboxDegradedEvent } from './agent/sandbox/sandbox-events'
 import { resolveSandboxPaths, WindowsSandboxProvider } from './agent/sandbox/providers/windows-native/windows-sandbox-provider'
-import { resolveBashPath, resolveShellToolName } from './agent/sandbox/shell-resolver'
 import { installBundledRuntime, prependPathEntries, resolveBundledRuntimeSource, resolveRuntimeInstallDir } from './runtime/bundled-tools'
-import { buildRuntimeReport } from './runtime/runtime-report'
 import type { SandboxSession } from './agent/sandbox/sandbox-types'
 import { ConversationRunCoordinator, ConversationRuntimeCache } from './conversation-runtime-cache'
 import { RunScheduler } from './run-scheduler'
-import { createTokenEventBatcher } from './token-event-batcher'
-import { createExecutionState, reduceExecutionState, syncExecutionSteps, type ExecutionInput } from './agent/execution-state'
-import { projectRunState, resolveTurnWrite } from './agent/run-state'
-import { classifyRunError } from './agent/run-error'
-import { buildResumePrompt, isResumable } from './agent/run-resume'
-import { buildDoctorReport, probeTools } from './doctor'
-import { detectVerificationCommands, readWorkspaceManifests, type VerificationCommand } from './agent/verification'
 import { createLazyModuleLoader } from './lazy-module'
-import { normalizeCustomSubAgents, resolveSubAgentConfig } from './agent/subagent/subagent-config'
-import { parseSubAgentHandoff, truncateSubAgentOutput } from './agent/subagent/subagent-handoff'
-import { forwardSubAgentEvent, isSubAgentTerminalEvent } from './agent/subagent/subagent-events'
-import { extractMemories, recallMemories } from './agent/memory/memory-service'
-import { buildDistillPrompt, parseSkillDraft } from './agent/skill/skill-distiller'
-import { checkSkill } from './agent/skill/skill-check'
-import { parseAllowedTools } from './agent/skill/skill-manifest'
-import { availableToolNames } from './agent/skill/skill-tools'
-import { makeSnippet, runUnifiedSearch } from './search/unified-search'
-import { checkConversationBudget } from './agent/run-budget'
 import { PauseGate } from './agent/pause-gate'
-import { renderDiagnosticsJson } from './diagnostics-export'
-import { buildMemoryQueryPlan, isEmptyQueryPlan } from './agent/memory/memory-query'
-import { renderKbPrompt, withMemoryPrompt } from './agent/memory/memory-prompt'
-import { buildTurnContextSources } from './agent/context-sources'
-import { indexSource, previewSource } from './knowledge/kb-indexer'
-import { DEFAULT_EXCLUDES } from './knowledge/source-scan'
+import { indexSource } from './knowledge/kb-indexer'
 import { DEFAULT_RECALL } from './agent/memory/memory-rank'
 
 const loadPiRuntime = createLazyModuleLoader(() => import('./pi-runtime'))
@@ -115,17 +71,27 @@ const loadMcpRuntime = createLazyModuleLoader(() => import('./mcp-manager'))
 // pdfjs 体量大且只有导入 PDF 时用得上，与运行时模块一样按需加载。
 const loadPdfText = createLazyModuleLoader(() => import('./knowledge/pdf-text'))
 
+/** Artifact 登记的依赖注入点：面板刷新广播只有主窗口知道。 */
+const artifactRegistry = { get store() { return store }, notifyChanged: () => mainWindow?.webContents.send('artifacts:changed') }
+
+function removeArtifactsUnderPath(namespace: string, workspaceId: string, relative: string): boolean {
+  return removeArtifacts(store, namespace, workspaceId, relative)
+}
+
+function registerArtifactForPath(namespace: string, conversationId: string, turnId: string, runId: string, root: string | null, requested: string, source: string | undefined) {
+  registerArtifact(artifactRegistry, namespace, conversationId, turnId, runId, root, requested, source)
+}
+
+function environmentChecks() {
+  return runEnvironmentChecks({ settings, bundledTools, sandboxManager, workspaceRoot, listAbilities: () => abilitiesService.listAbilities() })
+}
+
 /** 索引一个知识来源；PDF 解析在这里注入，kb-indexer 本身不依赖 pdfjs。 */
 async function runKbIndex(namespace: string, source: KbSource) {
   return indexSource(store.knowledgeBase, namespace, source, {
     extractPdfPages: async (data) => (await loadPdfText()).extractPdfPages(data)
   })
 }
-
-type AbilityUsageSink = (type: 'skill' | 'mcp', id: string) => void
-
-/** 当前这一轮的能力使用记录入口。跨轮复用的运行时扩展只认这个转发点，见 runLocalRun。 */
-let abilityUsageSink: AbilityUsageSink | null = null
 
 let mainWindow: BrowserWindow | null = null
 let appPaths: AppPaths
@@ -222,6 +188,11 @@ function buildRuleSet(namespace: string, permission: PermissionPreset | null, al
   return merged
 }
 
+/** 档位是否落在完全访问基线上；自定义档位以它继承的 base 为准。 */
+function isFullAccessPermission(namespace: string, permission: PermissionPreset | null): boolean {
+  return findProfile(mergeProfiles(store.listPermissionProfiles(namespace)), permission).base === 'full'
+}
+
 // 能力读取与 MCP 状态记录集中在 abilities-service；store / skillRegistry 启动后才就绪，用取值函数传入。
 const abilitiesService = createAbilitiesService({ store: () => store, skillRegistry: () => skillRegistry, catalogProvider })
 const { mcpRuntimeSecrets, listAbilities, requireAbility, recordMcpStatus, backfillAbilityMeta } = abilitiesService
@@ -243,6 +214,11 @@ function scheduleDeferredStartupTasks() {
         pruneBackups(appPaths.backupsDir, 14)
       } catch (error) {
         logStartup('自动备份失败', error)
+      }
+      try {
+        sweepMigrationResidue(appPaths.dataDir)
+      } catch (error) {
+        logStartup('清理迁移残留失败', error)
       }
       void sandboxManager.probe().catch((error) => logStartup('沙箱能力探测失败', error))
     }, 0)
@@ -274,10 +250,13 @@ const defaultSettings: AppSettings = {
   accentColor: 'green',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',
+  surfaceLevel: 'standard',
+  bodyTextContrast: 'standard',
   sidebarGlass: false,
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,
+  targetRatio: null,
   keepRecentTurns: null,
   shellPreference: 'bash',
   bashPath: '',
@@ -572,14 +551,12 @@ function createWindow() {
     minHeight: 640,
     title: 'FastAgent',
     icon: appIcon(),
+    // 不挂 titleBarOverlay：系统画的按钮跟不上应用配色和圆角，窗口控制按钮改由渲染进程自绘。
     titleBarStyle: 'hidden',
     // 先隐藏，等渲染进程给出首帧再显示；否则重启瞬间会看到一块空白窗口。
     show: false,
-    // 不给底色的话窗口首帧是 Electron 默认的白，深色主题下必然闪一下。
-    backgroundColor: dark ? '#161513' : '#FAF8F3',
-    titleBarOverlay: dark
-      ? { color: '#161513', symbolColor: '#EDEAE2', height: 44 }
-      : { color: '#FAF8F3', symbolColor: '#22201C', height: 44 },
+    // 不给底色的话窗口首帧是 Electron 默认的白，深色主题下必然闪一下。深色底色档位可配，跟着设置走。
+    backgroundColor: canvasColor(dark ? 'dark' : 'light', settings?.surfaceLevel),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       // 主题必须在首帧之前定死，走启动参数是唯一比渲染进程 IPC 更早的通道。
@@ -627,6 +604,10 @@ function createWindow() {
   mainWindow.on('unresponsive', () => { if (shouldReportProcessCrash()) reportCrash('unresponsive', null) })
   mainWindow.on('close', (event) => handleWindowClose(event, mainWindow as BrowserWindow))
   mainWindow.on('closed', () => { mainWindow = null })
+  // 自绘的最大化按钮要换图标，状态只能由主进程告知：双击标题栏、系统快捷键也会改这个状态。
+  const sendMaximized = () => mainWindow?.webContents.send('window:maximized-changed', mainWindow.isMaximized())
+  mainWindow.on('maximize', sendMaximized)
+  mainWindow.on('unmaximize', sendMaximized)
   // AI 输出里的链接一律不在应用内开窗：http/https 交给系统浏览器，其余协议直接丢弃。
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isExternalHttpUrl(url)) void shell.openExternal(url)
@@ -691,8 +672,6 @@ function applySettings(next: AppSettings) {
   syncGlobalShortcuts(previous)
   app.setLoginItemSettings({ openAtLogin: settings.startAtLogin, openAsHidden: !settings.showOnStartup })
   if (mainWindow) {
-    const dark = resolvedDarkMode()
-    mainWindow.setTitleBarOverlay({ color: dark ? '#181817' : '#FAFAF8', symbolColor: dark ? '#F1F1ED' : '#20201E', height: 44 })
     mainWindow.webContents.send('settings:changed', settings)
   }
 }
@@ -749,10 +728,23 @@ function migrateSessionLayout(namespace: string, userSegmentOverride?: string) {
 /** 无状态，measure 是纯计算，不必每次调用都新建。 */
 const contextMeter = new ContextMeter()
 
+/**
+ * 最近一次基于 Pi session 的上下文测量，按会话缓存。
+ *
+ * Pi 的会话内压缩不产生 app 侧摘要边界（coveredTurnEnd 只能是 null），
+ * 所以 refreshContext 的整份估算会把已经被 Pi 压掉的历史重新算一遍，数字虚高。
+ * 只要还留着 Pi 那边算出来的测量值，就不要退回按回合历史重估。
+ */
+const latestRuntimeMeasurements = new Map<string, ContextMeasurement>()
+
+function rememberRuntimeMeasurement(namespace: string, conversationId: string, measurement: ContextMeasurement | undefined) {
+  if (measurement) latestRuntimeMeasurements.set(conversationRuntimeKey(namespace, conversationId), measurement)
+}
+
 function contextWindowFor(namespace: string, conversationId: string, modelIdOverride?: number | null) {
   // 只要末轮绑定的模型，不必把整段历史读出来。
   const modelId = modelIdOverride ?? store.latestTurnRuntime(namespace, conversationId)?.runtimeConfig.modelId
-  return (modelId !== null && modelId !== undefined ? modelContextWindows.get(modelId) : undefined) ?? store.getContextState(namespace, conversationId)?.contextWindow ?? 128_000
+  return (modelId !== null && modelId !== undefined ? modelContextWindows.get(modelId) : undefined) ?? store.getContextState(namespace, conversationId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
 }
 
 /**
@@ -764,6 +756,9 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
   const credentials = modelId === null ? null : (() => { try { return resolveModelCredentials(modelId) } catch { return null } })()
   const identity = credentials ? modelRuntimeIdentity(credentials) : null
   const modelRuntime = identity ? store.getModelRuntime(namespace, conversationId, identity.provider, identity.modelId) : null
+  // 窗口按「显式配置 > 按模型名推断」定；两者都没有才让位给运行时快照里的旧值，
+  // 否则每个模型都会显示同一个默认 128k，用户看不出换模型后余量的差别。
+  const configuredWindow = credentials ? credentials.context_window || inferContextWindow(credentials.model_name) : null
   const state = modelRuntime ? {
     conversationId, contextWindow: modelRuntime.context_window, estimatedTokens: modelRuntime.estimated_tokens,
     messageTokens: modelRuntime.message_tokens, toolTokens: modelRuntime.tool_tokens, systemTokens: modelRuntime.system_tokens,
@@ -775,7 +770,10 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
   // 活跃 Pi session 的真实消息分类优先；无运行时快照时才回落到应用回合估算。
   // 已持久化 provider 总量仅用于校准回落分类，避免界面刷新时把真实总量覆盖掉。
   const usageTokens = modelRuntime?.counting_method === 'provider-usage' ? modelRuntime.estimated_tokens : undefined
-  const persistedMeasurement: ContextMeasurement | null = modelRuntime?.counting_method === 'provider-usage' ? {
+  // 有 session 时那份快照就是最后一次照着 Pi 消息树算出来的结果（压缩后是 fallback-estimate），
+  // 必须优先于回合估算：Pi 的会话内压缩不留应用回合边界，重估会把已经压掉的历史重新算回来。
+  const hasSession = Boolean(store.getConversationSessionFile(namespace, conversationId))
+  const persistedMeasurement: ContextMeasurement | null = modelRuntime && (modelRuntime.counting_method === 'provider-usage' || hasSession) ? {
     modelId: identity?.modelId ?? -1,
     provider: identity?.provider ?? 'unknown',
     contextWindow: modelRuntime.context_window,
@@ -785,7 +783,7 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
     systemTokens: modelRuntime.system_tokens,
     summaryTokens: modelRuntime.summary_tokens,
     attachmentTokens: modelRuntime.attachment_tokens,
-    countingMethod: 'provider-usage'
+    countingMethod: modelRuntime.counting_method
   } : null
   // 整份估算要遍历全部历史回合与工具事件，是这里最贵的一步；只有真的没有现成测量值时才做。
   const estimate = () => {
@@ -796,7 +794,7 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
     return contextMeter.measure({
       modelId: modelId ?? -1,
       provider: credentials?.provider ?? 'unknown',
-      contextWindow: credentials?.context_window || (contextWindow ?? contextWindowFor(namespace, conversationId)),
+      contextWindow: configuredWindow ?? contextWindow ?? contextWindowFor(namespace, conversationId),
       turns: activeTurns.map((turn) => ({
         user: turn.userMessage.text,
         assistant: turn.assistantMessage?.text,
@@ -809,10 +807,13 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
       usage: usageTokens === undefined ? undefined : { inputTokens: usageTokens }
     })
   }
-  const measured = runtimeMeasurement ?? persistedMeasurement ?? estimate()
+  // 模型不一致时这份缓存属于上一个 session，不能拿来充当当前模型的用量。
+  const remembered = latestRuntimeMeasurements.get(conversationRuntimeKey(namespace, conversationId))
+  const runtimeFallback = remembered && remembered.modelId === modelId ? remembered : null
+  const measured = runtimeMeasurement ?? persistedMeasurement ?? runtimeFallback ?? estimate()
   // 窗口大小以当前模型配置为准：切换模型或改过模型设置后，运行时快照里的旧窗口不能继续显示。
   const next = {
-    conversationId, contextWindow: credentials?.context_window || measured.contextWindow, estimatedTokens: measured.estimatedTokens,
+    conversationId, contextWindow: configuredWindow ?? measured.contextWindow, estimatedTokens: measured.estimatedTokens,
     messageTokens: measured.messageTokens, toolTokens: measured.toolTokens, systemTokens: measured.systemTokens,
     summaryTokens: measured.summaryTokens, attachmentTokens: measured.attachmentTokens, modelId: modelId === -1 ? null : modelId,
     provider: measured.provider, countingMethod: measured.countingMethod,
@@ -823,21 +824,128 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
   return store.upsertContextState(namespace, next)
 }
 
+/**
+ * 重开 session 时当提示词种子的摘要，只认按回合切出来的那种。
+ * Pi 会话内摘要之外还留着保留区消息，拿它当种子会把那部分上下文丢掉。
+ */
 function latestSummaryText(namespace: string, conversationId: string) {
-  const summaryId = store.getContextState(namespace, conversationId)?.latestSummaryId
-  return summaryId ? store.getContextSummary(namespace, summaryId)?.summaryText ?? null : null
+  return store.latestTurnSummary(namespace, conversationId)?.summaryText ?? null
 }
 
 const COMPACTION_TIMEOUT_MS = 60_000
 
-class CompactionError extends Error {
-  constructor(public readonly code: 'COMPACTION_TIMEOUT' | 'COMPACTION_MODEL_ERROR' | 'COMPACTION_CANCELLED', message: string) {
-    super(message)
-    this.name = code
+/**
+ * Pi 会话内压缩的统一落库口径：自动（threshold/overflow）与手动都走这里。
+ *
+ * 摘要以 source='session' 存档，只供展示与审计，**不更新 latestSummaryId**——
+ * 那个字段是「重开 session 时拿来当提示词种子的摘要」，而 Pi 摘要之外还有保留区消息，
+ * 拿它当种子会把那部分上下文丢掉。覆盖回合同理留空：Pi 按消息切，映射不到应用回合。
+ */
+function recordSessionCompaction(namespace: string, conversationId: string, input: {
+  triggerReason: string
+  strategy: ContextStrategy
+  outcome: SessionCompactionOutcome
+  modelId: number | null
+}) {
+  const { outcome } = input
+  const summary = store.createContextSummary(namespace, {
+    conversationId,
+    version: (store.listContextSummaries(namespace, conversationId).at(-1)?.version ?? 0) + 1,
+    summaryText: outcome.summary,
+    coveredTurnStart: null,
+    coveredTurnEnd: null,
+    inputTokens: outcome.tokensBefore,
+    outputTokens: estimateTokens(outcome.summary),
+    source: 'session'
+  })
+  // 先落压缩记录再刷新上下文：refreshContext 的 compactionCount 取自 COUNT(*)，
+  // 顺序反了这一次压缩要等到下一次刷新才被算进去。
+  const compaction = store.recordCompaction(namespace, {
+    conversationId,
+    strategy: input.strategy,
+    triggerReason: input.triggerReason,
+    beforeTokens: outcome.tokensBefore,
+    afterTokens: outcome.estimatedTokensAfter,
+    coveredTurnStart: null,
+    coveredTurnEnd: null,
+    summaryId: summary.id,
+    durationMs: outcome.durationMs
+  })
+  rememberRuntimeMeasurement(namespace, conversationId, outcome.measurement)
+  const context = refreshContext(namespace, conversationId, outcome.measurement.contextWindow, input.modelId, outcome.measurement)
+  return { context, summary, compaction }
+}
+
+/** Pi 在没有可压缩内容时抛的是英文提示，对用户来说等同于「不需要压缩」，按 null 处理。 */
+function isNothingToCompact(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  return /Already compacted|Nothing to compact/i.test(message)
+}
+
+/**
+ * 手动压缩当前会话的 Pi session。
+ * 活跃运行时优先：另开一份去压会让缓存里的 agent.state 与刚写入的 compaction entry 分叉。
+ */
+async function compactConversationSession(namespace: string, conversationId: string, sessionFile: string, credentials: ModelCredentials) {
+  const started = Date.now()
+  const compactionKey = `${namespace}:${conversationId}`
+  const runtimeKey = conversationRuntimeKey(namespace, conversationId)
+  const controller = new AbortController()
+  let timedOut = false
+  activeCompactions.set(compactionKey, controller)
+  const policy = resolvePolicy(settings, store.getContextPolicy(namespace, conversationId), conversationId)
+  const contextWindow = credentials.context_window ?? contextWindowFor(namespace, conversationId, credentials.id)
+  const sendPhase = (progress: number, detail: string) => mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress, modelId: credentials.id, detail, timestamp: Date.now(), elapsedMs: Date.now() - started })
+  sendPhase(20, '正在压缩会话上下文')
+  const timer = setTimeout(() => { timedOut = true; controller.abort() }, COMPACTION_TIMEOUT_MS)
+  try {
+    const live = conversationRuntimeCache.peek(runtimeKey)
+    let outcome: SessionCompactionOutcome
+    if (live) {
+      outcome = await live.pi.compact(controller.signal)
+    } else {
+      const { compactSessionFile } = await loadPiRuntime()
+      outcome = await compactSessionFile({
+        credentials,
+        sessionFile,
+        sessionDir: conversationSessionDir(namespace, conversationId),
+        agentDir: appPaths.agentDir,
+        cwd: store.getConversationRoot(namespace, conversationId) ?? appPaths.quickWorkspaceDir,
+        compaction: piCompactionSettings(policy, contextWindow),
+        signal: controller.signal,
+        createModelRuntime: createModelRuntimeForCredentials
+      })
+      // 旁路压缩改的是 session 文件，缓存里若之后又建起运行时必须重新读盘。
+      await conversationRuntimeCache.invalidate(runtimeKey)
+    }
+    const recorded = recordSessionCompaction(namespace, conversationId, { triggerReason: 'manual', strategy: policy.strategy, outcome, modelId: credentials.id })
+    mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'compactionCompleted', phase: 'compacting', status: 'completed', progress: 100, modelId: credentials.id, context: recorded.context, compaction: recorded.compaction, detail: '上下文压缩完成', timestamp: Date.now(), elapsedMs: Date.now() - started })
+    return recorded
+  } catch (error) {
+    if (isNothingToCompact(error)) return null
+    if (controller.signal.aborted) throw new CompactionError(timedOut ? 'COMPACTION_TIMEOUT' : 'COMPACTION_CANCELLED', timedOut ? '压缩模型响应超时' : '压缩已取消')
+    throw new CompactionError('COMPACTION_MODEL_ERROR', error instanceof Error ? error.message : '压缩模型调用失败')
+  } finally {
+    clearTimeout(timer)
+    activeCompactions.delete(compactionKey)
   }
 }
 
+/**
+ * 压缩入口。有 Pi session 就交给 Pi——它才是真正送进模型的上下文；
+ * 跨 provider 换模型必须重开 session，只有那条路径（以及从没跑过 Agent、压根没有 session 的会话）
+ * 才退回按应用回合切摘要。
+ */
 async function compactConversation(namespace: string, conversationId: string, reason = 'manual', credentials?: ModelCredentials | null) {
+  const sessionFile = store.getConversationSessionFile(namespace, conversationId)
+  if (reason !== 'model-switch' && credentials && sessionFile && existsSync(sessionFile)) {
+    return compactConversationSession(namespace, conversationId, sessionFile, credentials)
+  }
+  return compactConversationTurns(namespace, conversationId, reason, credentials)
+}
+
+/** 按应用回合切摘要并作废 session：只服务跨 provider 换模型与无 session 的会话。 */
+async function compactConversationTurns(namespace: string, conversationId: string, reason = 'manual', credentials?: ModelCredentials | null) {
   const started = Date.now()
   const compactionKey = `${namespace}:${conversationId}`
   const controller = new AbortController()
@@ -877,7 +985,7 @@ async function compactConversation(namespace: string, conversationId: string, re
   }
   activeCompactions.delete(compactionKey)
   if (controller.signal.aborted) throw new CompactionError(timedOut ? 'COMPACTION_TIMEOUT' : 'COMPACTION_CANCELLED', timedOut ? '压缩模型响应超时' : '压缩已取消')
-  const summary = store.createContextSummary(namespace, { conversationId, version: (store.listContextSummaries(namespace, conversationId).at(-1)?.version ?? 0) + 1, summaryText, coveredTurnStart: compressible[0]?.id ?? null, coveredTurnEnd: compressible.at(-1)?.id ?? null, inputTokens: before.estimatedTokens, outputTokens: estimateTokens(summaryText) })
+  const summary = store.createContextSummary(namespace, { conversationId, version: (store.listContextSummaries(namespace, conversationId).at(-1)?.version ?? 0) + 1, summaryText, coveredTurnStart: compressible[0]?.id ?? null, coveredTurnEnd: compressible.at(-1)?.id ?? null, inputTokens: before.estimatedTokens, outputTokens: estimateTokens(summaryText), source: 'turns' })
   const projected = projectCompactedState(before, policy.strategy, summaryText)
   const after = store.upsertContextState(namespace, { ...projected, compactionCount: before.compactionCount + 1, latestSummaryId: summary.id, updatedAt: new Date().toISOString() })
   if (credentials) {
@@ -887,6 +995,8 @@ async function compactConversation(namespace: string, conversationId: string, re
   const compaction = store.recordCompaction(namespace, { conversationId, strategy: policy.strategy, triggerReason: reason, beforeTokens: before.estimatedTokens, afterTokens: after.estimatedTokens, coveredTurnStart: summary.coveredTurnStart, coveredTurnEnd: summary.coveredTurnEnd, summaryId: summary.id, durationMs: Date.now() - started })
   // 摘要改变了请求上下文，作废该会话的 session，下一轮以摘要重开。
   store.setConversationSessionFile(namespace, conversationId, '')
+  // session 已作废，上一段 Pi 会话的测量值不再代表下一轮的上下文。
+  latestRuntimeMeasurements.delete(conversationRuntimeKey(namespace, conversationId))
   await conversationRuntimeCache.invalidate(conversationRuntimeKey(namespace, conversationId))
   if (reason === 'manual') mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'compactionCompleted', phase: 'compacting', status: 'completed', progress: 100, modelId: credentials?.id ?? null, context: after, compaction, detail: '上下文压缩完成', timestamp: Date.now(), elapsedMs: Date.now() - started })
   return { context: after, summary, compaction }
@@ -896,10 +1006,24 @@ async function compactConversation(namespace: string, conversationId: string, re
 const modelCredentialCache = new Map<number, ModelCredentials>()
 
 function cacheModelCredentials(credentials: ModelCredentials[]) {
-  for (const credential of credentials) {
+  // 本地覆盖必须在入缓存前套上：窗口缓存与运行时都从这份缓存取，
+  // 在取用处再套会漏掉 modelContextWindows 这条路径。
+  const overrides = store.listModelOverrides()
+  for (const raw of credentials) {
+    const credential = applyOverride(raw, overrides.get(overrideKey(raw.provider, raw.model_name)))
     modelCredentialCache.set(credential.id, credential)
-    if (credential.context_window) modelContextWindows.set(credential.id, credential.context_window)
+    modelContextWindows.set(credential.id, resolveContextWindow(credential.context_window, credential.model_name))
   }
+}
+
+/**
+ * 覆盖改动后作废凭证缓存。不清的话要重新登录才生效——用户改完看不到任何变化，
+ * 只会以为没保存。
+ */
+function invalidateModelCredentialCache() {
+  modelCredentialCache.clear()
+  modelContextWindows.clear()
+  broadcastModelsChanged()
 }
 
 /** 模型调用直连 provider，凭证只从登录时下发的本地副本取，不再逐轮请求后端。 */
@@ -908,7 +1032,7 @@ function resolveModelCredentials(modelId: number): ModelCredentials {
   if (modelId < 0) {
     const stored = store.modelConnections().runtimeConfig(-modelId) ?? store.getLocalModelRuntimeConfig(-modelId)
     if (!stored) throw new Error('本地模型不存在或已被删除')
-    if (stored.context_window) modelContextWindows.set(modelId, stored.context_window)
+    modelContextWindows.set(modelId, resolveContextWindow(stored.context_window, stored.model_name))
     return { id: modelId, ...stored }
   }
   const cached = modelCredentialCache.get(modelId)
@@ -926,11 +1050,14 @@ function resolveModelCredentials(modelId: number): ModelCredentials {
 }
 
 async function createModelRuntimeForCredentials(credentials: ModelCredentials) {
+  const { withDeclaredVision, createModelRuntime } = await loadPiRuntime()
+  // 账号连接的模型定义直接取自 pi 目录，不经 modelDefinition，多模态标记必须在这里补齐，
+  // 否则连接设置里勾了「多模态」对账号登录的模型完全不生效。
   if (credentials.authMode === 'oauth' && credentials.connectionId) {
-    return modelConnectionService.createRuntime(credentials.connectionId, credentials.model_name)
+    const resolved = await modelConnectionService.createRuntime(credentials.connectionId, credentials.model_name)
+    return { ...resolved, model: withDeclaredVision(resolved.model, credentials) }
   }
-  const runtime = await loadPiRuntime()
-  return runtime.createModelRuntime(credentials)
+  return createModelRuntime(credentials)
 }
 
 /** 所有后端客户端都从这里出，保证每一路请求失败都会落进 integration 日志。 */
@@ -1097,6 +1224,81 @@ function stopActiveWork() {
 }
 
 /**
+ * 登录成功后一次性落定会话态。client / backendUrl / userId / refreshToken 四个模块级单例
+ * 必须一起改，写操作收在这里，IPC 层只调用，不直接持有它们。
+ */
+async function performLogin(input: { backendUrl: string; username: string; password: string; captchaId: string; captchaAngle: number; remember: boolean }) {
+  broadcastAuth({ state: 'authenticating', user: null, backendUrl: input.backendUrl })
+  try {
+    const nextClient = createApiClient(input.backendUrl)
+    const result = await nextClient.login({ ...input, deviceLabel: `FastAgent · ${hostname()}` })
+    nextClient.setAccessToken(result.access_token)
+    client = nextClient
+    const normalizedUrl = input.backendUrl.replace(/\/$/, '')
+    const nextUserId = String(result.user.id)
+    backendUrl = normalizedUrl
+    userId = nextUserId
+    refreshToken = result.refresh_token
+    enableAutomaticRefresh(nextClient)
+    store.saveAccount({ backendUrl: normalizedUrl, userId: nextUserId, refreshToken, username: result.user.username })
+    migrateSessionLayout(WORKSPACE_NAMESPACE, sessionUserSegment(LocalStore.namespace(normalizedUrl, nextUserId), result.user.username))
+    // 与 restoreSession 同理：登录进来的账户也可能留着上次异常退出的运行。
+    // 已在跑的运行必须排除，否则这次登录会把当前任务标成中断。
+    store.markInterruptedAgentRuns(WORKSPACE_NAMESPACE, [...activeRuns.keys()])
+    const snapshot = { state: 'ready' as const, user: result.user, backendUrl }
+    broadcastAuth(snapshot)
+    return snapshot
+  } catch (error) {
+    broadcastAuth({ state: 'signed_out', user: null, backendUrl: input.backendUrl })
+    throw error
+  }
+}
+
+async function performLogout() {
+  try { if (client && refreshToken) await client.logout(refreshToken) } catch { /* 退出必须可用 */ }
+  await lockAccount('signed_out')
+  return authState
+}
+
+/** 设置写入的唯一入口：落库、刷新模块级快照、再跑副作用（主题、开机自启、全局快捷键等）。 */
+function patchSettings(patch: Partial<AppSettings>): AppSettings {
+  settings = store.updateSettings({ ...settings, ...patch })
+  applySettings(settings)
+  return settings
+}
+
+/** 数据目录迁移失败后的回滚：库已经 close 过，必须重开，否则后续查询全打在已关闭的句柄上。 */
+function reopenStore() {
+  store = new LocalStore(appPaths.databasePath)
+}
+
+/** 工作区根切换：赋值与 .git 监听重建必须同步，漏掉其一会让界面上的 Git 状态停在上一个项目。 */
+function setWorkspaceRoot(path: string | null): string | null {
+  workspaceRoot = path || null
+  setGitWatchRoot(workspaceRoot)
+  return workspaceRoot
+}
+
+async function pickWorkspaceRoot(): Promise<string | null> {
+  // 传父窗口，否则无边框窗口下选择框可能弹到主窗口后面，看着像「点了没反应」。
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] })
+    : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+  // 取消不应该清掉已经打开的工作区。
+  if (result.canceled) return null
+  return setWorkspaceRoot(result.filePaths[0] ?? workspaceRoot)
+}
+
+/**
+ * app:reload 的实际动作。webContents.reload() 沿用当前 URL，页面此前若已加载失败或崩到错误页，
+ * 重载只是把失败态原样再放一遍；改走 loadRenderer 回到规范入口并放开重试名额。
+ */
+function reloadRenderer() {
+  rendererRetried = false
+  loadRenderer()
+}
+
+/**
  * 所有 IPC 处理统一记面包屑、失败落盘。
  * 错误仍原样抛回渲染进程，界面上的提示行为完全不变——这里只是补一条磁盘记录，
  * 在此之前这类错误只经 IPC 回传成一句提示，事后什么都查不到。
@@ -1116,1944 +1318,122 @@ function handleIpc<Result>(channel: string, listener: (event: Electron.IpcMainIn
   })
 }
 
+/**
+ * IPC 层看到的主进程状态。可变单例一律用 getter：它们在 app.whenReady 之后才赋值，
+ * 而 IPC 在此之前就注册完了，按值传会永久捕获 undefined。
+ */
+const mainContext: MainContext = {
+  get store() { return store },
+  get settings() { return settings },
+  get client() { return client },
+  get mainWindow() { return mainWindow },
+  get workspaceRoot() { return workspaceRoot },
+  get appPaths() { return appPaths },
+  get skillRegistry() { return skillRegistry },
+  get modelConnectionService() { return modelConnectionService },
+  get pluginInstaller() { return pluginInstaller },
+  get sandboxManager() { return sandboxManager },
+  get bundledTools() { return bundledTools },
+  get authState() { return authState },
+  get backendUrl() { return backendUrl },
+  get userId() { return userId },
+  get revealCoordinator() { return revealCoordinator },
+
+  catalogProvider,
+  hubService,
+  bundleService,
+  listAbilities,
+  requireAbility,
+  recordMcpStatus,
+  mcpRuntimeSecrets,
+
+  activeRuns,
+  activeRunCancels,
+  runPauseGates,
+  activeCompactions,
+  conversationRuns,
+  conversationRuntimeCache,
+  runScheduler,
+  runPermissionOverrides,
+  modelContextWindows,
+  startupWarnings,
+
+  loadPiRuntime,
+  loadMcpRuntime,
+
+  accountNamespace,
+  appRuntimeInfo,
+  applyBundledRuntime,
+  broadcastAuth,
+  broadcastGitChanged,
+  broadcastModelsChanged,
+  cacheModelCredentials,
+  compactConversation,
+  confirmInterruptRuns,
+  contextWindowFor,
+  invalidateModelCredentialCache,
+  conversationRuntimeKey,
+  conversationSessionDir,
+  createApiClient,
+  createModelRuntimeForCredentials,
+  credentialsForConversation,
+  environmentChecks,
+  hasActiveRun,
+  liveRunConversationIds,
+  lockAccount,
+  patchSettings,
+  performLogin,
+  performLogout,
+  pickWorkspaceRoot,
+  preferenceNamespace,
+  refreshContext,
+  reloadRenderer,
+  removeArtifactsUnderPath,
+  reopenStore,
+  reportCrash,
+  requireClient,
+  requireNamespace,
+  resolveModelCredentials,
+  runKbIndex,
+  runLocalRun,
+  runQuickChat,
+  runtimeInstallDir,
+  setWorkspaceRoot,
+  stopActiveWork,
+  testModelDialogue
+}
+
+/** 运行编排层的上下文：MainContext 之外再补几项只有 run 用的协作方。 */
+// 必须走原型链继承而不是 `{ ...mainContext }`：展开会当场触发全部 getter，
+// 把此刻还是 undefined 的 store / settings 永久固化成快照。
+const runContext: RunContext = Object.assign(Object.create(mainContext) as MainContext, {
+  contextMeter,
+  buildRuleSet,
+  isFullAccessPermission,
+  latestSummaryText,
+  modelRuntimeIdentity,
+  recordSessionCompaction,
+  rememberRuntimeMeasurement,
+  reportModelFailure,
+  registerArtifactForPath
+})
+
+type RunLocalRunArgs = Parameters<typeof runLocalRunWith> extends [RunContext, ...infer Rest] ? Rest : never
+type RunQuickChatArgs = Parameters<typeof runQuickChatWith> extends [RunContext, ...infer Rest] ? Rest : never
+
+function runLocalRun(...args: RunLocalRunArgs) {
+  return runLocalRunWith(runContext, ...args)
+}
+
+function runQuickChat(...args: RunQuickChatArgs) {
+  return runQuickChatWith(runContext, ...args)
+}
+
 function registerIpc() {
-  const handle = handleIpc
-  handle('auth:snapshot', () => authState)
-  handle('auth:request-login', () => {
-    broadcastAuth({ state: 'login_requested', user: null, backendUrl: authState.backendUrl })
-    return authState
-  })
-  handle('auth:enter-workspace', (_event, modelId?: number) => {
-    if (!store.modelConnections().list().some((connection) => connection.models.some((model) => model.id === modelId)) && !store.listLocalModels().some((model) => model.id === modelId)) {
-      throw new Error('请先配置一个可用的模型连接')
-    }
-    broadcastAuth({ state: 'ready', user: null, backendUrl: null })
-    return authState
-  })
-  handle('model-connections:providers', () => modelConnectionService.providers())
-  handle('model-connections:list', () => modelConnectionService.list())
-  handle('model-connections:save', (_event, input) => modelConnectionService.save(input))
-  handle('model-connections:remove', (_event, id: string) => modelConnectionService.remove(id))
-  handle('model-connections:models', (_event, input) => modelConnectionService.models(input))
-  handle('model-connections:test', (_event, input) => modelConnectionService.test(input))
-  handle('model-connections:start-login', (_event, providerId: string, connectionId?: string) => modelConnectionService.startLogin(providerId, connectionId))
-  handle('model-connections:auth-state', (_event, sessionId: string) => modelConnectionService.authState(sessionId))
-  handle('model-connections:answer-login', (_event, sessionId: string, value: string) => modelConnectionService.answerLogin(sessionId, value))
-  handle('model-connections:cancel-login', (_event, sessionId: string) => modelConnectionService.cancelLogin(sessionId))
-  handle('model-connections:logout', (_event, id: string) => modelConnectionService.logout(id))
-  handle('app:info', (): AppRuntimeInfo => appRuntimeInfo())
-  handle('app:restart', async () => {
-    return restartApplication({
-      confirm: () => confirmInterruptRuns('重启'),
-      stop: stopActiveWork,
-      markQuitting: () => setQuitting(true),
-      relaunch: () => app.relaunch(),
-      quit: () => app.quit()
-    })
-  })
-  handle('app:reload', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return false
-    // 两点：一是在 invoke 处理函数里同步销毁当前文档会和这次调用的回复抢时序，界面可能停在空白页，
-    // 所以推到下一个 tick 再导航；二是 webContents.reload() 沿用当前 URL，页面此前若已经加载失败
-    // 或崩到错误页，重载只是把失败态原样再放一遍，改走 loadRenderer 回到规范入口并放开重试名额。
-    setImmediate(() => {
-      if (!mainWindow || mainWindow.isDestroyed()) return
-      rendererRetried = false
-      loadRenderer()
-    })
-    return true
-  })
-  // 渲染进程报告首屏数据已备齐并绘制过一帧；主窗口在这之前一直是隐藏的。
-  handle('startup:ready', () => { revealCoordinator?.markRendererReady() })
-  handle('diagnostics:renderer-error', (_event, report: RendererErrorReport) => {
-    reportCrash(
-      'renderer-error',
-      report.afterPaint ? '界面已渲染后发生' : '首屏渲染阶段发生',
-      { message: report.message, stack: report.stack ?? null, componentStack: report.componentStack ?? null }
-    )
-  })
-  handle('startup:warnings', (): StartupWarnings => ({
-    warnings: [...startupWarnings],
-    logPath: join(appPaths?.logsDir ?? app.getPath('logs'), 'startup.log')
-  }))
-  handle('app:hideToTray', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return false
-    return hideToTray(mainWindow)
-  })
-  handle('app:quit', async () => {
-    if (!await confirmInterruptRuns('退出')) return false
-    stopActiveWork()
-    // 绕开「关闭到托盘」，这里是用户显式要求彻底退出。
-    setQuitting(true)
-    app.quit()
-    return true
-  })
-  handle('storage:info', () => ({
-    dataRoot: appPaths.dataRoot,
-    databasePath: appPaths.databasePath,
-    cacheDir: appPaths.cacheDir,
-    logsDir: appPaths.logsDir,
-    tempDir: appPaths.tempDir,
-    sessionsDir: appPaths.sessionsDir,
-    agentDir: appPaths.agentDir,
-    skillsDir: appPaths.skillsDir,
-    mcpDir: appPaths.mcpDir,
-    pluginsDir: appPaths.pluginsDir,
-    attachmentsDir: appPaths.attachmentsDir,
-    backupsDir: appPaths.backupsDir,
-    exportsDir: appPaths.exportsDir,
-    defaultRoot: defaultDataRoot(homedir()),
-    isDefault: appPaths.dataRoot === defaultDataRoot(homedir())
-  }))
-  handle('storage:open-data-directory', () => shell.openPath(appPaths.dataRoot))
-  handle('storage:open-path', (_event, key: string) => {
-    const allowed = new Set(['dataRoot', 'databasePath', 'sessionsDir', 'agentDir', 'skillsDir', 'mcpDir', 'pluginsDir', 'attachmentsDir', 'backupsDir', 'exportsDir', 'cacheDir', 'logsDir', 'tempDir'])
-    if (!allowed.has(key)) return '不允许打开该路径'
-    return shell.openPath(appPaths[key as keyof AppPaths] as string)
-  })
-  handle('storage:move-data-directory', async () => {
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, { title: '选择新的 FastAgent 数据目录', properties: ['openDirectory', 'createDirectory'] })
-      : await dialog.showOpenDialog({ title: '选择新的 FastAgent 数据目录', properties: ['openDirectory', 'createDirectory'] })
-    if (result.canceled || !result.filePaths[0]) return { moved: false, cancelled: true }
-    const targetRoot = result.filePaths[0]
-    if (targetRoot === appPaths.dataRoot) return { moved: false }
-    for (const run of activeRuns.values()) run.controller.abort()
-    activeRuns.clear()
-    settlePendingRequests(new DOMException('数据目录正在迁移', 'AbortError'))
-    store.close()
-    try {
-      moveManagedData(appPaths.dataRoot, targetRoot)
-      writeDataRootLocator(appPaths.platformUserDataDir, targetRoot)
-      app.relaunch()
-      app.exit(0)
-      return { moved: true }
-    } catch (error) {
-      store = new LocalStore(appPaths.databasePath)
-      throw error
-    }
-  })
-  handle('preferences:get', () => store.getClientPreferences(preferenceNamespace()))
-  handle('preferences:update', (_event, patch) => store.updateClientPreferences(preferenceNamespace(), patch))
-  handle('settings:get', () => settings)
-  handle('settings:update', (_event, patch: Partial<AppSettings>) => {
-    settings = store.updateSettings({ ...settings, ...patch })
-    applySettings(settings)
-    return settings
-  })
-  // Shell 偏好：弹系统文件选择器挑 bash.exe，选择后直接写入设置。
-  // 默认打开 Git Bash 可能所在的目录，省得用户从「此电脑」一层层点进去。
-  handle('settings:pick-bash', async () => {
-    const options = {
-      title: '选择 bash.exe',
-      properties: ['openFile'] as Array<'openFile'>,
-      filters: [{ name: 'bash', extensions: ['exe'] }],
-      defaultPath: ['ProgramFiles', 'ProgramFiles(x86)']
-        .map((key) => process.env[key])
-        .filter(Boolean)
-        .flatMap((root) => [join(root!, 'Git', 'bin'), root!])
-        .find((dir) => existsSync(dir))
-    }
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-  // Ctrl+G 外部编辑器：弹系统文件选择器挑编辑器可执行文件，选择后直接写入设置。
-  handle('settings:pick-editor', async () => {
-    const options = {
-      title: '选择编辑器程序',
-      properties: ['openFile'] as Array<'openFile'>,
-      ...(process.platform === 'win32' ? { filters: [{ name: '可执行文件', extensions: ['exe'] }] } : {})
-    }
-    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-  handle('sandbox:status', (_event, force = false) => sandboxManager.probe(Boolean(force)))
-  handle('sandbox:initialize', () => sandboxManager.initialize())
-  handle('sandbox:session-info', (): SandboxSessionInfo | null => {
-    const session = sandboxManager.activeSession()
-    return session ? describeSession(session) : null
-  })
-  handle('conversation:listDetailed', () => store.listConversationsDetailed(requireNamespace()))
-  handle('conversation:listDetailed-page', (_event, query: ConversationPageQuery = {}) => store.listConversationsDetailedPage(requireNamespace(), query, Boolean(query.includeArchived)))
-  handle('conversations:stats', (_event, includeArchived = false) => store.conversationStats(requireNamespace(), includeArchived))
-  handle('conversation:getInspector', (_event, conversationId: string) => store.getConversationInspector(requireNamespace(), conversationId))
-  handle('conversation:updateContextPolicy', (_event, conversationId: string, patch) => store.updateContextPolicy(requireNamespace(), conversationId, patch))
-  handle('conversation:compactNow', async (_event, conversationId: string, modelId?: number | null) => {
-    const namespace = requireNamespace()
-    const credentials = modelId === null || modelId === undefined ? credentialsForConversation(namespace, conversationId) : resolveModelCredentials(modelId)
-    const key = `${namespace}:${conversationId}`
-    if (activeCompactions.has(key)) throw new CompactionError('COMPACTION_MODEL_ERROR', '当前会话正在压缩')
-    return conversationRuns.run(conversationRuntimeKey(namespace, conversationId), () => compactConversation(namespace, conversationId, 'manual', credentials))
-  })
-  handle('conversation:cancelCompaction', (_event, conversationId: string) => {
-    activeCompactions.get(`${requireNamespace()}:${conversationId}`)?.abort()
-  })
-  handle('conversation:getCompactionHistory', (_event, conversationId: string) => store.listCompactionHistory(requireNamespace(), conversationId))
-  // 切换模型后按目标模型重算：各模型的运行时快照与上下文窗口彼此独立。
-  handle('conversation:refreshContext', (_event, conversationId: string, modelId: number | null) => {
-    const namespace = requireNamespace()
-    return refreshContext(namespace, conversationId, contextWindowFor(namespace, conversationId, modelId), modelId)
-  })
-  handle('conversation:model-usage', (_event, conversationId: string, turnId?: string) => store.getModelUsage(requireNamespace(), conversationId, turnId))
-  handle('usage:overview', (_event, days: number) => store.getModelUsageOverview(requireNamespace(), days))
-  handle('auth:captcha', async (_event, url: string) => {
-    return createApiClient(url).captcha()
-  })
-  handle('auth:login', async (_event, input) => {
-    broadcastAuth({ state: 'authenticating', user: null, backendUrl: input.backendUrl })
-    try {
-      const nextClient = createApiClient(input.backendUrl)
-      const result = await nextClient.login({ ...input, deviceLabel: `FastAgent · ${hostname()}` })
-      nextClient.setAccessToken(result.access_token)
-      client = nextClient
-      const normalizedUrl = input.backendUrl.replace(/\/$/, '')
-      const nextUserId = String(result.user.id)
-      backendUrl = normalizedUrl
-      userId = nextUserId
-      refreshToken = result.refresh_token
-      enableAutomaticRefresh(nextClient)
-      store.saveAccount({ backendUrl: normalizedUrl, userId: nextUserId, refreshToken, username: result.user.username })
-      migrateSessionLayout(WORKSPACE_NAMESPACE, sessionUserSegment(LocalStore.namespace(normalizedUrl, nextUserId), result.user.username))
-      // 与 restoreSession 同理：登录进来的账户也可能留着上次异常退出的运行。
-      // 已在跑的运行必须排除，否则这次登录会把当前任务标成中断。
-      store.markInterruptedAgentRuns(WORKSPACE_NAMESPACE, [...activeRuns.keys()])
-      const snapshot = { state: 'ready' as const, user: result.user, backendUrl }
-      broadcastAuth(snapshot)
-      return snapshot
-    } catch (error) {
-      broadcastAuth({ state: 'signed_out', user: null, backendUrl: input.backendUrl })
-      throw error
-    }
-  })
-  handle('auth:lock', async () => { await lockAccount(); return authState })
-  handle('auth:logout', async () => {
-    try { if (client && refreshToken) await client.logout(refreshToken) } catch { /* 退出必须可用 */ }
-    await lockAccount('signed_out')
-    return authState
-  })
-  handle('skills:list', () => skillRegistry.list())
-  handle('skills:get', (_event, name: string) => skillRegistry.read(name))
-  handle('skills:create', (_event, input) => {
-    const record = skillRegistry.create(input)
-    store.upsertAbilityMeta({ abilityType: 'skill', abilityId: record.name, source: 'created', version: record.version })
-    return record
-  })
-  handle('skills:update', (_event, name: string, patch) => skillRegistry.update(name, patch))
-  handle('skills:set-enabled', (_event, name: string, enabled: boolean) => skillRegistry.setEnabled(name, enabled))
-  handle('skills:remove', (_event, name: string) => {
-    skillRegistry.remove(name)
-    store.removeAbilityMeta('skill', name)
-  })
-  /** Skill 声明的工具能不能用，取决于当前环境；探测一次给校验与详情共用。 */
-  function currentToolNames(): string[] {
-    return availableToolNames({
-      shellToolName: resolveShellToolName(settings.shellPreference, { explicitPath: settings.bashPath, bundledPath: bundledTools.bash }),
-      mcpServers: store.listEnabledMcpRuntimeConfigs().map((config) => ({
-        id: config.id,
-        tools: (store.getMcpStatus(config.id)?.tools ?? []).map((tool) => tool.name)
-      })),
-      cliTools: store.listCliTools().map((tool) => tool.id),
-      subAgentEnabled: settings.subAgentEnabled
-    })
-  }
-  /**
-   * 统一搜索：会话标题、项目知识、Skill、成果各查一次再合并。
-   * 每一类都在库里筛完再截断，不把全量读出来在内存里过滤。
-   */
-  handle('search:query', (_event, query: SearchQuery): SearchResponse => {
-    const namespace = requireNamespace()
-    return runUnifiedSearch(query, {
-      conversation: ({ keyword, projectId, limit }) => store.searchConversationsByTitle(namespace, keyword, projectId, limit)
-        .map((record) => ({
-          kind: 'conversation' as const,
-          id: record.id,
-          title: record.title,
-          snippet: '',
-          projectId: record.projectId,
-          locator: null,
-          updatedAt: Date.parse(record.updatedAt) || 0
-        })),
-      knowledge: ({ keyword, projectId, limit }) => store.knowledgeBase.searchByKeyword(namespace, projectId, keyword, limit)
-        .map((entry) => ({
-          kind: 'knowledge' as const,
-          id: entry.id,
-          title: entry.title,
-          snippet: makeSnippet(entry.content, keyword),
-          projectId: entry.projectId,
-          locator: entry.sourcePath ? `${entry.sourcePath}${entry.locator ? ` ${entry.locator}` : ''}` : null,
-          updatedAt: entry.updatedAt
-        })),
-      skill: ({ keyword, limit }) => {
-        const lowered = keyword.toLowerCase()
-        return skillRegistry.list()
-          .filter((skill) => skill.name.toLowerCase().includes(lowered) || skill.description.toLowerCase().includes(lowered))
-          .slice(0, limit)
-          .map((skill) => ({
-            kind: 'skill' as const,
-            id: skill.name,
-            title: skill.name,
-            snippet: makeSnippet(skill.description, keyword),
-            projectId: null,
-            locator: skill.filePath,
-            updatedAt: 0
-          }))
-      },
-      artifact: ({ keyword, projectId, limit }) => {
-        // 产物按工作区隔离；按项目过滤时用项目路径当 workspaceId。
-        const workspaceId = projectId ? store.listProjects(namespace).find((project) => project.id === projectId)?.path : undefined
-        if (projectId && !workspaceId) return []
-        return store.listArtifacts(namespace, { keyword, workspaceId, limit })
-          .map((artifact) => ({
-            kind: 'artifact' as const,
-            id: artifact.id,
-            title: artifact.name,
-            snippet: artifact.path ?? '',
-            projectId: projectId ?? null,
-            locator: artifact.path ?? null,
-            workspaceId: artifact.workspaceId,
-            updatedAt: artifact.updatedAt
-          }))
-      }
-    })
-  })
-  handle('skills:versions', (_event, name: string) => store.listSkillVersions(name))
-  handle('skills:revert', (_event, name: string, revision: number) => skillRegistry.revert(name, revision))
-  // 静态校验，不是试运行：不启动模型也不执行脚本，只查配置与依赖缺不缺。
-  handle('skills:check', (_event, name: string) => {
-    const detail = skillRegistry.read(name)
-    const directoryName = skillRegistry.directoryOf(name).split(/[\/]/).filter(Boolean).at(-1) ?? name
-    return checkSkill({
-      name: detail.name,
-      content: readFileSync(detail.filePath, 'utf8'),
-      directoryName,
-      files: skillRegistry.files(name).map((file) => file.path),
-      availableTools: currentToolNames()
-    })
-  })
-  handle('skills:detail', (_event, name: string): SkillDetail => {
-    const detail = skillRegistry.read(name)
-    const meta = store.getAbilityMeta('skill', name)
-    const requiredTools = parseAllowedTools(readFileSync(detail.filePath, 'utf8'))
-    const available = new Set(currentToolNames())
-    return {
-      ...detail,
-      files: skillRegistry.files(name),
-      source: meta?.source ?? 'imported',
-      pluginId: meta?.pluginId,
-      installedAt: meta?.installedAt,
-      builtin: meta?.source === 'builtin',
-      requiredTools,
-      missingTools: requiredTools.filter((tool) => !available.has(tool))
-    }
-  })
-  handle('skills:import', async (_event, options: { format?: 'directory' | 'zip'; onConflict?: 'overwrite' | 'save-as' } = {}) => {
-    const zip = options.format === 'zip'
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: zip ? '导入 Skill 压缩包' : '导入 Skill',
-      properties: zip ? ['openFile'] : ['openDirectory', 'openFile'],
-      filters: zip ? [{ name: 'ZIP 压缩包', extensions: ['zip'] }] : [{ name: 'Skill 文件', extensions: ['md', 'zip'] }]
-    })
-    if (result.canceled || !result.filePaths[0]) return null
-    const record = skillRegistry.importFromPath(result.filePaths[0], { onConflict: options.onConflict })
-    store.upsertAbilityMeta({ abilityType: 'skill', abilityId: record.name, source: 'imported', version: record.version })
-    return record
-  })
-  // 技能蒸馏：拿会话末尾若干回合让模型出 SKILL.md 草稿；只返草稿不落库，用户确认后走 skills:create。
-  handle('skills:distill', async (_event, conversationId: string, modelId: number | null) => {
-    const namespace = requireNamespace()
-    const conversation = store.getConversation(namespace, conversationId)
-    if (!conversation) throw new Error('会话不存在')
-    // 一次性用户动作，整段读出来可接受；只挑有助手产出的完整回合。
-    const turns = store.listTurns(namespace, conversationId)
-      .filter((turn) => turn.assistantMessage?.text?.trim())
-      .map((turn) => ({ user: turn.userMessage.text, assistant: turn.assistantMessage?.text ?? '' }))
-    if (!turns.length) throw new Error('会话里没有可提炼的完整回合')
-    const credentials = modelId === null ? null : (() => { try { return resolveModelCredentials(modelId) } catch { return null } })()
-    if (!credentials) throw new Error('无法解析当前模型的凭证，请重新选择模型')
-    const { promptModelOnce } = await loadPiRuntime()
-    const raw = await promptModelOnce({
-      credentials,
-      prompt: buildDistillPrompt({ title: conversation.title || '未命名会话', turns }),
-      agentDir: appPaths.agentDir,
-      createModelRuntime: createModelRuntimeForCredentials
-    })
-    if (/^none$/i.test(raw.trim())) throw new Error('这段会话里没有值得沉淀为技能的方法论')
-    const draft = parseSkillDraft(raw)
-    if (!draft) throw new Error('提炼结果不符合格式，请重试或换一段会话')
-    return draft
-  })
-  handle('mcp:list', () => store.listMcpServers())
-  handle('mcp:save', (_event, input) => {
-    const previous = store.getAbilityMeta('mcp', input.id)
-    const server = store.saveMcpServer(input)
-    // 编辑已安装的市场 Server 时必须保留 plugin_id / version，否则会丢掉「打开能力」与更新检测。
-    store.upsertAbilityMeta({
-      abilityType: 'mcp',
-      abilityId: server.id,
-      source: previous?.source ?? 'created',
-      pluginId: previous?.pluginId,
-      version: previous?.version,
-      installedAt: previous?.installedAt
-    })
-    return server
-  })
-  handle('mcp:set-enabled', (_event, id: string, enabled: boolean) => store.setMcpServerEnabled(id, enabled))
-  handle('mcp:remove', (_event, id: string) => {
-    store.removeMcpServer(id)
-    store.removeMcpStatus(id)
-    store.removeAbilityMeta('mcp', id)
-  })
-  handle('mcp:test', async (_event, id: string): Promise<McpTestStatus> => {
-    const config = store.getMcpRuntimeConfig(id)
-    if (!config) throw new Error(`MCP Server 不存在：${id}`)
-    const { probeMcpServer } = await loadMcpRuntime()
-    const snapshot = recordMcpStatus(id, await probeMcpServer(config))
-    return { testedAt: snapshot.testedAt as string, ok: snapshot.state === 'connected', error: snapshot.error, toolCount: snapshot.toolCount, tools: snapshot.tools }
-  })
-  handle('mcp:test-config', async (_event, input: LocalMcpServerInput): Promise<McpTestStatus> => {
-    // 草稿配置只做一次探测，不落库、不写状态缓存。
-    const { probeMcpServer } = await loadMcpRuntime()
-    const probe = await probeMcpServer(input)
-    const secrets = [...Object.values(input.env ?? {}), ...Object.values(input.headers ?? {})]
-    const redacted = redactSecrets(probe.error, secrets)
-    // 草稿配置不落库，走不到 recordMcpStatus，这里单独记一次。
-    if (!probe.ok) logIntegrationError({ service: 'mcp', endpoint: `${input.name || '(草稿)'} (未保存)`, message: redacted ?? '连接失败' })
-    return {
-      testedAt: new Date().toISOString(),
-      ok: probe.ok,
-      error: redacted,
-      toolCount: probe.tools.length,
-      tools: probe.tools.map((tool) => ({ name: tool.name, description: tool.description, annotations: tool.annotations }))
-    }
-  })
-  handle('mcp:status', () => store.listMcpStatus().map(({ serverId, ...snapshot }) => ({
-    id: serverId,
-    testedAt: snapshot.testedAt ?? '',
-    ok: snapshot.state === 'connected',
-    error: snapshot.error,
-    toolCount: snapshot.toolCount,
-    tools: snapshot.tools
-  })))
-  handle('mcp:detail', (_event, id: string): McpServerDetail => {
-    const server = store.listMcpServers().find((item) => item.id === id)
-    if (!server) throw new Error(`MCP Server 不存在：${id}`)
-    const meta = store.getAbilityMeta('mcp', id)
-    const secrets = mcpRuntimeSecrets(id)
-    // 只回传 key 与是否有值，密钥值一律不出主进程。
-    const describe = (values: Record<string, string> | undefined) =>
-      Object.entries(values ?? {}).map(([key, value]) => ({ key, hasValue: Boolean(value?.trim()) }))
-    return {
-      server,
-      connection: store.getMcpStatus(id) ?? emptyConnection(),
-      source: meta?.source ?? 'imported',
-      pluginId: meta?.pluginId,
-      installedAt: meta?.installedAt,
-      envKeys: describe(secrets.env),
-      headerKeys: describe(secrets.headers)
-    }
-  })
-  handle('mcp:import', async () => {
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: '导入 MCP Server 配置',
-      properties: ['openFile'],
-      filters: [{ name: 'JSON', extensions: ['json'] }]
-    })
-    if (result.canceled || !result.filePaths[0]) return null
-    const inputs = parseMcpImport(readFileSync(result.filePaths[0], 'utf8'))
-    return inputs.map((input: LocalMcpServerInput) => {
-      const server = store.saveMcpServer(input)
-      store.upsertAbilityMeta({ abilityType: 'mcp', abilityId: server.id, source: 'imported' })
-      return server
-    })
-  })
-  handle('abilities:list', () => listAbilities())
-  handle('abilities:list-page', async (_event, query: PageQuery = {}) => {
-    const items = await listAbilities()
-    const pageSize = normalizePageSize(query.pageSize)
-    const page = resolvePage(query.page, items.length, pageSize)
-    const offset = pageOffset(page, pageSize)
-    return { items: items.slice(offset, offset + pageSize), total: items.length, page, pageSize }
-  })
-  handle('abilities:get', async (_event, type: AbilityType, id: string) =>
-    (await listAbilities()).find((item) => item.type === type && item.id === id) ?? null)
-  handle('abilities:set-enabled', async (_event, type: AbilityType, id: string, enabled: boolean) => {
-    if (type === 'skill') skillRegistry.setEnabled(id, enabled)
-    else store.setMcpServerEnabled(id, enabled)
-    return requireAbility(type, id)
-  })
-  handle('abilities:open-location', async (_event, type: AbilityType, id: string) => {
-    const ability = await requireAbility(type, id)
-    if (type === 'skill') return shell.openPath((ability as SkillAbility).localPath ?? appPaths.skillsDir)
-    return shell.openPath((ability as McpAbility).cwd ?? appPaths.mcpDir)
-  })
-  handle('plugins:list', async (_event, query: PluginQuery = {}) =>
-    pluginInstaller.decorate(searchPlugins(await catalogProvider.list(), query), await listAbilities()))
-  handle('plugins:list-page', async (_event, query: PluginQuery = {}) => {
-    const items = pluginInstaller.decorate(searchPlugins(await catalogProvider.list(), query), await listAbilities())
-    const pageSize = normalizePageSize(query.pageSize)
-    const page = resolvePage(query.page, items.length, pageSize)
-    const offset = pageOffset(page, pageSize)
-    return { items: items.slice(offset, offset + pageSize), total: items.length, page, pageSize }
-  })
-  handle('plugins:get', async (_event, id: string) => {
-    const entry = await pluginInstaller.entry(id)
-    return entry ? pluginInstaller.decorate([entry], await listAbilities())[0] : null
-  })
-  handle('plugins:install', (_event, id: string, config?: Record<string, string>) => pluginInstaller.install(id, config))
-  handle('plugins:uninstall', (_event, id: string) => pluginInstaller.uninstall(id))
-  handle('plugins:categories', async () => listCategories(await catalogProvider.list()))
-  // Hub 与整包的通道单独成模块注册：registerIpc 已经过长，新通道不再往这个闭包里堆。
-  registerHubIpc(handle, hubService)
-  registerBundleIpc(handle, { bundles: bundleService, mainWindow: () => mainWindow, exportsDir: () => appPaths.exportsDir })
-  handle('resources:bootstrap', async () => {
-    try {
-      if (!client || authState.state !== 'ready') {
-        if (authState.state !== 'ready') throw new Error('当前工作区未就绪')
-        return { user: authState.user ?? { id: 'local', username: '本地工作区' }, models: [], default_model_id: null, default_thinking_level: null, schema_version: 'desktop-local' }
-      }
-      const { model_credentials: credentials = [], ...bootstrapped } = await requireClient().bootstrap()
-      const sourceNamespace = accountNamespace()
-      const modelIdMap = new Map<number, number>()
-      if (sourceNamespace) for (const model of bootstrapped.models) modelIdMap.set(model.id, store.workspaceModelId(sourceNamespace, model.id))
-      const mappedCredentials = credentials.map((credential) => ({ ...credential, id: modelIdMap.get(credential.id) ?? credential.id }))
-      cacheModelCredentials(mappedCredentials)
-      // 公开模型列表不带窗口与输出上限，这两项只在凭证里；不补齐的话设置页与上下文面板只能显示默认 128k。
-      const data = { ...bootstrapped, default_model_id: bootstrapped.default_model_id === null || bootstrapped.default_model_id === undefined ? bootstrapped.default_model_id : modelIdMap.get(bootstrapped.default_model_id) ?? bootstrapped.default_model_id, models: bootstrapped.models.map((model) => {
-        const id = modelIdMap.get(model.id) ?? model.id
-        const credential = mappedCredentials.find((item) => item.id === id)
-        if (!credential) return { ...model, id }
-        return {
-          ...model, id,
-          context_window: model.context_window ?? credential.context_window ?? null,
-          max_tokens: model.max_tokens ?? credential.max_tokens ?? null
-        }
-      }) }
-      if (backendUrl && userId) {
-        // 凭证走独立加密表，不进明文的 resource_cache。
-        if (mappedCredentials.length) store.saveModelCredentials(LocalStore.namespace(backendUrl, userId), mappedCredentials)
-        store.saveResources(backendUrl, userId, data as unknown as Record<string, unknown>)
-      }
-      return data
-    }
-    catch (error) {
-      if (backendUrl && userId) {
-        const cached = store.loadResources(backendUrl, userId)
-        if (cached && authState.user && Array.isArray(cached.models)) {
-          return { ...cached, user: authState.user, schema_version: 'desktop-cache' }
-        }
-      }
-      if (error instanceof ApiError && error.status === 401) await lockAccount('revoked')
-      throw error
-    }
-  })
-  handle('models:localList', () => listLocalModelCatalog(store))
-  handle('models:localCreate', (_event, input: LocalModelInput) => {
-    const summary = store.saveLocalModel(null, input)
-    modelContextWindows.delete(summary.id)
-    broadcastModelsChanged()
-    return summary
-  })
-  handle('models:localUpdate', (_event, id: number, input: LocalModelInput) => {
-    const summary = store.saveLocalModel(-id, input)
-    modelContextWindows.delete(id)
-    broadcastModelsChanged()
-    return summary
-  })
-  handle('models:localDelete', (_event, id: number) => {
-    store.removeLocalModel(-id)
-    modelContextWindows.delete(id)
-    broadcastModelsChanged()
-  })
-  handle('models:testDialogue', (_event, id: number) => testModelDialogue(id))
-  handle('run-states:list', () => {
-    const namespace = requireNamespace()
-    const states = store.listRunStates(namespace)
-    // 界面重载不重启主进程：还在 activeRuns 里的 run 仍然活着，不能跟着标失败。
-    for (const state of staleRunStates(states, liveRunConversationIds(namespace))) {
-      const conversation = store.getConversation(namespace, state.conversationId)
-      const turn = conversation ? store.listTurns(namespace, state.conversationId).find((item) => item.status === 'working') : null
-      if (turn?.activity?.execution) {
-        const execution = { ...turn.activity.execution, status: 'failed' as const, activeStepId: null, activeEventId: null, activeThinkingId: null, steps: turn.activity.execution.steps.map((step) => step.status === 'running' ? { ...step, status: 'failed' as const } : step), events: turn.activity.execution.events.map((event) => event.status === 'running' ? { ...event, status: 'failed' as const, completedAt: event.completedAt ?? Date.now() } : event) }
-        store.updateTurn(namespace, turn.id, { activity: { ...turn.activity, status: 'failed', finishedAt: new Date().toISOString(), execution }, status: 'failed' })
-      }
-      store.saveRunState(namespace, { ...state, status: 'failed', hasUnreadResult: true, updatedAt: Date.now() })
-    }
-    return store.listRunStates(namespace)
-  })
-  handle('run-states:save', (_event, state) => store.saveRunState(requireNamespace(), state))
-  handle('run-states:read', (_event, conversationId: string) => store.markRunRead(requireNamespace(), conversationId))
-  /** 界面重载后靠这个把 runId 与回合接回来：主进程还留着这些 run。 */
-  handle('chat:list-active', () => {
-    const namespace = requireNamespace()
-    return [...activeRuns.entries()]
-      .filter(([, run]) => run.namespace === namespace)
-      .map(([runId, run]) => ({ runId, conversationId: run.conversationId, turnId: run.turnId }))
-  })
-
-  handle('chat:send', async (_event, input) => {
-    const sendStartedAt = Date.now()
-    const namespace = requireNamespace()
-    if (!store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
-    // 守卫放在建 turn 之前：先建后拒会留下一条永远 working 的孤儿回合。
-    if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
-    // 预算同理：跑到一半才发现超预算，钱已经花了，拦不住任何东西。
-    const budget = checkConversationBudget(store.getModelUsage(namespace, input.conversationId).session, settings.limits)
-    if (!budget.allowed) throw new Error(budget.reason)
-    const now = new Date().toISOString()
-    const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: store.getConversationRoot(namespace, input.conversationId) }
-    const attachments = archiveAttachments(appPaths.attachmentsDir, input.conversationId, input.attachments || [], settings)
-    const turn = input.turnId
-      ? store.updateTurn(namespace, input.turnId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, assistantMessage: null, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working' })
-      : store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
-    if (!turn) throw new Error('会话轮记录不存在')
-    // 绑定以实际发出的模型为准：新会话首轮在这里落库，之后重开会话才能还原成同一个模型。
-    store.setConversationModelId(namespace, input.conversationId, input.modelId ?? null)
-    const runId = randomUUID()
-    store.saveRunState(namespace, { conversationId: input.conversationId, projectId: store.getConversation(namespace, input.conversationId)?.projectId ?? null, status: 'running', hasUnreadResult: false, updatedAt: Date.now() })
-    const controller = new AbortController()
-    activeRuns.set(runId, { controller, namespace, conversationId: input.conversationId, turnId: turn.id })
-    breadcrumb('run', `start ${runId} conv=${input.conversationId} model=${input.modelId ?? 'default'}`)
-    const acceptedAt = Date.now()
-    console.info('[run-timing]', { runId, conversationId: input.conversationId, turnId: turn.id, phase: 'ack', sendMs: acceptedAt - sendStartedAt })
-    // 下一事件循环才进入压缩与运行时初始化，保证 invoke ACK 先回到渲染层。
-    setImmediate(() => {
-      const credentials = input.modelId === null || input.modelId === undefined ? null : (() => { try { return resolveModelCredentials(input.modelId) } catch { return null } })()
-      const scheduled = runScheduler.schedule({
-        conversationId: conversationRuntimeKey(namespace, input.conversationId),
-        provider: credentials?.provider ?? 'unknown',
-        modelId: input.modelId ?? -1
-      }, () => conversationRuns.run(conversationRuntimeKey(namespace, input.conversationId), () => runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, input.mode, input.modelId, input.thinkingLevel || 'auto', input.permission || null, input.modePrompt || '', Boolean(input.planMode), attachments, controller.signal, acceptedAt)))
-      activeRunCancels.set(runId, scheduled.cancel)
-      void scheduled.promise.catch((error) => console.error('[chat:run]', error)).finally(() => activeRunCancels.delete(runId))
-    })
-    return { runId, turnId: turn.id, turn }
-  })
-  // 快速对话专用通道：直接调模型接口，不走 pi 运行时，首 token 最快。
-  handle('chat:quick-send', async (_event, input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: import('../shared/types').ThinkingLevel }) => {
-    const sendStartedAt = Date.now()
-    const namespace = requireNamespace()
-    if (!store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
-    if (hasActiveRun(namespace, input.conversationId)) throw new Error(RUN_CONFLICT_MESSAGE)
-    const now = new Date().toISOString()
-    const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: 'chat' as const, permission: null }
-    const turn = store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments: [], runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
-    const runId = randomUUID()
-    store.saveRunState(namespace, { conversationId: input.conversationId, projectId: store.getConversation(namespace, input.conversationId)?.projectId ?? null, status: 'running', hasUnreadResult: false, updatedAt: Date.now() })
-    const controller = new AbortController()
-    activeRuns.set(runId, { controller, namespace, conversationId: input.conversationId, turnId: turn.id })
-    breadcrumb('run', `quick-start ${runId} conv=${input.conversationId} model=${input.modelId ?? 'default'}`)
-    const acceptedAt = Date.now()
-    // 下一事件循环才进入执行，保证 invoke ACK 先回到渲染层（与 chat:send 一致）。
-    setImmediate(() => {
-      const key = conversationRuntimeKey(namespace, input.conversationId)
-      const scheduled = runScheduler.schedule({
-        conversationId: key,
-        provider: 'quick',
-        modelId: input.modelId ?? -1
-      }, () => conversationRuns.run(key, () => runQuickChat(runId, turn.id, input.conversationId, namespace, input.prompt, input.modelId, input.thinkingLevel || 'auto', controller.signal, acceptedAt)))
-      activeRunCancels.set(runId, scheduled.cancel)
-      void scheduled.promise.catch((error) => console.error('[chat:quick-run]', error)).finally(() => activeRunCancels.delete(runId))
-    })
-    console.info('[run-timing]', { runId, conversationId: input.conversationId, turnId: turn.id, phase: 'ack', sendMs: acceptedAt - sendStartedAt })
-    return { runId, turnId: turn.id, turn }
-  })
-  handle('chat:cancel', (_event, runId: string) => {
-    breadcrumb('run', `cancel ${runId}`)
-    activeRunCancels.get(runId)?.()
-    activeRunCancels.delete(runId)
-    // 暂停中的运行也要能取消：先放行闸门，abort 之后的收尾才跑得下去。
-    runPauseGates.get(runId)?.resume()
-    runPauseGates.delete(runId)
-    activeRuns.get(runId)?.controller.abort()
-    activeRuns.delete(runId)
-  })
-  /**
-   * 暂停 / 继续。
-   *
-   * 能挡住的只有「下一次工具调用」：已经发出的模型请求没有中断通道，
-   * 正在执行的工具也不会被打断。返回值与事件文案都按这个边界写，
-   * 不在按下的瞬间宣称已经停住。
-   */
-  handle('chat:pause', (_event, runId: string): boolean => {
-    const run = activeRuns.get(runId)
-    if (!run) return false
-    const gate = runPauseGates.get(runId) ?? new PauseGate()
-    runPauseGates.set(runId, gate)
-    gate.pause()
-    store.saveRunState(run.namespace, {
-      conversationId: run.conversationId,
-      projectId: store.getConversation(run.namespace, run.conversationId)?.projectId ?? null,
-      status: 'paused',
-      hasUnreadResult: false,
-      updatedAt: Date.now()
-    })
-    mainWindow?.webContents.send('agent:event', {
-      runId,
-      conversationId: run.conversationId,
-      turnId: run.turnId,
-      type: 'run_phase',
-      phase: 'prompting',
-      detail: '已请求暂停：当前这一步跑完后停在下一次工具调用前',
-      status: 'running',
-      timestamp: Date.now()
-    } satisfies AgentEvent)
-    return true
-  })
-  handle('chat:resume', (_event, runId: string): boolean => {
-    const gate = runPauseGates.get(runId)
-    const run = activeRuns.get(runId)
-    if (!gate || !run) return false
-    gate.resume()
-    runPauseGates.delete(runId)
-    store.saveRunState(run.namespace, {
-      conversationId: run.conversationId,
-      projectId: store.getConversation(run.namespace, run.conversationId)?.projectId ?? null,
-      status: 'running',
-      hasUnreadResult: false,
-      updatedAt: Date.now()
-    })
-    mainWindow?.webContents.send('agent:event', {
-      runId,
-      conversationId: run.conversationId,
-      turnId: run.turnId,
-      type: 'run_phase',
-      phase: 'prompting',
-      detail: '已继续执行',
-      status: 'running',
-      timestamp: Date.now()
-    } satisfies AgentEvent)
-    return true
-  })
-  handle('chat:approval-respond', (_event, input: { id: string; decision: ApprovalDecision; answer?: string; runId: string }) => {
-    respondPendingApproval(input)
-  })
-  handle('workspace:pick-root', async () => {
-    // 传父窗口，否则无边框窗口下选择框可能弹到主窗口后面，看着像「点了没反应」。
-    const result = mainWindow
-      ? await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] })
-      : await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    // 取消不应该清掉已经打开的工作区。
-    if (result.canceled) return null
-    workspaceRoot = result.filePaths[0] ?? workspaceRoot
-    setGitWatchRoot(workspaceRoot)
-    return workspaceRoot
-  })
-  // 传 null / 空串表示离开工作区：不清掉的话新建的快速对话仍然能 @ 到上一个项目的文件。
-  handle('workspace:set-root', (_event, path: string | null) => {
-    workspaceRoot = path || null
-    setGitWatchRoot(workspaceRoot)
-    return workspaceRoot
-  })
-  handle('workspace:init-project', (_event, options: { force?: boolean } = {}) => {
-    if (!workspaceRoot) {
-      return { status: 'error', path: '', message: '请先打开一个项目工作区再执行 /init' }
-    }
-    const existing = detectExistingAgentInitFile(readdirSync(workspaceRoot))
-    if (existing && !options.force) {
-      return { status: 'exists', path: join(workspaceRoot, existing) }
-    }
-    const target = join(workspaceRoot, AGENT_INIT_FILE_NAME)
-    writeFileSync(target, buildAgentInitTemplate(basename(workspaceRoot)), 'utf8')
-    return { status: 'created', path: target }
-  })
-  handle('projects:list', () => store.listProjects(requireNamespace()))
-  handle('projects:list-page', (_event, query: PageQuery = {}) => store.listProjectsPage(requireNamespace(), query, Boolean(query.includeArchived)))
-  handle('projects:add', (_event, input: { path: string; name?: string }) => {
-    const namespace = requireNamespace()
-    const existing = store.getProjectByPath(namespace, input.path)
-    const color = existing?.color ?? (store.listProjects(namespace).length % 2 === 0 ? 'calm' : 'tech')
-    const project = store.upsertProject(namespace, { id: existing?.id ?? `project-${randomUUID()}`, name: input.name || basename(input.path) || input.path, path: input.path, color })
-    const contextFiles = readAgentContextFiles({ projectRoot: input.path }).files
-      .filter((file) => file.source === 'project')
-      .map((file) => file.name)
-    return { ...project, agentContextFiles: contextFiles }
-  })
-  handle('projects:archive', (_event, id: string) => store.archiveProject(requireNamespace(), id))
-  handle('kb:list', (_event, projectId: string) => store.listKbEntries(requireNamespace(), projectId))
-  handle('kb:save', (_event, projectId: string, input: { id?: string; title: string; content: string }) => {
-    const saved = store.saveKbEntry(requireNamespace(), projectId, input)
-    mainWindow?.webContents.send('kb:changed', projectId)
-    return saved
-  })
-  handle('kb:remove', (_event, projectId: string, entryId: string) => {
-    store.removeKbEntry(requireNamespace(), projectId, entryId)
-    mainWindow?.webContents.send('kb:changed', projectId)
-  })
-  handle('kb:listSources', (_event, projectId: string) => store.knowledgeBase.listSources(requireNamespace(), projectId))
-  // 导入按「先选路径 → 预览范围 → 确认后建来源并索引」三步；预览不写库。
-  handle('kb:pickSource', async (_event, kind: KbSourceKind) => {
-    const result = await dialog.showOpenDialog({
-      title: kind === 'directory' ? '选择要绑定的目录' : '选择要导入的文件',
-      properties: [kind === 'directory' ? 'openDirectory' : 'openFile'],
-      filters: kind === 'file' ? [{ name: '可索引文档', extensions: ['md', 'markdown', 'mdx', 'txt', 'text', 'pdf', 'json', 'yaml', 'yml', 'ts', 'tsx', 'js', 'py', 'go', 'rs', 'java', 'sql'] }] : undefined
-    })
-    if (result.canceled || !result.filePaths.length) return null
-    return previewSource(result.filePaths[0], kind)
-  })
-  handle('kb:previewSource', (_event, path: string, kind: KbSourceKind, excludes?: string[]) => previewSource(path, kind, excludes))
-  handle('kb:addSource', async (_event, projectId: string, input: { path: string; kind: KbSourceKind; title?: string; excludes?: string[] }) => {
-    const namespace = requireNamespace()
-    const source = store.knowledgeBase.createSource(namespace, {
-      projectId,
-      kind: input.kind,
-      path: input.path,
-      title: input.title?.trim() || basename(input.path) || input.path,
-      excludes: input.excludes ?? DEFAULT_EXCLUDES
-    })
-    const result = await runKbIndex(namespace, source)
-    mainWindow?.webContents.send('kb:changed', projectId)
-    return result
-  })
-  handle('kb:refreshSource', async (_event, sourceId: string) => {
-    const namespace = requireNamespace()
-    const source = store.knowledgeBase.requireSource(namespace, sourceId)
-    const result = await runKbIndex(namespace, source)
-    mainWindow?.webContents.send('kb:changed', source.projectId)
-    return result
-  })
-  handle('kb:removeSource', (_event, sourceId: string) => {
-    const namespace = requireNamespace()
-    const source = store.knowledgeBase.getSource(namespace, sourceId)
-    store.knowledgeBase.removeSource(namespace, sourceId)
-    if (source) mainWindow?.webContents.send('kb:changed', source.projectId)
-  })
-  handle('projects:remove', (_event, id: string) => store.removeProject(requireNamespace(), id))
-  handle('shell:open-path', (_event, path: string) => shell.openPath(path))
-  // Ctrl+G 外部编辑：草稿写入系统临时目录，配置了编辑器就用它打开，否则交给系统默认应用。
-  // 窗口重新聚焦时由渲染进程读回回填。
-  handle('composer:external-edit-open', (_event, text: string) => {
-    const path = draftFilePath()
-    createDraft(typeof text === 'string' ? text : '', path)
-    if (!launchConfiguredEditor(path, settings.externalEditorPath, () => void shell.openPath(path))) void shell.openPath(path)
-    return { path }
-  })
-  handle('composer:external-edit-read', (_event, path: string) => {
-    if (!isDraftPath(path)) return null
-    const content = readDraft(path)
-    removeDraft(path)
-    return content
-  })
-  handle('workspace:snapshot', (): WorkspaceSnapshot => ({ rootPath: workspaceRoot, changes: [] }))
-  handle('git:state', async (): Promise<GitWorkspaceState | null> => {
-    if (!workspaceRoot) return null
-    try {
-      return await resolveGitWorkspaceState(workspaceRoot)
-    } catch (error) {
-      // 读取失败降级隐藏，并记录日志便于事后排查（git 缺失/仓库损坏/权限等）。
-      console.warn('Failed to resolve Git workspace state', error)
-      return null
-    }
-  })
-  handle('git:branches', (): Promise<string[]> => {
-    if (!workspaceRoot) return Promise.resolve([])
-    return listLocalBranches(workspaceRoot)
-  })
-  handle('git:status', async (): Promise<GitStatusEntry[]> => {
-    if (!workspaceRoot) return []
-    const result = await execGit(workspaceRoot, ['status', '--porcelain'])
-    if (result.code !== 0) return []
-    return parsePorcelain(result.stdout)
-  })
-  handle('git:checkout', async (_event, branch: string) => {
-    if (!workspaceRoot) return { ok: false, error: '尚未打开工作区' }
-    const result = await checkoutBranch(workspaceRoot, branch)
-    if (result.ok) broadcastGitChanged()
-    return result
-  })
-  handle('git:create', async (_event, name: string) => {
-    if (!workspaceRoot) return { ok: false, error: '尚未打开工作区' }
-    const result = await createBranch(workspaceRoot, name)
-    if (result.ok) broadcastGitChanged()
-    return result
-  })
-  handle('quick:hide', () => { hideQuickWindow() })
-  handle('workspace:read-file', (_event, path: string) => readWorkspaceFile(workspaceRoot, path))
-  handle('workspace:read-image', (_event, path: string) => readWorkspaceImage(workspaceRoot, path))
-  handle('files:read-image', (_event, path: string) => readAttachmentImage(path))
-  handle('files:save-clipboard-image', (_event, dataUrl: string, name: string, type: string) => {
-    const match = /^data:[^;]+;base64,(.+)$/.exec(dataUrl)
-    if (!match) throw new Error('剪贴板图片格式无效')
-    const dir = join(appPaths.attachmentsDir, 'clipboard')
-    mkdirSync(dir, { recursive: true })
-    const safeExt = extname(name) || `.${type.split('/')[1] || 'png'}`
-    const target = join(dir, `${randomUUID()}${safeExt}`)
-    writeFileSync(target, Buffer.from(match[1], 'base64'))
-    return target
-  })
-  handle('workspace:list-directory', (_event, path: string) => listWorkspaceDirectory(workspaceRoot, path))
-  handle('workspace:search-files', (_event, query: string) => searchWorkspaceFiles(workspaceRoot, query))
-  // 右键菜单「在资源管理器中显示」：解析到绝对路径后定位文件；目录同样选中定位。
-  // 空串表示根目录（文件树根节点），解析到工作区根路径本身；resolveWorkspaceFile 拒绝空串，所以根目录单独走 resolveWorkspaceDirectory。
-  const resolveWorkspaceAbsolute = (path: string): string =>
-    path ? resolveWorkspaceFile(workspaceRoot, path) : resolveWorkspaceDirectory(workspaceRoot, '')
-  handle('workspace:reveal', (_event, path: string) => {
-    if (!workspaceRoot) return '尚未打开工作区'
-    try {
-      shell.showItemInFolder(resolveWorkspaceAbsolute(path))
-      return ''
-    } catch (error) {
-      return error instanceof Error ? error.message : '无法定位文件'
-    }
-  })
-  // 右键菜单「复制绝对路径」：与 reveal 同一套解析，空串表示根目录；返回绝对路径字符串供剪贴板写入。
-  handle('workspace:absolute-path', (_event, path: string) => {
-    if (!workspaceRoot) return '尚未打开工作区'
-    try {
-      return resolveWorkspaceAbsolute(path)
-    } catch (error) {
-      return error instanceof Error ? error.message : '无法解析路径'
-    }
-  })
-  // 右键菜单「用本地应用打开」：解析到绝对路径后交给系统默认应用（文件用默认软件，目录开资源管理器窗口）。
-  handle('workspace:open-external', async (_event, path: string) => {
-    if (!workspaceRoot) return '尚未打开工作区'
-    try {
-      return await shell.openPath(resolveWorkspaceFile(workspaceRoot, path))
-    } catch (error) {
-      return error instanceof Error ? error.message : '无法打开'
-    }
-  })
-  // 右键菜单「删除」：路径越界 / 不存在由 deleteWorkspaceEntry 返回错误，不抛异常；
-  // 删除成功的文件若已登记为 Artifact，同步移除记录并广播刷新 Artifacts 面板。
-  handle('workspace:delete', async (_event, path: string) => {
-    const result = await deleteWorkspaceEntry(workspaceRoot, path)
-    if (result.ok && workspaceRoot) {
-      if (removeArtifactsUnderPath(requireNamespace(), workspaceRoot, path)) mainWindow?.webContents.send('artifacts:changed')
-    }
-    return result
-  })
-  // 产物是磁盘文件的登记，文件可能被应用外删掉（资源管理器 / rm / 切分支）。
-  // 存在性现算不落库：切回分支文件回来了，条目自己就恢复正常，不需要用户手动收拾。
-  handle('artifacts:list', (_event, query: ArtifactQuery = {}) => store.listArtifacts(requireNamespace(), query)
-    .map((artifact) => (artifact.path ? { ...artifact, missing: !existsSync(join(artifact.workspaceId, artifact.path)) } : artifact)))
-  handle('artifacts:remove', (_event, artifactId: string) => {
-    store.removeArtifact(requireNamespace(), artifactId)
-    mainWindow?.webContents.send('artifacts:changed')
-  })
-  // 成果版本：一条记录 = 一个回合改过这个文件一次。不另起版本号，回合本身就是可追溯的标识。
-  handle('artifacts:versions', (_event, artifactId: string) => {
-    const namespace = requireNamespace()
-    const artifact = store.getArtifact(namespace, artifactId)
-    if (!artifact?.path) return []
-    return store.listFileVersions(namespace, artifact.path, artifact.conversationId ?? null)
-  })
-  handle('artifacts:versionDiff', (_event, artifactId: string, turnId: string) => {
-    const namespace = requireNamespace()
-    const artifact = store.getArtifact(namespace, artifactId)
-    if (!artifact?.path) return null
-    return store.getFileChangeDiff(namespace, turnId, artifact.path)
-  })
-  /**
-   * 恢复到某一回合改动之前：把当时记下的原文写回去。
-   * 这是一次真实写盘，因此走与工具链同一套路径校验，越界路径直接拒绝；
-   * 恢复本身也被记为一次新变更，用户还能再退回来。
-   */
-  handle('artifacts:restore', async (_event, artifactId: string, turnId: string) => {
-    const namespace = requireNamespace()
-    const artifact = store.getArtifact(namespace, artifactId)
-    if (!artifact?.path) return { ok: false, error: '这条成果没有对应的文件' }
-    const original = store.getFileChangeBeforeText(namespace, turnId, artifact.path)
-    if (original === null) return { ok: false, error: '这一版没有留下改动前的原文，无法恢复' }
-    let resolved: ReturnType<typeof resolveToolPath>
-    try {
-      resolved = resolveToolPath(artifact.path, artifact.workspaceId)
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : '路径无效' }
-    }
-    if (resolved.external) return { ok: false, error: '目标不在工作区内，拒绝写入' }
-    try {
-      const before = snapshotFile(resolved.absolutePath)
-      await writeFile(resolved.absolutePath, original, 'utf8')
-      const after = snapshotFile(resolved.absolutePath)
-      const diff = diffSnapshots(before, after)
-      // 恢复动作自己也进变更台账：turnId 用恢复回合的合成 id，和 Agent 写入区分开。
-      store.upsertFileChange(namespace, {
-        turnId: `restore-${turnId}`,
-        conversationId: artifact.conversationId ?? '',
-        runId: '',
-        path: artifact.path,
-        operation: 'update',
-        additions: diff.additions,
-        deletions: diff.deletions,
-        tools: ['restore'],
-        beforeHash: before.exists ? before.hash : null,
-        afterHash: after.exists ? after.hash : null,
-        diff: diff.text || null,
-        beforeText: before.exists && before.lines ? before.lines.join('\n') : null
-      })
-      store.upsertArtifact(namespace, { ...artifact, size: after.size })
-      mainWindow?.webContents.send('artifacts:changed')
-      return { ok: true }
-    } catch (error) {
-      return { ok: false, error: error instanceof Error ? error.message : '恢复失败' }
-    }
-  })
-  // 台账只读：运行与任务由 runLocalRun / executeSubAgent 写入，界面不修改它们。
-  handle('agent-runs:list', (_event, conversationId: string, limit?: number) => store.listAgentRunLedger(requireNamespace(), conversationId, limit ?? 20))
-  handle('agent-tasks:list', (_event, query: { runId?: string; conversationId?: string; turnId?: string; limit?: number } = {}) => store.listAgentTasks(requireNamespace(), query))
-  // 完整性校验要把上百 MB 的二进制全读一遍算 sha256，只在用户主动点「完整性校验」时做。
-  handle('runtime:status', (_event, verify?: boolean) => buildRuntimeReport({ installDir: runtimeInstallDir(), verify: Boolean(verify) }))
-  handle('runtime:repair', () => {
-    applyBundledRuntime(true)
-    return buildRuntimeReport({ installDir: runtimeInstallDir(), verify: true })
-  })
-  handle('doctor:run', async () => {
-    const checks = await probeTools(undefined, bundledTools)
-    checks.push(...await environmentChecks())
-    return buildDoctorReport(checks)
-  })
-  /**
-   * 导出诊断信息。内容由 diagnostics-export 显式挑字段拼出来，
-   * 后端地址、本机路径与凭据都不落进文件——白名单漏字段只是少一条信息，
-   * 黑名单漏字段就是把密钥写进去。
-   */
-  handle('doctor:export', async () => {
-    const checks = await probeTools(undefined, bundledTools)
-    checks.push(...await environmentChecks())
-    const doctor = buildDoctorReport(checks)
-    const namespace = requireNamespace()
-    const payload = renderDiagnosticsJson({
-      app: appRuntimeInfo(),
-      settings,
-      doctor,
-      runtime: buildRuntimeReport({ installDir: runtimeInstallDir(), verify: false }),
-      counts: {
-        conversations: store.conversationStats(namespace, true).total,
-        projects: store.listProjects(namespace).length,
-        skills: skillRegistry.list().length,
-        mcpServers: store.listMcpServers().length
-      },
-      generatedAt: Date.now()
-    })
-    const result = await dialog.showSaveDialog({
-      title: '导出诊断信息',
-      defaultPath: `fastagent-diagnostics-${new Date().toISOString().slice(0, 10)}.json`,
-      filters: [{ name: 'JSON', extensions: ['json'] }]
-    })
-    if (result.canceled || !result.filePath) return null
-    writeFileSync(result.filePath, payload, 'utf8')
-    return result.filePath
-  })
-  handle('agent-runs:resumable', (_event, conversationId: string) => {
-    const candidate = store.findResumableRun(requireNamespace(), conversationId)
-    // 全做完之后才中断的运行没有续跑价值，不给入口
-    return candidate && isResumable(candidate) ? candidate : null
-  })
-  handle('agent-runs:resume-prompt', (_event, runId: string) => {
-    const namespace = requireNamespace()
-    const run = store.getAgentRun(namespace, runId)
-    if (!run || run.status !== 'interrupted') return null
-    const candidate = store.findResumableRun(namespace, run.conversationId)
-    if (!candidate || candidate.runId !== runId) return null
-    return buildResumePrompt({
-      goal: candidate.goal,
-      reason: candidate.reason,
-      todos: store.listTodos(namespace, run.conversationId),
-      changedFiles: candidate.changedFiles
-    })
-  })
-  handle('memories:list', (_event, query: MemoryListQuery = {}) => store.listMemories(requireNamespace(), query))
-  handle('memories:turn-activity', (_event, turnId: string) => ({
-    recalled: store.listMemoryRecallsForTurn(requireNamespace(), turnId),
-    extracted: store.listMemories(requireNamespace(), { sourceTurnId: turnId, status: 'all', pageSize: 50 }).items
-  }))
-  handle('memories:conversation-activity', (_event, conversationId: string) => store.listMemoryActivityTurnIds(requireNamespace(), conversationId))
-  handle('memories:update', (_event, id: string, patch: MemoryUpdateInput) => {
-    const updated = store.updateMemory(requireNamespace(), id, patch)
-    mainWindow?.webContents.send('memories:changed')
-    return updated
-  })
-  handle('memories:remove', (_event, id: string) => {
-    store.removeMemory(requireNamespace(), id)
-    mainWindow?.webContents.send('memories:changed')
-  })
-  // 清空是物理删除，界面上已有二次确认；scope 缺省表示清掉当前账户的全部记忆。
-  handle('memories:clear', (_event, scope?: MemoryScope, scopeId?: string | null) => {
-    const removed = store.clearMemories(requireNamespace(), scope, scopeId ?? null)
-    mainWindow?.webContents.send('memories:changed')
-    return removed
-  })
-  handle('changes:list', (_event, turnId: string) => store.listFileChanges(requireNamespace(), turnId))
-  handle('changes:diff', (_event, turnId: string, path: string) => store.getFileChangeDiff(requireNamespace(), turnId, path))
-  // 只放行 http/https：javascript:/file:/data: 交给 shell.openExternal 会直接变成本机代码执行或任意文件打开。
-  handle('shell:open-external', async (_event, url: string) => {
-    if (!isExternalHttpUrl(url)) return '仅支持打开 http/https 链接'
-    try {
-      await shell.openExternal(url)
-      return ''
-    } catch (error) {
-      return error instanceof Error ? error.message : '打开链接失败'
-    }
-  })
-  handle('conversations:list', () => store.listConversations(requireNamespace()))
-  // 重载后恢复上次会话用：目标可能不在最近列表第一页，只靠分页结果找不到。
-  handle('conversations:get', (_event, conversationId: string) => store.getConversation(requireNamespace(), conversationId))
-  handle('conversations:list-page', (_event, query: ConversationPageQuery = {}) => store.listConversationsPage(requireNamespace(), query, Boolean(query.includeArchived)))
-  handle('conversations:history', (_event, conversationId: string) => store.listTurns(requireNamespace(), conversationId))
-  handle('turns:create', (_event, input) => {
-    const namespace = requireNamespace()
-    return store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: input.createdAt }, attachments: input.attachments || [], runtimeConfig: { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: store.getConversationRoot(namespace, input.conversationId) }, createdAt: input.createdAt })
-  })
-  handle('turns:update', (_event, turnId: string, patch) => store.updateTurn(requireNamespace(), turnId, patch))
-  handle('turns:delete', (_event, turnId: string) => store.deleteTurn(requireNamespace(), turnId))
-  handle('turns:restore', (_event, turn: ConversationTurn) => store.restoreTurn(requireNamespace(), turn))
-  handle('conversations:listToolCalls', (_event, turnId: string) => store.listToolCalls(requireNamespace(), turnId))
-  handle('conversations:contextSources', (_event, turnId: string) => store.listTurnContextSources(requireNamespace(), turnId))
-  handle('conversations:contextSourceTurns', (_event, conversationId: string) => store.listContextSourceTurnIds(requireNamespace(), conversationId))
-  handle('conversations:listTodos', (_event, conversationId: string) => store.listTodos(requireNamespace(), conversationId))
-  handle('conversations:listPermissionRules', () => store.listPermissionRules(requireNamespace()))
-  handle('conversations:upsertPermissionRule', (_event, rule: { toolKey: string; pattern: string; action: PermissionAction }) => {
-    const namespace = requireNamespace()
-    store.upsertPermissionRule(namespace, rule)
-    return store.listPermissionRules(namespace)
-  })
-  handle('conversations:removePermissionRule', (_event, toolKey: string, pattern: string) => store.removePermissionRule(requireNamespace(), toolKey, pattern))
-  handle('conversations:listPermissionProfiles', () => mergeProfiles(store.listPermissionProfiles(requireNamespace())))
-  handle('conversations:savePermissionProfile', (_event, profile: StoredPermissionProfile) => {
-    const namespace = requireNamespace()
-    const existing = mergeProfiles(store.listPermissionProfiles(namespace))
-    const current = existing.find((item) => item.id === profile.id)
-    // 新建档位才做重名与标识校验；改已有档位只要求名称非空。
-    if (!current) {
-      const error = validateProfileDraft({ id: profile.id, label: profile.label, hint: profile.hint, base: profile.base }, existing)
-      if (error) throw new Error(error)
-    } else if (!profile.label.trim()) {
-      throw new Error('档位名称不能为空')
-    }
-    store.savePermissionProfile(namespace, {
-      id: profile.id,
-      label: profile.label.trim(),
-      hint: profile.hint.trim(),
-      // 内置档的 base 与 builtin 不接受改写，否则出厂规则就找不回来了。
-      base: current?.builtin ? (current.base) : profile.base,
-      builtin: current?.builtin ?? false,
-      overrides: sanitizeOverrides(profile.overrides),
-      position: current?.position ?? existing.length
-    })
-    return mergeProfiles(store.listPermissionProfiles(namespace))
-  })
-  handle('conversations:removePermissionProfile', (_event, profileId: string) => {
-    const namespace = requireNamespace()
-    store.removePermissionProfile(namespace, profileId)
-    return mergeProfiles(store.listPermissionProfiles(namespace))
-  })
-  handle('conversations:create', (_event, input: { title: string; projectId?: string | null }) => {
-    const namespace = requireNamespace()
-    const id = `conversation-${randomUUID()}`
-    return store.createConversation(namespace, { id, title: input.title, projectId: input.projectId ?? null })
-  })
-  handle('conversations:setModel', (_event, conversationId: string, modelId: number | null) => {
-    store.setConversationModelId(requireNamespace(), conversationId, modelId)
-  })
-  handle('chat:set-permission', (_event, runId: string, preset: import('../shared/types').PermissionPreset | null) => {
-    // 只对还在跑的 run 生效；已结束的 run 写进去只会变成永不清理的残留。
-    const run = activeRuns.get(runId)
-    if (!run) return false
-    if (run.namespace !== requireNamespace()) throw new Error('运行不属于当前工作区')
-    if (preset === null || !mergeProfiles(store.listPermissionProfiles(run.namespace)).some((profile) => profile.id === preset)) throw new Error('权限档位不存在')
-    store.updateTurn(run.namespace, run.turnId, { runtimeConfig: { permission: preset } })
-    runPermissionOverrides.set(runId, preset)
-    reevaluatePendingApprovals(runId)
-    breadcrumb('run', `permission ${runId} -> ${preset ?? 'default'}`)
-    return true
-  })
-  // 已有 session 文件时以它所在目录为准：迁移前的老会话仍指向旧布局，按计算值会打开一个空目录。
-  handle('conversations:openSessionDirectory', (_event, conversationId: string) => {
-    const namespace = requireNamespace()
-    const sessionFile = store.getConversationSessionFile(namespace, conversationId)
-    const directory = sessionFile ? dirname(sessionFile) : conversationSessionDir(namespace, conversationId)
-    mkdirSync(directory, { recursive: true })
-    return shell.openPath(directory)
-  })
-  handle('conversations:rename', (_event, conversationId: string, title: string) => store.renameConversation(requireNamespace(), conversationId, title))
-  // 弹保存对话框导出会话；格式由对话框选的过滤器（扩展名）决定，取消时返回 null。
-  handle('conversations:export', async (_event, conversationId: string) => {
-    const namespace = requireNamespace()
-    const conversation = store.getConversation(namespace, conversationId)
-    if (!conversation) throw new Error('会话不存在')
-    const turns = store.listTurns(namespace, conversationId)
-    const options: Electron.SaveDialogOptions = {
-      defaultPath: join(appPaths.exportsDir, `${sanitizeFilename(conversation.title)}-${new Date().toISOString().slice(0, 10)}.md`),
-      filters: [
-        { name: 'Markdown', extensions: ['md'] },
-        { name: 'HTML', extensions: ['html'] },
-      ],
-    }
-    const result = mainWindow ? await dialog.showSaveDialog(mainWindow, options) : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
-    const content = exportFormatFromPath(result.filePath) === 'html'
-      ? buildConversationHtml(conversation, turns)
-      : buildConversationMarkdown(conversation, turns)
-    writeFileSync(result.filePath, content, 'utf8')
-    return result.filePath
-  })
-  handle('conversations:archive', (_event, conversationId: string) => store.archiveConversation(requireNamespace(), conversationId))
-  handle('conversations:remove', (_event, conversationId: string) => {
-    const namespace = requireNamespace()
-    store.deleteModelUsage(namespace, conversationId)
-    store.removeConversation(namespace, conversationId)
-  })
-  handle('conversations:clear', (_event, conversationId: string) => {
-    const namespace = requireNamespace()
-    if (!store.getConversation(namespace, conversationId)) throw new Error('会话不存在')
-    const deleted = store.clearConversationTurns(namespace, conversationId)
-    // 清空后当前会话的运行时缓存立即失效，下次发送会重建全新上下文。
-    void conversationRuntimeCache.invalidate(conversationRuntimeKey(namespace, conversationId))
-    return { deleted }
-  })
-}
-
-/** 移除某个工作区相对路径（及其子路径）上已登记的 Artifact，返回是否删掉了记录。 */
-function removeArtifactsUnderPath(namespace: string, workspaceId: string, relative: string): boolean {
-  const removed = store.listArtifacts(namespace, { workspaceId })
-    .filter((artifact) => artifact.path === relative || (artifact.path ?? '').startsWith(`${relative}/`))
-  for (const artifact of removed) store.removeArtifact(namespace, artifact.id)
-  return removed.length > 0
-}
-
-/** 写文件工具成功时登记 Artifact 并广播面板刷新；工作区外 / 非法路径直接忽略。 */
-function registerArtifactForPath(namespace: string, conversationId: string, turnId: string, runId: string, root: string | null, requested: string, source: string | undefined) {
-  if (!root) return
-  // 工具入参既可能是相对路径也可能是绝对路径（pi 的 write/edit schema 两者都收），
-  // 必须用工具链同一套解析：resolveWorkspaceFile 只认相对路径，绝对路径会被它当越界抛掉。
-  let resolved: ReturnType<typeof resolveToolPath>
-  try {
-    resolved = resolveToolPath(requested, root)
-  } catch {
-    return
-  }
-  if (resolved.external) return
-  // path.relative 在 Windows 给的是 `docs\a.md`，落库必须是 `docs/a.md`，
-  // 否则和文件树 / 预览用的相对路径形态对不上，点开就找不到文件。
-  const relative = normalizeWorkspaceRelative(resolved.relativePath)
-  if (!relative) return
-  const name = relative.split('/').pop() || relative
-  try {
-    // 工具报告改动但文件已不在：补丁删文件的场景。登记一条点不开的产物只会误导，
-    // 反过来把旧记录清掉。shell 目标是从命令行静态猜的（可能带 cd 换过目录），
-    // 猜错时删掉别人的记录代价太大，只跳过不删。
-    if (!existsSync(resolved.absolutePath)) {
-      const speculative = source === 'bash' || source === 'powershell'
-      if (!speculative && removeArtifactsUnderPath(namespace, root, relative)) mainWindow?.webContents.send('artifacts:changed')
-      return
-    }
-    store.upsertArtifact(namespace, {
-      id: createArtifactId(),
-      workspaceId: root,
-      conversationId,
-      // 同一路径在一个会话里只有一条记录，turnId 记的是最近一次写入所属回合。
-      turnId,
-      agentRunId: runId,
-      name,
-      type: inferArtifactType(name),
-      path: relative,
-      size: statSync(resolved.absolutePath).size,
-      source: source || 'write'
-    })
-    mainWindow?.webContents.send('artifacts:changed')
-  } catch (error) {
-    console.error('[artifact] 登记失败:', error)
-  }
-}
-
-/**
- * 验证命令按工作区缓存：探测要读四个清单文件，而每轮 run 都会问一次。
- * 清单文件在会话进行中几乎不变，缓存到进程生命周期即可；改了 package.json 需要重开应用，
- * 这个代价远小于每轮四次同步读盘顶在 IPC 前面。
- */
-const verificationCache = new Map<string, VerificationCommand[]>()
-
-function verificationCommandsFor(root: string | null): VerificationCommand[] {
-  if (!root) return []
-  const cached = verificationCache.get(root)
-  if (cached) return cached
-  try {
-    const manifests = readWorkspaceManifests(root)
-    const commands = detectVerificationCommands(manifests, manifests.packageManager)
-    verificationCache.set(root, commands)
-    return commands
-  } catch (error) {
-    console.error('[verification] 探测验证命令失败:', error)
-    return []
-  }
-}
-
-/**
- * Doctor 里依赖主进程运行时状态的那几项：shell、沙箱、工作区、能力。
- * 与 probeTools 分开，因为它们读的是模块级单例而不是外部可执行文件，没法做成纯函数。
- */
-async function environmentChecks(): Promise<DoctorCheck[]> {
-  const checks: DoctorCheck[] = []
-
-  const shellName = settings.shellPreference === 'powershell' ? 'powershell' : 'bash'
-  if (shellName === 'bash' && process.platform === 'win32') {
-    const bashPath = settings.bashPath?.trim()
-    const found = bashPath ? existsSync(bashPath) : Boolean(resolveBashPath({ bundledPath: bundledTools.bash }))
-    checks.push({
-      id: 'shell', label: 'Shell（bash）', category: 'shell',
-      status: found ? 'ok' : 'missing',
-      detail: found ? (bashPath || (bundledTools.bash ? '使用内置 bash' : '已在 PATH 中找到')) : '未找到 bash',
-      ...(found ? {} : { hint: '内置工具链缺失时可安装 Git for Windows，或在设置里改用 PowerShell' })
-    })
-  } else {
-    checks.push({ id: 'shell', label: `Shell（${shellName}）`, category: 'shell', status: 'ok', detail: '可用' })
-  }
-
-  try {
-    const capabilities = await sandboxManager.probe()
-    const ready = capabilities.status === 'ready'
-    const enabled = settings.sandbox?.enabled !== false
-    checks.push({
-      id: 'sandbox', label: 'Agent 沙箱', category: 'sandbox',
-      // 沙箱关着就不是问题，只是状态；开着却不可用才要提示
-      status: ready ? 'ok' : enabled ? 'error' : 'warn',
-      detail: ready ? '已就绪' : capabilities.reason ?? '不可用',
-      ...(ready || !enabled ? {} : { hint: '到设置 - 沙箱页执行一次初始化' })
-    })
-  } catch (error) {
-    checks.push({ id: 'sandbox', label: 'Agent 沙箱', category: 'sandbox', status: 'error', detail: error instanceof Error ? error.message : '探测失败' })
-  }
-
-  const root = workspaceRoot
-  if (!root) {
-    checks.push({ id: 'workspace', label: '工作区', category: 'workspace', status: 'warn', detail: '未选择工作区', hint: '在输入框选择一个项目目录后 Agent 才能读写文件' })
-  } else if (!existsSync(root)) {
-    checks.push({ id: 'workspace', label: '工作区', category: 'workspace', status: 'error', detail: `目录不存在：${root}`, hint: '重新选择工作区目录' })
-  } else {
-    const git = await resolveGitWorkspaceState(root)
-    checks.push({ id: 'workspace', label: '工作区', category: 'workspace', status: 'ok', detail: root })
-    checks.push({
-      id: 'git-repo', label: 'Git 仓库', category: 'workspace',
-      status: git ? 'ok' : 'warn',
-      detail: git ? `分支 ${git.branch}` : '当前工作区不是 Git 仓库',
-      ...(git ? {} : { hint: '不是仓库时无法展示分支与改动，可在资源面板初始化' })
-    })
-  }
-
-  try {
-    const abilities = await abilitiesService.listAbilities()
-    const enabled = abilities.filter((item) => item.enabled).length
-    checks.push({ id: 'abilities', label: '已启用能力', category: 'abilities', status: 'ok', detail: `${enabled} / ${abilities.length} 项已启用` })
-  } catch (error) {
-    checks.push({ id: 'abilities', label: '已启用能力', category: 'abilities', status: 'error', detail: error instanceof Error ? error.message : '读取失败' })
-  }
-
-  return checks
-}
-
-function executionInputForEvent(event: Omit<AgentEvent, 'runId'>, timestamp: number, current: ReturnType<typeof createExecutionState>): ExecutionInput | null {
-  const terminalType = event.type === 'completed' ? 'run_completed' : event.type === 'failed' ? 'run_failed' : event.type === 'cancelled' || event.type === 'interrupted' ? 'run_cancelled' : null
-  if (terminalType) return { type: terminalType, timestamp }
-  if (event.type === 'token' && current.activeThinkingId) return { type: 'assistant_content_started', eventId: `${current.runId}:assistant-content:${timestamp}`, stepId: current.activeStepId ?? undefined, thinkingId: current.activeThinkingId, timestamp }
-  if (event.type === 'thinking_started' || event.type === 'thinking_ended' || event.type === 'tool_started' || event.type === 'tool_result') return { type: event.type, eventId: event.eventId ?? (event.toolCallId ? `tool:${event.toolCallId}` : event.type === 'thinking_started' ? `${current.runId}:thinking:${timestamp}` : event.type === 'thinking_ended' ? current.activeThinkingId ?? undefined : undefined), stepId: event.stepId ?? current.activeStepId ?? undefined, toolCallId: event.toolCallId, thinkingId: event.thinkingId ?? (event.type === 'thinking_started' ? `${current.runId}:thinking:${timestamp}` : event.type === 'thinking_ended' ? current.activeThinkingId ?? undefined : undefined), status: event.status === 'failed' ? 'failed' : event.status === 'cancelled' ? 'cancelled' : event.type === 'tool_result' ? 'completed' : undefined, timestamp }
-  return null
-}
-
-async function runLocalRun(runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, mode: import('../shared/types').ConversationMode, modelId: number | null, thinkingLevel: import('../shared/types').ThinkingLevel, permission: import('../shared/types').PermissionPreset | null, modePrompt: string, planMode: boolean, attachments: import('../shared/types').Attachment[], signal: AbortSignal, acceptedAt = Date.now()) {  // 主进程累积一份助手文本：渲染进程切走会话后流式状态就没了，只有这份能在
-  // 终态时兜底落库。cancelled / failed 以及 completed 不带 text 的分支都靠它。
-  let streamedText = ''
-  // 思考全文：与回答正文分开累积，只落进 activity.thinking，不参与 textLength 与轨迹切分
-  let thinkingText = ''
-  // 再按思考轮次切一份：执行轨迹上每个 Thinked 组要能展开自己那一轮，靠全文只有第一个组有内容
-  const thinkingSegments: string[] = []
-  let sequence = 0
-  // 使用统计按「本轮用没用到」计一次，不是调用次数：better-sqlite3 是同步的，
-  // 每次工具调用都写一行会直接顶在 IPC 前面。
-  const usedAbilities = new Set<string>()
-  const onAbilityUsed: AbilityUsageSink = (type, id) => {
-    const key = `${type}::${id}`
-    if (usedAbilities.has(key)) return
-    usedAbilities.add(key)
-    try {
-      store.touchAbilityUsage(type, id)
-    } catch {
-      // 统计写失败不该影响这轮对话。
-    }
-  }
-  abilityUsageSink = onAbilityUsed
-  let execution = createExecutionState(runId, store.listTodos(namespace, conversationId))
-  let firstTokenAt: number | null = null
-  // 本轮结束后从 Pi 当前有效消息树生成快照；总量用 provider usage，分类按真实 session 消息校准。
-  let latestContextMeasurement: ContextMeasurement | undefined
-  // 快速对话窗口与主窗口共用同一套会话管线，事件需要双端投递
-  const sendEvent = (event: AgentEvent) => {
-    mainWindow?.webContents.send('chat:event', event)
-    sendQuickWindowEvent('chat:event', event)
-  }
-  const eventBatcher = createTokenEventBatcher(sendEvent, 16)
-  const emit = (event: Omit<AgentEvent, 'runId'>) => {
-    const timestamp = Date.now()
-    // 分段与执行轨迹的 Thinking 动作一一对应：轨迹每收到一个 thinking_started 就新增一个动作。
-    if (event.type === 'thinking_started') thinkingSegments.push('')
-    if (event.type === 'thinking' && event.text) {
-      if (!thinkingSegments.length) thinkingSegments.push('')
-      thinkingSegments[thinkingSegments.length - 1] += event.text
-    }
-    if (event.type === 'usageUpdated' && event.usageRecord) {
-      store.recordModelUsage(namespace, event.usageRecord)
-      event.usage = store.getModelUsage(namespace, conversationId, turnId)
-    }
-    // 四处状态（会话列表 / 台账 / 回合 / activity）统一由 projectRunState 一次算出，调用点不再各自判断。
-    const projection = projectRunState(event.type)
-    if (projection.runStatus) store.saveRunState(namespace, { conversationId, projectId: store.getConversation(namespace, conversationId)?.projectId ?? null, status: projection.runStatus, hasUnreadResult: projection.hasUnreadResult, updatedAt: timestamp })
-    // 非 token 事件携带「此刻已输出的可见正文长度」，执行轨迹按它在正文里切分文本段；
-    // token 分支在下方累计 streamedText，进落库分支时已是当前值。
-    if (event.type === 'todo_changed' && event.todos) execution = syncExecutionSteps(execution, event.todos)
-    const executionInput = executionInputForEvent(event, timestamp, execution)
-    if (executionInput) {
-      execution = reduceExecutionState(execution, executionInput)
-      event.eventId = executionInput.eventId
-      event.stepId = executionInput.stepId
-      event.thinkingId = executionInput.thinkingId
-    }
-    const fullEvent: AgentEvent = { runId, conversationId, turnId, timestamp, sequence: ++sequence, elapsedMs: timestamp - acceptedAt, textLength: streamedText.length, ...event, execution }
-    // 终态正文以累计的流式全文为准：event.text 只含最后一条 assistant 消息，而 textLength
-    // 与轨迹切分都按累计全文计算；完整轨迹与最终回答分开保存，避免执行过程污染最终回答。
-    if (streamedText && projection.terminal && projection.terminal !== 'cancelled') fullEvent.transcriptText = streamedText
-    // 终态带上思考全文：渲染进程的实时 turn 是自己拼的，拿不到主进程累积值，靠这个补齐
-    if (thinkingText && projection.terminal) fullEvent.thinkingText = thinkingText
-    if (thinkingSegments.length && projection.terminal) fullEvent.thinkingSegments = [...thinkingSegments]
-    // 流式增量只推给渲染进程：逐 token 落库既是每字一次写盘，又让助手文本在
-    // messageTokens 之外被 toolTokens 重复计一遍。完整文本由终态事件收尾。
-    if (event.type === 'token' || event.type === 'thinking') {
-      // 思考正文单独累积：不进 streamedText（不能混入回答），由后续落库分支写进 activity.thinking
-      if (event.type === 'thinking' && event.text) thinkingText += event.text
-      if (event.type === 'token' && event.text) {
-        streamedText += event.text
-        if (firstTokenAt === null) {
-          firstTokenAt = timestamp
-          console.info('[run-timing]', { runId, conversationId, turnId, phase: 'first_token', elapsedMs: timestamp - acceptedAt })
-        }
-      }
-      eventBatcher.emit(fullEvent)
-      return
-    }
-    // 本轮结束后基线快照没用了，留着只会一直占内存。
-    if (projection.ledgerStatus) {
-      clearRunBaselines(turnId)
-      // 终态之后闸门没有意义；留着只会让同 id 的后续查询看到一个永远暂停的门。
-      runPauseGates.delete(runId)
-      // 台账收尾与 turn 状态同源；finishAgentRun 只认第一次终态，重复调用不会覆盖结局。
-      store.finishAgentRun(namespace, runId, projection.ledgerStatus, event.detail ?? null, timestamp, event.errorKind ?? null)
-    }
-    // 写文件工具成功后主进程登记 Artifact 并广播，Artifacts 面板实时刷新。
-    if (event.type === 'file_changed' && event.path) {
-      const root = store.getConversationRoot(namespace, conversationId)
-      registerArtifactForPath(namespace, conversationId, turnId, runId, root, event.path, event.detail)
-    }
-    const turn = store.getTurn(namespace, turnId)
-    if (turn) {
-      const activity = turn.activity ?? { status: 'working' as const, startedAt: turn.createdAt, finishedAt: null, events: [] }
-      const write = resolveTurnWrite(projection, { turnStatus: turn.status, activityStatus: activity.status })
-      const finalText = projection.terminal ? (fullEvent.text || '') : ''
-      store.updateTurn(namespace, turnId, {
-        // 事件副本不带 execution：顶层已存一份最新快照，逐条再存一份会让 activity 体积随事件数平方增长。
-        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: fullEvent.transcriptText || activity.transcript, execution },
-        status: write.turnStatus,
-        assistantMessage: finalText ? { text: finalText, createdAt: new Date().toISOString() } : undefined
-      }, turn)
-    }
-    eventBatcher.emit(fullEvent)
-  }
-  store.startAgentRun(namespace, { runId, conversationId, turnId, mode, startedAt: acceptedAt })
-  emit({ type: 'run_started', phase: 'queued', detail: '请求已接收，正在排队', status: 'running' })
-  try {
-    if (!modelId) throw new Error('未选择可用模型')
-    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
-    const credentials = resolveModelCredentials(modelId)
-    // session 按会话共用，同 provider 换模型直接接着跑，完整历史（含工具调用）都在。
-    // 跨 provider 才需要兜底：旧消息不保证能被新 provider 接受，先把既有回合固化为摘要再重开 session。
-    const identity = modelRuntimeIdentity(credentials)
-    const hasProviderRuntime = store.hasProviderRuntime(namespace, conversationId, identity.provider)
-    // 只有换 provider 才要看历史。同 provider 续跑是常态，别为它每次都把整段历史读出来。
-    if (!hasProviderRuntime) {
-      const turns = store.listTurns(namespace, conversationId)
-      const historyBeforeCurrentTurn = turns.filter((turn) => turn.id !== turnId)
-      if (historyBeforeCurrentTurn.length && !latestSummaryText(namespace, conversationId)) {
-        const switchPolicy = resolvePolicy(settings, store.getContextPolicy(namespace, conversationId), conversationId)
-        const canCompact = splitTurns(turns, switchPolicy.keepRecentTurns).compressible.length > 0
-        if (canCompact) {
-          emit({ type: 'run_phase', phase: 'compacting', detail: '正在为新模型准备会话上下文', status: 'running' })
-          const switched = await compactConversation(namespace, conversationId, 'model-switch', credentials)
-          if (switched) emit({ type: 'compactionCompleted', context: switched.context, compaction: switched.compaction, detail: '新模型上下文已准备完成', status: 'completed' })
-        }
-      }
-    }
-    const context = refreshContext(namespace, conversationId, contextWindowFor(namespace, conversationId, modelId), modelId)
-    const policy = resolvePolicy(settings, store.getContextPolicy(namespace, conversationId), conversationId)
-    const recordRuntimeCompaction: NonNullable<RuntimeRunOptions['onCompaction']> = (event) => {
-      const compaction = store.recordCompaction(namespace, {
-        conversationId,
-        strategy: policy.strategy,
-        triggerReason: `pi-${event.reason}`,
-        beforeTokens: event.tokensBefore,
-        afterTokens: event.estimatedTokensAfter,
-        // Pi 可在应用单个回合内部切分，无法准确映射到应用回合范围。
-        coveredTurnStart: null,
-        coveredTurnEnd: null,
-        summaryId: null,
-        durationMs: event.durationMs
-      })
-      const compactedContext = refreshContext(namespace, conversationId, event.measurement.contextWindow, modelId, event.measurement)
-      emit({ type: 'compactionCompleted', context: compactedContext, compaction, detail: '会话内上下文压缩完成', status: 'completed' })
-    }
-    if (shouldCompact(policy, context)) {
-      const canCompactHistory = splitTurns(store.listTurns(namespace, conversationId), policy.keepRecentTurns).compressible.length > 0
-      if (canCompactHistory) {
-        emit({ type: 'run_phase', phase: 'compacting', detail: '正在压缩较早的会话上下文', status: 'running' })
-        const compacted = await compactConversation(namespace, conversationId, 'threshold', credentialsForConversation(namespace, conversationId, modelId))
-        if (compacted) emit({ type: 'compactionCompleted', context: compacted.context, compaction: compacted.compaction, detail: '上下文压缩完成', status: 'completed' })
-      } else {
-        emit({ type: 'run_phase', phase: 'compacting', detail: '上下文主要来自当前长任务，将由会话内压缩处理', status: 'completed' })
-      }
-    }
-    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
-    emit({ type: 'run_phase', phase: 'initializing', detail: '正在准备本地运行时', status: 'running' })
-    // cwd 只由会话归属决定：未归属会话不得继承界面上「当前打开的工作区」。
-    const conversationRoot = store.getConversationRoot(namespace, conversationId)
-    const agentContext = mode === 'agent' ? readAgentContextFiles({ projectRoot: conversationRoot }) : { files: [], errors: [] }
-    if (agentContext.errors.length) console.warn(`[agent-context] ${agentContext.errors.length} 个指令文件读取失败`)
-    const agentContextPrompt = mode === 'agent'
-      ? mergeAgentContextFiles(agentContext.files, buildFaDirectoryContext(appPaths))
-      : ''
-    // Windows 上 WSL stub 会让 bash 工具全线报错：这里先探测可用 bash，
-    // 探测不到（或用户显式配置的路径不可用）就整轮降级到 powershell。
-    // 记忆召回拼在本轮输入之前，绝不能并进 agentContextPrompt：那份内容参与下面的运行时缓存
-    // signature，逐轮变化会让每一轮都重建运行时（重连 MCP、重建沙箱）。
-    const memorySettings = settings.memory
-    const memoryProjectId = store.getConversation(namespace, conversationId)?.projectId ?? null
-    const recalled = memorySettings.enabled
-      ? recallMemories(store, { namespace, workspaceId: memoryProjectId, text: prompt, maxRecall: memorySettings.maxRecall })
-      : { hits: [], prompt: '' }
-    // 召回命中落日志表：会话内闭环要能回答「这一轮注入了什么」。失败不影响主流程。
-    if (recalled.hits.length) {
-      try { store.recordMemoryRecalls(namespace, conversationId, turnId, recalled.hits.map((hit) => hit.memory.id)) } catch (error) { console.warn('[memory] 召回日志写入失败:', error) }
-    }
-    // 项目知识库检索：与记忆同层注入（拼在本轮输入前），查询计划复用记忆的同一套分词。
-    let kbPrompt = ''
-    let kbEntries: KbEntry[] = []
-    if (memoryProjectId) {
-      try {
-        const kbPlan = buildMemoryQueryPlan(prompt)
-        if (!isEmptyQueryPlan(kbPlan)) {
-          kbEntries = store.searchKbEntries(namespace, memoryProjectId, kbPlan, 3)
-          kbPrompt = renderKbPrompt(kbEntries)
-        }
-      } catch (error) { console.warn('[kb] 知识库检索失败:', error) }
-    }
-    const effectivePrompt = withMemoryPrompt(`${kbPrompt ? `${kbPrompt}\n\n` : ''}${prompt}`, recalled.prompt)
-    const bashPath = resolveBashPath({ explicitPath: settings.bashPath, bundledPath: bundledTools.bash }) ?? undefined
-    const shellToolName = resolveShellToolName(settings.shellPreference, { explicitPath: settings.bashPath, bundledPath: bundledTools.bash })
-    let allowedAbilities: Ability[] = []
-    let mcpConfigs: ReturnType<LocalStore['listEnabledMcpRuntimeConfigs']> = []
-    // skill 与 MCP 两种模式都加载（chat 只有 read/MCP，没有写类工具）；
-    // Agent 可见能力统一从策略入口解析。
-    allowedAbilities = resolveAgentAbilities(settings.agentAbilityPolicy, await listAbilities())
-    const allowedMcpIds = new Set(allowedAbilities.filter((ability) => ability.type === 'mcp').map((ability) => ability.id))
-    mcpConfigs = store.listEnabledMcpRuntimeConfigs().filter((config) => allowedMcpIds.has(config.id))
-    // 本轮上下文来源落库：知识条目、可选中的 Skill、注入的规则文件。
-    // 与记忆召回日志同样的定位——运行结束后没有第二个地方能回答「这一轮用了什么」。失败不影响主流程。
-    try {
-      const skillRevisions = new Map(allowedAbilities
-        .filter((ability) => ability.type === 'skill' && ability.enabled)
-        .map((ability) => [ability.id, store.latestSkillRevision(ability.id)] as const))
-      store.recordTurnContextSources(namespace, conversationId, turnId, buildTurnContextSources({ kbEntries, abilities: allowedAbilities, ruleFiles: agentContext.files, skillRevisions }))
-    } catch (error) { console.warn('[context] 上下文来源写入失败:', error) }
-    const signature = createHash('sha256').update(JSON.stringify({
-      namespace,
-      conversationId,
-      conversationRoot,
-      mode,
-      credentials,
-      shellToolName,
-      abilities: allowedAbilities.map((ability) => ({ type: ability.type, id: ability.id, enabled: ability.enabled, filePath: 'filePath' in ability ? ability.filePath : undefined })),
-      mcpConfigs,
-      abilityPolicy: settings.agentAbilityPolicy,
-      subAgentEnabled: settings.subAgentEnabled,
-      // 自定义角色进的是 subagent 工具描述（即系统提示），改了必须重建运行时，
-      // 否则新角色在当前会话里一直不可见。
-      subAgents: settings.subAgentEnabled ? normalizeCustomSubAgents(settings.subAgents) : [],
-      contextPolicy: policy,
-      sandbox: mode === 'agent' ? settings.sandbox : null,
-      agentContext: agentContext.files.map((file) => ({ path: file.path, content: file.content, truncated: file.truncated }))
-    })).digest('hex')
-    const bridge = createApprovalBridge(runId, emit, conversationRoot)
-    // 必须定义在本轮作用域：运行时缓存的工厂只在 miss 时执行一次，把它写在工厂里会让
-    // 第二轮起的委派继续用首轮的 emit / runId / turnId / signal / bridge。
-    // 子运行的 signal 在「用户停止」和「子任务超时」两种情况下都会 abort，
-    // 只有父运行的 signal 能区分：与 subagent-scheduler 判定超时的口径保持一致。
-    const abortedTaskStatus = () => signal.aborted ? 'cancelled' as const : 'timeout' as const
-    const executeSubAgent = async (task: ScheduledSubAgentTask, childSignal: AbortSignal, parentToolCallId: string): Promise<SubAgentResult> => {
-      const config = resolveSubAgentConfig(task.agentId, normalizeCustomSubAgents(settings.subAgents))
-      if (!config) throw new Error(`未知 Sub-agent：${task.agentId}`)
-      const childRunId = randomUUID()
-      let output = ''
-      let forwarded = 0
-      const forwardContext = { taskId: task.taskId, agentId: config.id, agentName: config.name, parentToolCallId, parentRunId: runId, subAgentRunId: childRunId }
-      const childRuntimeOptions: RuntimeRunOptions = {
-        prompt: `${config.systemPrompt}\n\n${task.task}`,
-        mode: 'agent', modePrompt: '', planMode: true, credentials, createModelRuntime: createModelRuntimeForCredentials, thinkingLevel: config.thinkingLevel,
-        autoCompaction: false, permission: 'ask', attachments: [], workspaceRoot: conversationRoot,
-        signal: childSignal, contextSummary: null, sessionFile: null, agentDir: appPaths.agentDir,
-        namespace, conversationId, turnId, runId: childRunId, store, shellToolName, bashPath,
-        resolveRuleSet: () => buildRuleSet(namespace, 'ask', false), sessionOverrides: new Map(), requestApproval: bridge.requestApproval,
-        requestQuestion: bridge.requestQuestion, mcpBindings: [], sandbox: null,
-        subAgentExecution: undefined,
-        subAgentMetadata: { parentToolCallId, subAgentId: config.id, subAgentRunId: childRunId },
-        customSubAgents: [],
-        // 子 Agent 只读：planMode 只挡写文件与 shell，挡不住 todowrite —— 子运行与主运行共用
-        // namespace/conversationId，不收窄工具就能覆盖主 Agent 的待办。
-        toolAllowlist: config.tools,
-        onEvent: (event) => {
-          if (event.type === 'token' && event.text) output += event.text
-          if (event.type === 'completed' && event.text) output = event.text
-          // 逐 token 转发会让每个增量都触发一次整轮 activity 落库与 IPC，主进程直接被顶死。
-          const next = forwardSubAgentEvent(event, forwardContext, forwarded)
-          if (!next) return
-          if (!isSubAgentTerminalEvent(event.type)) forwarded += 1
-          emit(next)
-        }
-      }
-      const startedAt = Date.now()
-      // 委派落台账：turn.activity 里的 subagent 事件够渲染，但查询、统计与重启后的状态收敛都要靠这张表。
-      store.startAgentTask(namespace, {
-        taskId: task.taskId, runId, conversationId, turnId, parentToolCallId,
-        subAgentRunId: childRunId, agentId: config.id, agentName: config.name,
-        goal: task.task.slice(0, 2_000), startedAt
-      })
-      const { createPiSessionRuntime } = await loadPiRuntime()
-      let child: Awaited<ReturnType<typeof createPiSessionRuntime>> | null = null
-      try {
-        child = await createPiSessionRuntime(childRuntimeOptions)
-        await child.run(childRuntimeOptions)
-      } catch (error) {
-        store.finishAgentTask(namespace, task.taskId, {
-          status: childSignal.aborted ? abortedTaskStatus() : 'failed',
-          error: error instanceof Error ? error.message : String(error)
-        })
-        throw error
-      } finally {
-        await child?.dispose()
-      }
-      const bounded = truncateSubAgentOutput(output)
-      const handoff = parseSubAgentHandoff(bounded.output)
-      const status = childSignal.aborted ? abortedTaskStatus() : 'completed' as const
-      store.finishAgentTask(namespace, task.taskId, { status, summary: handoff?.goal?.slice(0, 500) ?? null })
-      return { taskId: task.taskId, agentId: config.id, agentName: config.name, status, output: bounded.output, handoff, truncated: bounded.truncated, startedAt, finishedAt: Date.now() }
-    }
-    const cacheKey = conversationRuntimeKey(namespace, conversationId)
-    const cached = await conversationRuntimeCache.getWithStatus(cacheKey, signature, async () => {
-      let mcpManager: LocalMcpManager | null = null
-      let mcpBindings: McpToolBinding[] = []
-      let sandboxSession: SandboxSession | null = null
-      let pi: PiSessionRuntime | null = null
-      const sessionOverrides = new Map<string, ApprovalDecision>()
-      try {
-        // MCP 两种模式都桥接；沙箱只在 agent 模式创建。
-        const [{ LocalMcpManager }, { createPiSessionRuntime }] = await Promise.all([loadMcpRuntime(), loadPiRuntime()])
-        mcpManager = new LocalMcpManager(mcpConfigs)
-        mcpBindings = await mcpManager.connect()
-        for (const diag of mcpManager.diagnostics) {
-          recordMcpStatus(diag.serverId, { ok: false, error: diag.error, tools: [], resourceCount: 0, promptCount: 0 })
-        }
-        if (mode === 'agent') {
-          const sandboxPolicy = buildSandboxPolicy(settings.sandbox, conversationRoot)
-          try {
-            sandboxSession = await sandboxManager.createSession({ workspacePath: conversationRoot, policy: sandboxPolicy, shell: shellToolName })
-          } catch (error) {
-            const notice = describeSandboxError(error)
-            emit(sandboxBlockedEvent(notice))
-            throw new Error(notice.title)
-          }
-          if (sandboxPolicy.enabled && sandboxSession.isolation === 'unsandboxed') emit(sandboxDegradedEvent(SANDBOX_DEGRADED_NOTICE))
-        }
-        const sessionFile = store.getConversationSessionFile(namespace, conversationId)
-        const runtimeOptions: RuntimeRunOptions = {
-          prompt: effectivePrompt,
-          mode,
-          modePrompt,
-          planMode,
-          credentials,
-          createModelRuntime: createModelRuntimeForCredentials,
-          thinkingLevel,
-          autoCompaction: policy.autoSummary && policy.strategy !== 'disabled',
-          permission,
-          attachments,
-          workspaceRoot: conversationRoot,
-          signal,
-          // agent 模式才探测：chat 模式没有 shell 工具，给了也用不上
-          verificationCommands: mode === 'agent' ? verificationCommandsFor(conversationRoot) : undefined,
-          contextSummary: sessionFile ? null : latestSummaryText(namespace, conversationId),
-          sessionFile,
-          sessionDir: conversationSessionDir(namespace, conversationId),
-          agentDir: appPaths.agentDir,
-          agentContextPrompt,
-          skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
-          mcpBindings,
-          // MCP 桥接扩展随运行时创建一次并跨轮复用，必须经由 sink 转发到当前这一轮的
-          // 去重窗口，直接捕获闭包会永远记在首轮上。
-          onAbilityUsed: (type, id) => abilityUsageSink?.(type, id),
-          onSessionFile: (path) => store.setConversationSessionFile(namespace, conversationId, path),
-          onEvent: emit,
-          onCompaction: recordRuntimeCompaction,
-          onRetry: () => store.bumpAgentRunRetry(namespace, runId),
-          retryLimits: { maxEmptyRetries: settings.limits.maxEmptyRetries, maxLengthContinuations: settings.limits.maxLengthContinuations },
-          // 闸门按需创建：没人按过暂停就不产生任何等待开销。
-          waitWhilePaused: (childSignal) => runPauseGates.get(runId)?.wait(childSignal),
-          namespace,
-          conversationId,
-          turnId,
-          runId,
-          store,
-          shellToolName,
-          bashPath,
-          resolveRuleSet: () => buildRuleSet(namespace, runPermissionOverrides.get(runId) ?? permission, settings.subAgentEnabled),
-          sessionOverrides,
-          requestApproval: bridge.requestApproval,
-          requestQuestion: bridge.requestQuestion,
-          sandbox: sandboxSession ? { manager: sandboxManager, session: sandboxSession } : null,
-          subAgentExecution: settings.subAgentEnabled ? { execute: executeSubAgent } : undefined,
-          customSubAgents: settings.subAgentEnabled ? normalizeCustomSubAgents(settings.subAgents) : []
-        }
-        pi = await createPiSessionRuntime(runtimeOptions)
-        const cachedRuntime: CachedConversationRuntime = {
-          pi,
-          mcpManager,
-          mcpBindings,
-          sandboxSession,
-          sessionOverrides,
-          async dispose() {
-            await pi?.dispose()
-            await mcpManager?.close()
-            if (sandboxSession) await sandboxManager.destroySession(sandboxSession).catch((error) => console.error('[sandbox] destroySession 失败:', error))
-          }
-        }
-        return cachedRuntime
-      } catch (error) {
-        await pi?.dispose().catch(() => undefined)
-        await mcpManager?.close().catch(() => undefined)
-        if (sandboxSession) await sandboxManager.destroySession(sandboxSession).catch(() => undefined)
-        throw error
-      }
-    })
-    conversationRuntimeCache.retain(cacheKey)
-    emit({ type: 'run_phase', phase: 'initializing', cacheHit: cached.cacheHit, detail: cached.cacheHit ? '已复用会话运行时' : '会话运行时已就绪', status: 'completed' })
-    // 运行时创建（MCP 连接、沙箱、扩展加载）耗时期间用户可能已点停止：
-    // 此时 signal 已 abort，consumeSession 里的 abort 监听还来不及注册，必须在这里拦截。
-    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
-    const sessionFile = store.getConversationSessionFile(namespace, conversationId)
-    await cached.value.pi.run({
-        prompt: effectivePrompt,
-        mode,
-        modePrompt,
-        planMode,
-        credentials,
-        thinkingLevel,
-        autoCompaction: policy.autoSummary && policy.strategy !== 'disabled',
-        permission,
-        attachments,
-        workspaceRoot: conversationRoot,
-        signal,
-        contextSummary: sessionFile ? null : latestSummaryText(namespace, conversationId),
-        sessionFile,
-        sessionDir: conversationSessionDir(namespace, conversationId),
-        agentDir: appPaths.agentDir,
-        agentContextPrompt,
-        skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
-        mcpBindings: cached.value.mcpBindings,
-        onAbilityUsed,
-        onSessionFile: (path) => store.setConversationSessionFile(namespace, conversationId, path),
-        onEvent: emit,
-        onCompaction: recordRuntimeCompaction,
-        onRetry: () => store.bumpAgentRunRetry(namespace, runId),
-        namespace,
-        conversationId,
-        turnId,
-        runId,
-        store,
-        shellToolName,
-        bashPath,
-        resolveRuleSet: () => buildRuleSet(namespace, runPermissionOverrides.get(runId) ?? permission, settings.subAgentEnabled),
-        sessionOverrides: cached.value.sessionOverrides,
-        requestApproval: bridge.requestApproval,
-        requestQuestion: bridge.requestQuestion,
-        sandbox: cached.value.sandboxSession ? { manager: sandboxManager, session: cached.value.sandboxSession } : null,
-        // 复用缓存运行时时，subagent 工具从 toolRuntimeRef 现取执行桥与自定义列表：
-        // 这两项必须逐轮下发，否则用的还是创建那一轮的闭包。
-        subAgentExecution: settings.subAgentEnabled ? { execute: executeSubAgent } : undefined,
-        customSubAgents: settings.subAgentEnabled ? normalizeCustomSubAgents(settings.subAgents) : []
-      })
-      // 压缩会改变有效消息树，必须从 Pi 当前 session 取快照，不能继续复用压缩前 usage。
-      latestContextMeasurement = cached.value.pi.getContextMeasurement()
-      // 记忆抽取：一次性模型调用，不进会话历史，也不等它完成——用户的回合到此已经结束，
-      // 抽取失败只记日志。userText 用原始输入，不能带上这一轮注入的记忆片段。
-      if (memorySettings.enabled && memorySettings.autoExtract && !signal.aborted && streamedText.trim()) {
-        // 抽取模型可以与会话模型不同（通常挑个更便宜的）。配置的模型已被删除时回落到会话模型，
-        // 不因为一条失效配置整轮不抽。
-        const extractionCredentials = memorySettings.extractModelId === null
-          ? credentials
-          : (() => { try { return resolveModelCredentials(memorySettings.extractModelId) } catch { return credentials } })()
-        void extractMemories(store, async (extractionPrompt) => {
-          const { promptModelOnce } = await loadPiRuntime()
-          return promptModelOnce({ credentials: extractionCredentials, prompt: extractionPrompt, agentDir: appPaths.agentDir, createModelRuntime: createModelRuntimeForCredentials })
-        }, { namespace, conversationId, turnId, runId, workspaceId: memoryProjectId, userText: prompt, assistantText: streamedText })
-          .then((result) => {
-            if (result.created.length || result.refreshedIds.length || result.supersededIds.length) mainWindow?.webContents.send('memories:changed')
-          })
-          .catch((error) => console.error('[memory] 抽取失败:', error))
-      }
-    if (process.env.FASTAGENT_LEGACY_PLACEHOLDER === '1') {
-    requireClient()
-    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
-    emit({ type: 'failed', detail: 'Pi 运行时适配器将在后端桌面凭据接口就绪后启用。', status: 'failed' })
-    }
-  } catch (error) {
-    const classified = classifyRunError(error)
-    if (classified.kind === 'cancelled') emit({ type: 'cancelled', detail: '已取消' })
-    else {
-      reportModelFailure(modelId, error, Date.now() - acceptedAt)
-      emit({ type: 'failed', detail: classified.message, status: 'failed', errorKind: classified.kind })
-    }
-  } finally {
-    breadcrumb('run', `finish ${runId}`)
-    // 先摘牌再做清理：终态事件已经发给界面了，界面收到后可能马上发下一条，
-    // 而清理里有 await；留在表里会让那一条撞上「该会话已有任务在运行」。
-    activeRuns.delete(runId)
-    await conversationRuntimeCache.release(conversationRuntimeKey(namespace, conversationId))
-    runPermissionOverrides.delete(runId)
-    emit({ type: 'run_phase', phase: 'cleanup', detail: '运行清理完成', status: 'completed' })
-    // 一轮结束后重算并广播上下文用量：优先用 pi 会话基于 provider usage 的数字，
-    // 而不是本地字符/4 估算，否则界面数字会一直远低于模型后台。
-    emit({ type: 'contextUpdated', context: refreshContext(namespace, conversationId, undefined, undefined, latestContextMeasurement) })
-    eventBatcher.dispose()
-    console.info('[run-timing]', { runId, conversationId, turnId, phase: 'completed', elapsedMs: Date.now() - acceptedAt, firstTokenMs: firstTokenAt === null ? null : firstTokenAt - acceptedAt })
-  }
+  registerAllIpc(handleIpc, mainContext)
 }
 
 /** 快速对话历史参与上下文的回合数上限：直接调接口不做压缩，超出的旧回合直接忽略。 */
-const QUICK_HISTORY_TURNS = 20
-
-/**
- * 快速对话执行体：直接调模型接口（runDirectChat），不创建 pi 运行时，
- * 无工具 / MCP / 沙箱 / 权限审批，上下文来自持久会话的最近若干回合。
- */
-async function runQuickChat(runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, modelId: number | null, thinkingLevel: import('../shared/types').ThinkingLevel, signal: AbortSignal, acceptedAt = Date.now()) {
-  let streamedText = ''
-  let thinkingText = ''
-  // 与 Agent 路径一致地按思考轮次切分，折叠层展开时每一轮各自成段。
-  const thinkingSegments: string[] = []
-  let sequence = 0
-  let execution = createExecutionState(runId, [])
-  let quickContextMeasurement: ContextMeasurement | undefined
-  const sendEvent = (event: AgentEvent) => {
-    mainWindow?.webContents.send('chat:event', event)
-    sendQuickWindowEvent('chat:event', event)
-  }
-  const eventBatcher = createTokenEventBatcher(sendEvent, 16)
-  // 快速对话无工具无压缩，落库只写事件与终态文本；token 不落库（与运行时路径一致）。
-  const emit = (event: Omit<AgentEvent, 'runId'>) => {
-    const timestamp = Date.now()
-    if (event.type === 'thinking_started') thinkingSegments.push('')
-    if (event.type === 'thinking' && event.text) {
-      if (!thinkingSegments.length) thinkingSegments.push('')
-      thinkingSegments[thinkingSegments.length - 1] += event.text
-    }
-    if (event.type === 'usageUpdated' && event.usageRecord) {
-      store.recordModelUsage(namespace, event.usageRecord)
-      event.usage = store.getModelUsage(namespace, conversationId, turnId)
-    }
-    const projection = projectRunState(event.type)
-    if (projection.runStatus) store.saveRunState(namespace, { conversationId, projectId: store.getConversation(namespace, conversationId)?.projectId ?? null, status: projection.runStatus, hasUnreadResult: projection.hasUnreadResult, updatedAt: timestamp })
-    const executionInput = executionInputForEvent(event, timestamp, execution)
-    if (executionInput) {
-      execution = reduceExecutionState(execution, executionInput)
-      event.eventId = executionInput.eventId
-      event.stepId = executionInput.stepId
-      event.thinkingId = executionInput.thinkingId
-    }
-    const fullEvent: AgentEvent = { runId, conversationId, turnId, timestamp, sequence: ++sequence, elapsedMs: timestamp - acceptedAt, textLength: streamedText.length, ...event, execution }
-    if (streamedText && projection.terminal && projection.terminal !== 'cancelled') fullEvent.transcriptText = streamedText
-    if (thinkingText && projection.terminal) fullEvent.thinkingText = thinkingText
-    if (thinkingSegments.length && projection.terminal) fullEvent.thinkingSegments = [...thinkingSegments]
-    if (event.type === 'token' || event.type === 'thinking') { eventBatcher.emit(fullEvent); return }
-    // 快速对话同样结算台账：不写的话进程被 kill 后这些 run 永远停在 running，
-    // markInterruptedAgentRuns 也看不到它们。
-    if (projection.ledgerStatus) store.finishAgentRun(namespace, runId, projection.ledgerStatus, event.detail ?? null, timestamp, event.errorKind ?? null)
-    const turn = store.getTurn(namespace, turnId)
-    if (turn) {
-      const activity = turn.activity ?? { status: 'working' as const, startedAt: turn.createdAt, finishedAt: null, events: [] }
-      const write = resolveTurnWrite(projection, { turnStatus: turn.status, activityStatus: activity.status })
-      const finalText = projection.terminal ? (fullEvent.text || '') : ''
-      store.updateTurn(namespace, turnId, {
-        // 事件副本不带 execution：顶层已存一份最新快照，逐条再存一份会让 activity 体积随事件数平方增长。
-        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: fullEvent.transcriptText || activity.transcript, execution },
-        status: write.turnStatus,
-        assistantMessage: finalText ? { text: finalText, createdAt: new Date().toISOString() } : undefined
-      }, turn)
-    }
-    eventBatcher.emit(fullEvent)
-  }
-  store.startAgentRun(namespace, { runId, conversationId, turnId, mode: 'chat', startedAt: acceptedAt })
-  emit({ type: 'run_started', phase: 'queued', detail: '请求已接收', status: 'running' })
-  try {
-    if (!modelId) throw new Error('未选择可用模型')
-    if (signal.aborted) throw new DOMException('已取消', 'AbortError')
-    const credentials = resolveModelCredentials(modelId)
-    // 只取已完成的回合拼上下文：当前 turn 刚建只有用户消息，过滤掉；无回复的失败回合跳过。
-    const priorTurns = store.listTurns(namespace, conversationId)
-      .filter((turn) => turn.id !== turnId)
-      .slice(-QUICK_HISTORY_TURNS)
-    const history = priorTurns.flatMap((turn) => turn.assistantMessage
-      ? [{ role: 'user' as const, text: turn.userMessage.text }, { role: 'assistant' as const, text: turn.assistantMessage.text }]
-      : [{ role: 'user' as const, text: turn.userMessage.text }])
-    emit({ type: 'run_phase', phase: 'initializing', detail: '正在连接模型', status: 'running' })
-    const { runDirectChat, classifyRunOutcome } = await loadPiRuntime()
-    const result = await runDirectChat({
-      prompt,
-      credentials,
-      thinkingLevel,
-      history,
-      signal,
-      createModelRuntime: createModelRuntimeForCredentials,
-      onToken: (text) => { streamedText += text; emit({ type: 'token', text }) },
-      onThinking: (text) => { thinkingText += text; emit({ type: 'thinking', text }) }
-    })
-    const usageRecord = result.usage
-      ? normalizeModelUsage(
-          { role: 'assistant', usage: result.usage, stopReason: result.stopReason, timestamp: Date.now() },
-          { conversationId, turnId, runId, modelId, provider: credentials.provider, modelName: credentials.model_name, baseUrl: credentials.base_url },
-          `${runId}:direct`
-        )
-      : null
-    if (usageRecord) emit({ type: 'usageUpdated', usageRecord: { ...usageRecord, status: result.stopReason === 'error' ? 'failed' : result.stopReason === 'aborted' ? 'cancelled' : 'completed' } })
-    quickContextMeasurement = contextMeter.measure({
-      modelId,
-      provider: credentials.provider,
-      contextWindow: credentials.context_window || 128_000,
-      turns: [...priorTurns.map((turn) => ({ user: turn.userMessage.text, assistant: turn.assistantMessage?.text })), { user: prompt, assistant: result.text }],
-      usage: result.usageTokens === null ? undefined : { inputTokens: result.usageTokens }
-    })
-    if (result.stopReason === 'length') {
-      const outcome = classifyRunOutcome({ content: [{ type: 'text', text: result.text }], stopReason: result.stopReason, usage: result.usage }, { contextWindow: credentials.context_window || 128_000, maxTokens: credentials.max_tokens || 8_192 })
-      emit({ type: 'interrupted', text: result.text, detail: outcome.reason, status: 'interrupted' })
-    } else emit({ type: 'completed', text: result.text, detail: '回答完成', status: 'completed' })
-  } catch (error) {
-    const classified = classifyRunError(error)
-    if (classified.kind === 'cancelled') emit({ type: 'cancelled', detail: '已取消' })
-    else {
-      reportModelFailure(modelId, error, Date.now() - acceptedAt)
-      emit({ type: 'failed', detail: classified.message, status: 'failed', errorKind: classified.kind })
-    }
-  } finally {
-    breadcrumb('run', `quick-finish ${runId}`)
-    activeRuns.delete(runId)
-    emit({ type: 'contextUpdated', context: refreshContext(namespace, conversationId, undefined, modelId, quickContextMeasurement) })
-    eventBatcher.dispose()
-    console.info('[run-timing]', { runId, conversationId, turnId, phase: 'quick-completed', elapsedMs: Date.now() - acceptedAt })
-  }
-}
 
 async function restoreSession() {
   const account = store.getLatestAccount()
@@ -3126,6 +1506,7 @@ app.whenReady().then(async () => {
   // 否则表现是「进程活着但没有界面」，用户看到的就是重启后白屏 / 点托盘无反应。
   try {
     migrateLegacyData(appPaths)
+    healAgentSettings(appPaths)
     writeDataRootLocator(appPaths.platformUserDataDir, appPaths.dataRoot)
     store = new LocalStore(appPaths.databasePath)
     modelConnectionService = new ModelConnectionService(store.modelConnections(), {

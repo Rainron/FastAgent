@@ -67,6 +67,15 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
     })
   }
 
+  /**
+   * 取当前活着的运行时，不创建、不校验 signature、不刷新 lastUsedAt。
+   * 手动压缩要优先用活着的那个 session：另开一份去压，缓存里的 agent.state 会与
+   * 刚追加了 compaction entry 的 session 文件分叉。
+   */
+  peek(conversationId: string): T | null {
+    return this.entries.get(conversationId)?.value ?? null
+  }
+
   invalidate(conversationId: string): Promise<void> {
     return this.operations.run(conversationId, async () => {
       const entry = this.entries.get(conversationId)

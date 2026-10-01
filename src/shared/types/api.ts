@@ -1,5 +1,6 @@
 import type { PermissionProfile, StoredPermissionProfile } from '../permission-profiles'
 import type { PermissionAction } from '../permission-rules'
+import type { ModelParameterOverride } from '../model-parameters'
 import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpServerDetail, McpTestStatus, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord } from './abilities'
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
 import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
@@ -7,11 +8,11 @@ import type { AgentEvent, ToolCallRecord } from './agent-events'
 import type { AgentRunChanges, FileVersionRecord } from './changes'
 import type { ActiveRunInfo, AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
 import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
-import type { ApprovalDecision, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
+import type { ApprovalDecision, ApprovalRequest, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
 import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageOverview, ModelUsageSummary, TurnContextSource } from './context'
 import type { Attachment, ConversationDetailed, ConversationInspector, ConversationPageQuery, ConversationRecord, ConversationStats, ConversationTurn, ConversationTurnPatch } from './conversation'
 import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, MemoryUpdateInput } from './memory'
-import type { LocalModelInput, LocalModelSummary, LocalModelTestResult } from './models'
+import type { LocalModelSummary, LocalModelTestResult } from './models'
 import type { ModelConnectionsApi } from './model-connections'
 import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, PluginQuery } from './plugins'
 import type { RuntimeReport } from './runtime'
@@ -53,6 +54,15 @@ export interface FastAgentApi {
     hideToTray(): Promise<boolean>
     quit(): Promise<boolean>
   }
+  /** 自绘标题栏的窗口控制；系统按钮已关闭，最小化/最大化/关闭全部经由这里。 */
+  window: {
+    minimize(): Promise<void>
+    /** 返回切换之后的最大化状态。 */
+    toggleMaximize(): Promise<boolean>
+    close(): Promise<void>
+    isMaximized(): Promise<boolean>
+    onMaximizedChange(listener: (maximized: boolean) => void): () => void
+  }
   startup: {
     /** 首屏数据已就绪并完成一次绘制；主进程据此显示主窗口并淡出启动页。 */
     ready(): Promise<void>
@@ -86,11 +96,15 @@ export interface FastAgentApi {
   models: {
     localList(): Promise<LocalModelSummary[]>
     onChanged(listener: () => void): () => void
-    localCreate(input: LocalModelInput): Promise<LocalModelSummary>
-    localUpdate(id: number, input: LocalModelInput): Promise<LocalModelSummary>
-    localDelete(id: number): Promise<void>
     /** 模型对话连通性测试：云端账号 / 本地服务连接 / 旧版独立本地模型按 id 通用，发送短对话校验真实回复。 */
     testDialogue(id: number): Promise<LocalModelTestResult>
+    /**
+     * 云端模型的本地参数覆盖。key 是 `provider\tmodel_name`，覆盖永远优先于云端下发值。
+     * 连接内模型不走这里——它们的参数直接存在自己的配置里。
+     */
+    listOverrides(): Promise<Array<{ key: string; override: ModelParameterOverride }>>
+    /** 传空对象即清除该模型的全部覆盖。 */
+    setOverride(provider: string, modelName: string, override: ModelParameterOverride): Promise<ModelParameterOverride>
   }
   modelConnections: ModelConnectionsApi
   doctor: {
@@ -190,8 +204,11 @@ export interface FastAgentApi {
   }
   chat: {
     send(input: { conversationId: string; turnId?: string; mode: ConversationMode; modelId: number | null; thinkingLevel: ThinkingLevel; permission: PermissionPreset | null; modePrompt: string; /** 计划模式：写入类工具在主进程被硬拒绝 */ planMode: boolean; prompt: string; attachments: Attachment[] }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
-    /** 快速对话专用：直接调模型接口，不走 pi 运行时，无工具 / MCP / 权限审批 */
-    quickSend(input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: ThinkingLevel }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
+    /**
+     * 快速对话专用通道。chat 模式直接调模型接口，不走 pi 运行时，无工具 / MCP / 权限审批；
+     * mode 传 agent 时改走与主窗口相同的运行时（工具、沙箱、审批齐全），未绑定项目则用快速工作区。
+     */
+    quickSend(input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: ThinkingLevel; mode?: ConversationMode; permission?: PermissionPreset | null }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
     cancel(runId: string): Promise<void>
     /**
      * 暂停：在下一次工具调用前停住。已经发出的模型请求与正在执行的工具不受影响，
@@ -207,6 +224,8 @@ export interface FastAgentApi {
     listStates(): Promise<ConversationRunState[]>
     /** 主进程里仍在跑的 run；界面重载后靠它接回运行中的会话与回合。 */
     listActive(): Promise<ActiveRunInfo[]>
+    /** 仍在等答复的审批与提问；界面重载后靠它把弹层重新挂回来，否则整轮会一直停着。 */
+    listPendingApprovals(): Promise<Array<{ runId: string; request: ApprovalRequest; conversationId: string | null }>>
     saveState(state: ConversationRunState): Promise<void>
     markRead(conversationId: string): Promise<void>
   }
@@ -303,6 +322,8 @@ export interface FastAgentApi {
     list(): Promise<ProjectRecord[]>
     listPage(query?: PageQuery): Promise<PageResult<ProjectRecord>>
     add(input: { path: string; name?: string }): Promise<ProjectRecord>
+    /** 刷新 updated_at，把项目顶到侧栏工作区列表最前；项目已删除时返回 null。 */
+    touch(id: string): Promise<ProjectRecord | null>
     archive(id: string): Promise<void>
     remove(id: string): Promise<void>
   }
@@ -382,6 +403,8 @@ export interface FastAgentApi {
   quick: {
     /** 隐藏快速对话窗口（Esc / 失焦由主进程处理，这里是渲染进程主动隐藏入口） */
     hide(): Promise<void>
+    /** 钉住小窗：agent 运行与待审批期间失焦不隐藏，否则审批无处可点 */
+    setPinned(pinned: boolean): Promise<void>
   }
   shell: {
     // 成功返回空串，失败返回系统给的错误信息

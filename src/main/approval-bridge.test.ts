@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { createApprovalBridge, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
+import { createApprovalBridge, listPendingApprovals, reevaluatePendingApprovals, respondPendingApproval, settlePendingRequests } from './approval-bridge'
 import type { AgentEvent, ApprovalRequest } from '../shared/types'
 import type { PermissionAction } from '../shared/permission-rules'
 
@@ -35,6 +35,27 @@ describe('权限改变后重新判定审批', () => {
     expect(reevaluatePendingApprovals('run-1')).toBe(0)
     for (const event of [...events]) respondPendingApproval({ runId: 'run-1', id: event.approval!.id, decision: 'once', answer: '[]' })
     await Promise.all(promises)
+  })
+
+  it('列出挂起请求供界面重载后接回，可按 run 过滤，结算后即消失', async () => {
+    const bridge = createApprovalBridge('run-1', () => undefined, request.cwd)
+    const other = createApprovalBridge('run-2', () => undefined, request.cwd)
+    const pending = bridge.requestApproval(request, new AbortController().signal)
+    const question = other.requestQuestion('tool-1', [], new AbortController().signal)
+    for (const promise of [pending, question]) void promise.catch(() => undefined)
+
+    expect(listPendingApprovals()).toHaveLength(2)
+    const onlyFirst = listPendingApprovals(new Set(['run-1']))
+    expect(onlyFirst).toHaveLength(1)
+    expect(onlyFirst[0]).toMatchObject({ runId: 'run-1', request: { kind: 'permission', tool: 'read' } })
+
+    respondPendingApproval({ runId: 'run-1', id: onlyFirst[0].request.id, decision: 'once' })
+    await expect(pending).resolves.toBe('once')
+    expect(listPendingApprovals(new Set(['run-1']))).toHaveLength(0)
+
+    const [remaining] = listPendingApprovals(new Set(['run-2']))
+    respondPendingApproval({ runId: 'run-2', id: remaining.request.id, decision: 'once', answer: '[]' })
+    await expect(question).resolves.toEqual([])
   })
 
   it('取消后的请求不会因切换权限恢复', async () => {

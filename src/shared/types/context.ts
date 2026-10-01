@@ -97,6 +97,12 @@ export interface ContextPolicy {
   strategy: ContextStrategy
   autoSummary: boolean
   triggerRatio: number | null
+  /** 压缩后期望回落到的上下文占比；留空跟随策略默认值。 */
+  targetRatio: number | null
+  /**
+   * 仅作用于跨 provider 换模型时的回合摘要。
+   * 常规压缩由 Pi 在会话内按 token 保留，没有「轮」这个概念。
+   */
   keepRecentTurns: number | null
   inheritGlobal: boolean
 }
@@ -128,6 +134,12 @@ export interface ContextSummary {
   coveredTurnEnd: string | null
   inputTokens: number
   outputTokens: number
+  /**
+   * turns：按应用回合切出来的摘要，可以作为提示词种子重开 session。
+   * session：Pi 在会话内压出来的摘要，只用于展示与审计——它对应的保留区消息不在摘要里，
+   * 拿它当种子重开会丢掉那部分上下文。
+   */
+  source: 'turns' | 'session'
   createdAt: string
 }
 
@@ -141,6 +153,8 @@ export interface CompactionHistory {
   coveredTurnStart: string | null
   coveredTurnEnd: string | null
   summaryId: string | null
+  /** 关联摘要的正文，压缩历史面板据此展开；列表查询时一并带出，避免逐条再查。 */
+  summaryText?: string | null
   durationMs: number
   createdAt: string
 }

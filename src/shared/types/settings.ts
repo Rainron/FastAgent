@@ -100,6 +100,12 @@ export type BaseFontSize = 'small' | 'medium' | 'large'
 /** 界面密度；紧凑档降低列表行高与内边距 */
 export type UiDensity = 'comfortable' | 'compact'
 
+/** 底色明度档位；整条 canvas/sidebar/surface 阶梯一起平移。dim 更沉、bright 更亮，两套主题同向 */
+export type SurfaceLevel = 'dim' | 'standard' | 'bright'
+
+/** 对话正文（--text-body）与底色的对比强度；深色下 strong 更亮，浅色下 strong 更暗 */
+export type BodyTextContrast = 'soft' | 'standard' | 'strong'
+
 /**
  * 运行上限。三项都作用在真实存在的机制上：
  * 并发上限交给 RunScheduler，两项重试上限交给 pi 运行时的自动重试，
@@ -125,10 +131,15 @@ export interface AppSettings {
   accentColor: AccentColorKey
   baseFontSize: BaseFontSize
   uiDensity: UiDensity
+  surfaceLevel: SurfaceLevel
+  bodyTextContrast: BodyTextContrast
   sidebarGlass: boolean
   autoSummary: boolean
   contextStrategy: ContextStrategy
   triggerRatio: number | null
+  /** 压缩后期望回落到的上下文占比；留空跟随策略默认值。 */
+  targetRatio: number | null
+  /** 仅作用于跨 provider 换模型时的回合摘要；常规压缩由 Pi 在会话内按 token 保留。 */
   keepRecentTurns: number | null
   /** agent 模式使用的 shell 工具；Windows 默认 Git Bash，探测不到可用 bash 时自动改用 PowerShell */
   shellPreference: 'bash' | 'powershell'

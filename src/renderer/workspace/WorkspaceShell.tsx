@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Command, Moon, PanelLeft, PanelRight, Sun } from 'lucide-react'
-import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, AuthSnapshot, BootstrapData, ConversationMode, ConversationRunState, ConversationTurn, GitOperationResult, LocalModelInput, LocalModelSummary, SearchResult, TodoItem, ToolCallRecord } from '../../shared/types'
-import { createStreamBuffer } from '../ai-response/stream-buffer'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ArrowDown, ArrowUp, PanelRight } from 'lucide-react'
+import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, AuthSnapshot, BootstrapData, ConversationMode, ConversationRunState, ConversationTurn, GitOperationResult,  LocalModelSummary, SearchResult, TodoItem, ToolCallRecord } from '../../shared/types'
 import { formatFileReference, type FileReference } from '../ai-response/file-reference'
 import { ResponseActionsContext, type ResponseActions } from '../ai-response/response-context'
 import { AgentRunBar } from '../composer/AgentRunBar'
@@ -18,7 +17,7 @@ import { EmptyConversation, MessageList } from '../conversation/MessageList'
 import { LightboxLayer } from '../conversation/Lightbox'
 import { FindBar } from '../conversation/FindBar'
 import { MessageContextMenu, selectionText, type ContextMenuItem } from '../conversation/message-context-menu'
-import { nextFollowState, scrollNavAction, type ScrollNavAction } from '../conversation/auto-scroll'
+import type { ScrollNavAction } from '../conversation/auto-scroll'
 import { dropNextQueuedPrompt, enqueuePrompt, removeQueuedPrompt, takeNextQueuedPrompt, type QueuedPrompt } from '../conversation/prompt-queue'
 import { isRunConflictError } from '../../shared/active-runs'
 import { cleanIpcError } from '../ipc-error'
@@ -26,6 +25,7 @@ import { conversationModelId, defaultThinkingLevel, initialSelectedModelId, merg
 import { subscribeLocalModels } from '../local-model-sync'
 import { defaultModePrompts, modePromptFor, normalizeSavedModePrompt, withPlanModePrompt, type ModePrompts } from '../mode-prompts'
 import { defaultPermissionForMode } from '../permissions'
+import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../../shared/model-context-windows'
 import { findProfile, mergeProfiles, type PermissionProfile } from '../../shared/permission-profiles'
 import { ResourcePanel } from '../resource-panel/ResourcePanel'
 import type { SettingsCategory } from '../settings/SettingsPage'
@@ -41,10 +41,20 @@ import { MOTION_DURATIONS } from '../motion'
 import { abilitiesNeedingAttention } from '../features/abilities/ability-view'
 import { useAbilities } from '../features/abilities/hooks/useAbilities'
 import { SectionView } from './SectionView'
+import { WorkspaceTitlebar } from './WorkspaceTitlebar'
 import { Sidebar, ItemActions } from './Sidebar'
-import { useAgentEvents } from './use-agent-events'
-import { useAppShortcuts } from './use-app-shortcuts'
-import { useGitWorkspace } from './use-git-workspace'
+import { buildInspectorData } from '../conversation/inspector-data'
+import { buildMessageMenuItems } from '../conversation/message-menu-items'
+import { useAgentEvents } from './hooks/use-agent-events'
+import { useConversationScroll } from './hooks/use-conversation-scroll'
+import { useEffectiveDark } from './hooks/use-effective-dark'
+import { useFindBar } from './hooks/use-find-bar'
+import { useNotice } from './hooks/use-notice'
+import { usePlanMode } from './hooks/use-plan-mode'
+import { useStreamBuffers } from './hooks/use-stream-buffers'
+import { useTurnActivitySets } from './hooks/use-turn-activity-sets'
+import { useAppShortcuts } from './hooks/use-app-shortcuts'
+import { useGitWorkspace } from './hooks/use-git-workspace'
 import type { PendingApproval, WorkspaceConversation, WorkspaceProject, WorkspaceSection } from './workspace-types'
 
 const scrollNavLabel: Record<Exclude<ScrollNavAction, 'none'>, string> = {
@@ -56,8 +66,9 @@ const scrollNavLabel: Record<Exclude<ScrollNavAction, 'none'>, string> = {
 /** 侧栏「最近对话」只取这么多条；再往前翻走会话中心。 */
 const RECENT_CONVERSATION_LIMIT = 20
 
-/** 模型未配置上下文窗口时运行时使用的默认值，与主进程 pi-runtime 保持一致。 */
-const DEFAULT_CONTEXT_WINDOW = 128000
+/** 点了停止之后最多等这么久终态事件；再不来就在界面上自行收尾。 */
+const CANCEL_TERMINAL_TIMEOUT_MS = 8_000
+
 
 /**
  * 「重载前停在哪个会话」存在 sessionStorage 而不是偏好库：它只该在同一次运行内的
@@ -79,27 +90,13 @@ function writeLastConversationId(conversationId: string | null) {
 
 /** 上下文健康度的初始值，/clear 与新建会话时重置用。 */
 const EMPTY_CONTEXT_HEALTH: ContextHealthData = { estimatedTokens: 0, contextWindow: DEFAULT_CONTEXT_WINDOW, messageTokens: 0, toolTokens: 0, systemTokens: 0, compactionCount: 0, latestCompactionAt: null }
-// 空集合也用模块级常量：MessageList 是 memo 组件，每次渲染新建 Set 会穿透 memo。
-const EMPTY_MEMORY_TURN_IDS: ReadonlySet<string> = new Set()
-const EMPTY_CONTEXT_SOURCE_TURN_IDS: ReadonlySet<string> = new Set()
 
 export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSettingsChange }: { auth: AuthSnapshot; theme: AppTheme; onThemeChange: (theme: AppTheme) => void; settings: AppSettings | null; onSettingsChange: (patch: Partial<AppSettings>) => void }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [sidebarSections, setSidebarSections] = useState<SidebarSectionState>({ workspace: true, recent: true })
   const [artifactOpen, setArtifactOpen] = useState(false)
   const [mode, setMode] = useState<ConversationMode>('chat')
-  // 计划模式：开启后本回合只产出实施计划；Shift+Tab 随时切换。
-  const [planMode, setPlanMode] = useState(false)
-  // Shift+Tab 切换计划模式：全局监听让焦点在输入框外也能切，同时阻止默认的焦点反向移动。
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Tab' || !event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) return
-      event.preventDefault()
-      setPlanMode((current) => !current)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  const { planMode, setPlanMode } = usePlanMode()
 
   const [permission, setPermission] = useState<import('../../shared/types').PermissionPreset>('ask')
   // 档位可在设置页增删改，切换分区时重新拉一次即可，不必为它做实时推送。
@@ -123,6 +120,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
   const [skillDraft, setSkillDraft] = useState<SkillDraft | null>(null)
   const [settingsRequest, setSettingsRequest] = useState(0)
+  // 从回合来源清单深链到「能力」页；nonce 保证连点同一个 Skill 也能重新展开详情。
+  const [abilityRequest, setAbilityRequest] = useState<{ abilityId: string; nonce: number } | null>(null)
   const [navigation, setNavigation] = useState<{ entries: WorkspaceSection[]; index: number }>({ entries: ['chats'], index: 0 })
   const [conversationItems, setConversationItems] = useState<WorkspaceConversation[]>([])
   const [batchConversationItems, setBatchConversationItems] = useState<WorkspaceConversation[]>([])
@@ -158,7 +157,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [recentModelIds, setRecentModelIds] = useState<number[]>([])
   const [preferencesLoaded, setPreferencesLoaded] = useState(false)
   const [turns, setTurns] = useState<ConversationTurn[]>([])
-  const [undoTurn, setUndoTurn] = useState<ConversationTurn | null>(null)
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null)
   const [runIdsByConversation, setRunIdsByConversation] = useState<Record<string, string>>({})
   const [runStates, setRunStates] = useState<Record<string, ConversationRunState>>({})
@@ -180,32 +178,14 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setComposerHeight(next)
     if (pinned) setComposerHeightPinned(true)
   }, [])
-  const [notice, setNotice] = useState('')
-  /** 提示条上的附加动作；启动告警用它挂「查看日志」，撤销仍走 undoTurn 自己的分支。 */
-  const [noticeAction, setNoticeAction] = useState<{ label: string; run: () => void } | null>(null)
-  const [noticeClosing, setNoticeClosing] = useState(false)
+  // notice / noticeClosing 目前没有渲染方（提示条 UI 缺失，.toast 样式仍在 styles.css 里），
+  // 这里只取写入口，保持既有行为不变。
+  const { setNotice, setNoticeAction } = useNotice()
   const [artifactFile, setArtifactFile] = useState<FileReference | null>(null)
-  const [scrollNav, setScrollNav] = useState<ScrollNavAction>('none')
-  const [headerStuck, setHeaderStuck] = useState(false)
-  // 标题栏主题按钮按「实际生效」的亮暗显示日月；system 主题跟随系统变化时同步刷新。
-  const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches)
-  useEffect(() => {
-    const query = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
-    query.addEventListener('change', onChange)
-    return () => query.removeEventListener('change', onChange)
-  }, [])
-  const effectiveDark = theme === 'dark' || (theme === 'system' && systemDark)
-  const scrollRef = useRef<HTMLDivElement>(null)
-  // 是否跟随底部；用 ref 保存，滚动回调里不需要重新绑定。
-  const followRef = useRef(true)
+  const effectiveDark = useEffectiveDark(theme)
   // 审批按发起它的 run / 会话归属存放：后台会话的审批不能弹到当前会话，也不能被别的 run 结束时清掉。
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
   const [todosByTurn, setTodosByTurn] = useState<Record<string, TodoItem[]>>({})
-  // 会话内记忆闭环：哪些回合有召回/提取活动；memories:changed 后重拉以纳入刚抽取的新记忆。
-  const [memoryTurnIds, setMemoryTurnIds] = useState<ReadonlySet<string>>(EMPTY_MEMORY_TURN_IDS)
-  const [memoryActivityVersion, setMemoryActivityVersion] = useState(0)
-  const [contextSourceTurnIds, setContextSourceTurnIds] = useState<ReadonlySet<string>>(EMPTY_CONTEXT_SOURCE_TURN_IDS)
   const [inspector, setInspector] = useState<ConversationInspectorData | null>(null)
   const [inspectorId, setInspectorId] = useState<string | null>(null)
   // 队列按会话隔离，切换页面只改变展示目标，不丢弃后台任务。
@@ -213,9 +193,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const queuedPrompts = selectedConversationId ? queuedPromptsByConversation[selectedConversationId] ?? [] : []
   // 消息右键菜单状态；quoteRequest 把「引用到输入框」转交给 Composer。
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ContextMenuItem[] } | null>(null)
-  // Ctrl+F 页内查找：仅对话分区生效，request 每次按下自增以重新聚焦查找输入。
-  const [findOpen, setFindOpen] = useState(false)
-  const [findRequest, setFindRequest] = useState(0)
   const [conversationEntering, setConversationEntering] = useState(false)
   const [quoteRequest, setQuoteRequest] = useState<{ text: string; nonce: number } | null>(null)
   const [prefillRequest, setPrefillRequest] = useState<{ text: string; nonce: number } | null>(null)
@@ -227,39 +204,11 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const permissionChangeRef = useRef(0)
   const runTurnRef = useRef(new Map<string, string>())
   const activeTurnRef = useRef<string | null>(null)
-  // turnId → 已收到的助手文本。turns state 只装当前打开的会话，切走就没了；
-  // 这份缓存跨会话存活，切回来时由 mergeStreamedText 贴回历史。
-  const streamedTextRef = useRef(new Map<string, string>())
   // 事件回调里查 turn → conversationId 用，避免订阅随 turns 变化反复重建。
   const turnsStateRef = useRef<ConversationTurn[]>([])
   const eventSequenceRef = useRef(new Map<string, number>())
   useEffect(() => { turnsStateRef.current = turns }, [turns])
   useEffect(() => { conversationItemsRef.current = conversationItems }, [conversationItems])
-
-  // 记忆活动集：随会话切换与 memories:changed（本轮抽取写入/删除）重拉。
-  useEffect(() => {
-    const dispose = window.fastAgent.memories.onChanged(() => setMemoryActivityVersion((value) => value + 1))
-    return dispose
-  }, [])
-  useEffect(() => {
-    if (!selectedConversationId) { setMemoryTurnIds(EMPTY_MEMORY_TURN_IDS); return }
-    let cancelled = false
-    void window.fastAgent.memories.conversationActivity(selectedConversationId)
-      .then((ids) => { if (!cancelled) setMemoryTurnIds(new Set(ids)) })
-      .catch(() => { if (!cancelled) setMemoryTurnIds(EMPTY_MEMORY_TURN_IDS) })
-    return () => { cancelled = true }
-  }, [selectedConversationId, memoryActivityVersion])
-
-  // 上下文来源集：主进程在每轮开跑时写入，因此按「会话 / 轮次数 / 运行结束」重拉，
-  // 不进流式路径——runId 一轮只变两次，turns.length 在流式期间不变。
-  useEffect(() => {
-    if (!selectedConversationId) { setContextSourceTurnIds(EMPTY_CONTEXT_SOURCE_TURN_IDS); return }
-    let cancelled = false
-    void window.fastAgent.conversations.contextSourceTurns(selectedConversationId)
-      .then((ids) => { if (!cancelled) setContextSourceTurnIds(new Set(ids)) })
-      .catch(() => { if (!cancelled) setContextSourceTurnIds(EMPTY_CONTEXT_SOURCE_TURN_IDS) })
-    return () => { cancelled = true }
-  }, [selectedConversationId, turns.length, runId])
 
   // 运行结束后暂停态自动失效；切到别的会话时 runId 不同，paused 自然算成 false，不必清。
   useEffect(() => { if (!runId) setPausedRunId(null) }, [runId])
@@ -289,7 +238,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       .finally(() => setLocalModelsLoaded(true))
     const runStatesReady = window.fastAgent.chat.listStates().then((states) => setRunStates(Object.fromEntries(states.map((state) => [state.conversationId, state])))).catch(() => undefined)
     const activeRunsReady = syncActiveRuns().catch(() => undefined)
-    const projectsReady = window.fastAgent.projects.listPage({ pageSize: 20 }).then((page) => setProjectItems(page.items)).catch(() => setNotice('项目列表加载失败'))
+    // 侧栏搜索是本地过滤，走不分页的 list 才能搜到滚动区之外的项目（listPage 的页长被夹在 100 以内）
+    const projectsReady = window.fastAgent.projects.list().then((items) => setProjectItems(items)).catch(() => setNotice('项目列表加载失败'))
     const preferencesReady = window.fastAgent.preferences.get().then((stored) => {
       const legacyFavorite = readModelIds('fastagent.favorite-models')
       const legacyRecent = readModelIds('fastagent.recent-models')
@@ -383,65 +333,10 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     void window.fastAgent.preferences.update({ favoriteModelIds, recentModelIds, modePrompts, sidebarSections })
   }, [favoriteModelIds, modePrompts, preferencesLoaded, recentModelIds, sidebarSections])
 
-  useEffect(() => {
-    if (!notice) return
-    // 换新提示时复位退场标记，重新计时；真正的清空交给退场 effect。
-    setNoticeClosing(false)
-    // 带动作的提示要留够点击时间，2.4 秒不足以让人看完再点。
-    const timer = window.setTimeout(() => setNoticeClosing(true), undoTurn || noticeAction ? 5000 : 2400)
-    return () => window.clearTimeout(timer)
-  }, [notice, noticeAction, undoTurn])
-
-  // 提示条退场窗口：先播淡出再卸载，避免到点直接闪没。
-  useEffect(() => {
-    if (!noticeClosing) return
-    const timer = window.setTimeout(() => { setNotice(''); setNoticeAction(null); setNoticeClosing(false) }, MOTION_DURATIONS.popoverClose)
-    return () => window.clearTimeout(timer)
-  }, [noticeClosing])
-
-  useEffect(() => {
-    if (!undoTurn) return
-    const timer = window.setTimeout(() => setUndoTurn(null), 5000)
-    return () => window.clearTimeout(timer)
-  }, [undoTurn])
-
-  // 流式 token 不逐个进 state：按 turn 累积，定时冲刷成一次渲染。
-  const streamBuffer = useMemo(() => createStreamBuffer((chunks) => {
-    // 用 Map 索引：turns 与 chunks 都可能不止一条，逐个 find 会退化成 O(turns × chunks)。
-    const byTurn = new Map(chunks.map((chunk) => [chunk.turnId, chunk.text]))
-    for (const [turnId, text] of byTurn) {
-      streamedTextRef.current.set(turnId, `${streamedTextRef.current.get(turnId) ?? ''}${text}`)
-    }
-    setTurns((current) => {
-      // 冲刷目标不在当前会话时直接保留原数组，省掉一次无意义的整表重建与重渲染。
-      if (!current.some((turn) => byTurn.has(turn.id))) return current
-      return current.map((turn) => {
-        const text = byTurn.get(turn.id)
-        if (text === undefined) return turn
-        const createdAt = turn.assistantMessage?.createdAt || new Date().toISOString()
-        return { ...turn, assistantMessage: { text: `${turn.assistantMessage?.text || ''}${text}`, createdAt }, updatedAt: new Date().toISOString() }
-      })
-    })
-  }), [])
-  useEffect(() => () => streamBuffer.dispose(), [streamBuffer])
-
-  // 思考正文单独一条缓冲：它只在折叠层里显示，没必要跟正文一样每帧冲刷，
-  // 200ms 一次已经够「展开着也能看到在长」，又不会把整棵树按思考 token 重绘。
-  const thinkingBuffer = useMemo(() => createStreamBuffer((chunks) => {
-    const byTurn = new Map(chunks.map((chunk) => [chunk.turnId, chunk.text]))
-    setTurns((current) => {
-      if (!current.some((turn) => byTurn.has(turn.id) && turn.activity)) return current
-      return current.map((turn) => {
-        const text = byTurn.get(turn.id)
-        if (text === undefined || !turn.activity) return turn
-        // 分段与全文同步推进：段由 thinking_started 开出来，没开过就补一段，免得实时文本无处可放。
-        const segments = turn.activity.thinkingSegments?.length ? [...turn.activity.thinkingSegments] : ['']
-        segments[segments.length - 1] += text
-        return { ...turn, activity: { ...turn.activity, thinking: `${turn.activity.thinking || ''}${text}`, thinkingSegments: segments } }
-      })
-    })
-  }, 200), [])
-  useEffect(() => () => thinkingBuffer.dispose(), [thinkingBuffer])
+  const { streamBuffer, thinkingBuffer, streamedTextRef } = useStreamBuffers(setTurns)
+  const { memoryTurnIds, contextSourceTurnIds } = useTurnActivitySets(selectedConversationId, turns.length, runId)
+  const { findOpen, findRequest, setFindOpen } = useFindBar(section, batchKind)
+  const { scrollRef, followRef, scrollNav, headerStuck, onConversationScroll, jumpConversation } = useConversationScroll(turns, runId, selectedConversationId)
 
   useAgentEvents({
     selectedConversationId, streamBuffer, thinkingBuffer, refreshGitState,
@@ -532,6 +427,11 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setNavigation((current) => pushNavigation(current.entries, current.index, next))
   }
 
+  function openSkill(abilityId: string) {
+    setAbilityRequest((current) => ({ abilityId, nonce: (current?.nonce ?? 0) + 1 }))
+    navigate('capabilities')
+  }
+
   /** 计数器保证重复点同一个入口也能把设置页切回目标分类。 */
   function openSettings(category: SettingsCategory) {
     setSettingsCategory(category)
@@ -565,7 +465,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     void window.fastAgent.workspace.setRoot(null).catch(() => undefined)
     setWorkspaceRoot(null)
     setArtifactFile(null)
-    setSection('chats'); setNavigation((current) => pushNavigation(current.entries, current.index, 'chats')); setSelectedConversationId(null); setConversationTitle('新对话'); setTurns([]); setUndoTurn(null); setActiveTurnId(null); setMode('chat'); applyDefaultPermission('ask'); resetModelToDefault()
+    setSection('chats'); setNavigation((current) => pushNavigation(current.entries, current.index, 'chats')); setSelectedConversationId(null); setConversationTitle('新对话'); setTurns([]); setActiveTurnId(null); setContextHealth(emptyContextHealth()); setMode('chat'); applyDefaultPermission('ask'); resetModelToDefault()
     writeLastConversationId(null)
     focusComposerSoon()
   }
@@ -582,7 +482,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     // 只重置主区视图，保留 selectedProjectId 与工作区根；发送第一条消息时
     // 会以当前项目落库（sendPrompt 的 conversations.create projectId）。
     setArtifactFile(null)
-    setSection('chats'); setNavigation((current) => pushNavigation(current.entries, current.index, 'chats')); setSelectedConversationId(null); setConversationTitle('新对话'); setTurns([]); setUndoTurn(null); setActiveTurnId(null); setContextHealth(emptyContextHealth()); setMode('agent'); applyDefaultPermission('workspace'); resetModelToDefault()
+    setSection('chats'); setNavigation((current) => pushNavigation(current.entries, current.index, 'chats')); setSelectedConversationId(null); setConversationTitle('新对话'); setTurns([]); setActiveTurnId(null); setContextHealth(emptyContextHealth()); setMode('agent'); applyDefaultPermission('workspace'); resetModelToDefault()
     writeLastConversationId(null)
     setNotice('已新建当前项目的对话')
     focusComposerSoon()
@@ -605,25 +505,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
-
-  // Ctrl+F 打开页内查找：只在对话分区拦截（其余分区交给浏览器默认行为），重复按下重新聚焦。
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'f' || event.shiftKey || event.altKey) return
-      if (!event.ctrlKey && !event.metaKey) return
-      if (section !== 'chats' || batchKind === 'conversations') return
-      event.preventDefault()
-      setFindOpen(true)
-      setFindRequest((value) => value + 1)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [section, batchKind])
-
-  // 离开对话分区（含进入批量管理）时收起查找条，避免高亮残留在别的分区上。
-  useEffect(() => {
-    if (section !== 'chats' || batchKind === 'conversations') setFindOpen(false)
-  }, [section, batchKind])
 
   useAppShortcuts(settings?.shortcuts, {
     newConversation: () => startNewChat(),
@@ -664,6 +545,16 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     const runs = await window.fastAgent.chat.listActive()
     for (const run of runs) runTurnRef.current.set(run.runId, run.turnId)
     setRunIdsByConversation((current) => ({ ...current, ...Object.fromEntries(runs.map((run) => [run.conversationId, run.runId])) }))
+    // 挂起的审批/提问只在发起时推过一次事件，重载后弹层就没了，而主进程仍在 await。
+    // 不接回来这一轮既不推进也不结束，界面只剩「准备中」，连停止都得靠用户自己想到。
+    const pending = await window.fastAgent.chat.listPendingApprovals().catch(() => [])
+    if (pending.length) {
+      setApprovals((current) => {
+        const known = new Set(current.map((item) => item.request.id))
+        const restored = pending.filter((item) => !known.has(item.request.id))
+        return restored.length ? [...current, ...restored] : current
+      })
+    }
   }
 
   async function selectConversation(item: WorkspaceConversation) {
@@ -705,11 +596,14 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         if (loadId === conversationLoadRef.current && todos.length && latestTurnId) setTodosByTurn((current) => ({ ...current, [latestTurnId]: todos }))
       }).catch(() => undefined)
       const detail = await window.fastAgent.conversations.getInspector(item.id)
-      if (detail && loadId === conversationLoadRef.current) {
+      if (loadId === conversationLoadRef.current) {
         const usage = await window.fastAgent.conversations.modelUsage(item.id).catch(() => undefined)
-        setContextHealth((current) => detail.context
-          ? { ...detail.context, latestCompactionAt: detail.compactionHistory[0]?.createdAt || null, usage: usage ?? current.usage, usagePending: false }
-          : { ...current, usage: usage ?? current.usage, usagePending: false })
+        // 换会话必须整份换掉上下文数据：detail 或 context 缺失时回落到空值，
+        // 沿用 current 会把上一个会话的 token 统计留在面板上。
+        const blank = emptyContextHealth(allModels.find((model) => model.id === conversationModelId(allModels, item.modelId, selectedModelId)))
+        setContextHealth(detail?.context
+          ? { ...detail.context, latestCompactionAt: detail.compactionHistory[0]?.createdAt || null, usage: usage ?? blank.usage, usagePending: false }
+          : { ...blank, usage: usage ?? blank.usage, usagePending: false })
       }
     } catch {
       if (loadId === conversationLoadRef.current) setNotice('会话历史加载失败')
@@ -742,28 +636,16 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setArtifactOpen(false)
     const model = allModels.find((item) => item.id === detail.runtime.modelId)
     const history = await window.fastAgent.conversations.history(conversationId).catch(() => [] as ConversationTurn[])
-    // 压缩记录存的是回合 ID，转成 1 基序号才能显示「覆盖回合范围」。
-    const turnIndex = new Map(history.map((turn, index) => [turn.id, index + 1]))
-    const agentEvents = history.flatMap((turn) => turn.activity?.events || [])
     const latestTurn = history.at(-1)
     const latestToolCalls = latestTurn ? await window.fastAgent.conversations.listToolCalls(latestTurn.id).catch(() => [] as ToolCallRecord[]) : []
-    const mapped: ConversationInspectorData = {
-      conversation: { id: detail.id, title: detail.title, createdAt: detail.createdAt, updatedAt: detail.updatedAt },
-      runtime: { mode: detail.runtime.mode || 'chat', model: model?.name || (detail.runtime.modelId ? String(detail.runtime.modelId) : '未选择'), provider: detail.runtime.provider || model?.provider, reasoning: detail.runtime.thinkingLevel || undefined, permission: detail.runtime.permission ? findProfile(permissionProfiles, detail.runtime.permission).label : undefined, status: detail.runtime.status || 'idle', agentSessionId: detail.runtime.sessionId },
-      context: detail.context ? { ...detail.context, latestCompactionAt: detail.compactionHistory[0]?.createdAt || null } : contextHealth,
-      summary: detail.summary ? { text: detail.summary.summaryText, version: detail.summary.version, createdAt: detail.summary.createdAt } : null,
-      history: detail.compactionHistory.map((item) => ({ id: item.id, beforeTokens: item.beforeTokens, afterTokens: item.afterTokens, triggerReason: item.triggerReason, coveredTurnStart: turnIndex.get(item.coveredTurnStart || '') ?? null, coveredTurnEnd: turnIndex.get(item.coveredTurnEnd || '') ?? null, strategy: item.strategy, createdAt: item.createdAt })),
-      agent: {
-        toolCalls: agentEvents.filter((event) => event.type === 'tool_started').length,
-        latestStep: agentEvents.at(-1)?.detail || agentEvents.at(-1)?.tool || null,
-        failureReason: agentEvents.filter((event) => event.type === 'failed').at(-1)?.detail || null,
-        startedAt: latestTurn?.activity?.startedAt ?? null,
-        finishedAt: latestTurn?.activity?.finishedAt ?? null,
-        toolCallsDetailed: latestToolCalls
-      },
-      policy: detail.contextPolicy ? { strategy: detail.contextPolicy.strategy, triggerRatio: detail.contextPolicy.triggerRatio, keepRecentTurns: detail.contextPolicy.keepRecentTurns, autoSummary: detail.contextPolicy.autoSummary, inheritGlobal: detail.contextPolicy.inheritGlobal } : undefined
-    }
-    setInspector(mapped)
+    setInspector(buildInspectorData({
+      detail,
+      history,
+      latestToolCalls,
+      model,
+      permissionLabel: detail.runtime.permission ? findProfile(permissionProfiles, detail.runtime.permission).label : undefined,
+      fallbackContext: contextHealth
+    }))
   }
 
   async function compactConversationNow(conversationId: string | null, compressionModelId = selectedModelId) {
@@ -773,7 +655,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setCompactionStates((current) => beginCompaction(current, conversationId, compressionModelId))
     try {
       const result = await window.fastAgent.conversations.compactNow(conversationId, compressionModelId)
-      if (!result) { setCompactionStates((current) => clearCompaction(current, conversationId)); setNotice('可压缩的历史回合不足'); return }
+      if (!result) { setCompactionStates((current) => clearCompaction(current, conversationId)); setNotice('当前上下文没有可压缩的内容'); return }
       setCompactionStates((current) => completeCompaction(current, conversationId))
       const before = Math.round(result.compaction.beforeTokens / result.context.contextWindow * 100)
       const after = Math.round(result.compaction.afterTokens / result.context.contextWindow * 100)
@@ -795,7 +677,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       await window.fastAgent.conversations.clear(selectedConversationId)
       conversationLoadRef.current += 1
       setTurns([])
-      setUndoTurn(null)
       setActiveTurnId(null)
       setContextHealth(emptyContextHealth())
       setConversationTitle('新对话')
@@ -817,11 +698,20 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     }
   }
 
+  /** 侧栏工作区按操作时间排序：命中一次操作就刷新 updated_at 并把本地列表重排，失败不影响主流程。 */
+  async function touchProject(id: string) {
+    try {
+      const record = await window.fastAgent.projects.touch(id)
+      if (record) setProjectItems((current) => upsertRecentWorkspaceItem(current, record))
+    } catch { /* 排序刷新失败不值得打断用户 */ }
+  }
+
   async function selectProject(item: WorkspaceProject) {
     setBatchKind(null)
     setSelectedProjectId(item.id)
     // 工作区根目录是主进程状态，运行时靠它定位文件，只改渲染层 state 不生效。
     try { await window.fastAgent.workspace.setRoot(item.path) } catch { setNotice('切换工作区失败'); return }
+    void touchProject(item.id)
     setWorkspaceRoot(item.path)
     // 上一个项目里打开的文件在新项目多半不存在，留着只会让产物面板报错。
     setArtifactFile(null)
@@ -835,7 +725,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     writeLastConversationId(null)
     setConversationTitle('新对话')
     setTurns([])
-    setUndoTurn(null)
     setActiveTurnId(null)
     setContextHealth(emptyContextHealth())
     setNotice(`已切换项目：${item.name}`)
@@ -857,19 +746,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       const removed = await window.fastAgent.conversations.deleteTurn(turnId)
       if (!removed) return
       setTurns((current) => current.filter((turn) => turn.id !== turnId))
-      setUndoTurn(removed)
-      setNotice('已删除本轮问答 · 可撤销')
+      setNotice('已删除本轮问答')
     } catch { setNotice('删除本轮问答失败') }
-  }
-
-  async function restoreTurn() {
-    if (!undoTurn) return
-    try {
-      const restored = await window.fastAgent.conversations.restoreTurn(undoTurn)
-      setTurns((current) => [...current, restored].sort((a, b) => a.createdAt.localeCompare(b.createdAt)))
-      setUndoTurn(null)
-      setNotice('已撤销删除')
-    } catch { setNotice('撤销失败') }
   }
 
   async function copyText(text: string) {
@@ -928,7 +806,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         setConversationItems((current) => current.map((item) => item.id === conversationId ? { ...item, meta: conversationMetaNow(), archived: false } : item))
       }
       // turn 由主进程在 chat.send 内部原子创建；ACK 返回的 turn 是唯一来源，避免双 IPC。
-      const result = await window.fastAgent.chat.send({ conversationId, mode, modelId: selectedModelId, thinkingLevel, permission: mode === 'chat' ? null : permission, modePrompt: withPlanModePrompt(modePromptFor(modePrompts, mode), planMode), planMode, prompt, attachments })
+      const result = await window.fastAgent.chat.send({ conversationId, mode, modelId: selectedModelId, thinkingLevel, permission, modePrompt: withPlanModePrompt(modePromptFor(modePrompts, mode), planMode), planMode, prompt, attachments })
       pendingTurnId = result.turnId
       setTurns((current) => [...current, result.turn])
       setActiveTurnId(result.turnId)
@@ -936,6 +814,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       setRunIdsByConversation((current) => ({ ...current, [conversationId]: result.runId }))
       setRecentConversationRefresh((current) => current + 1)
       setBatchConversationRefresh((current) => current + 1)
+      if (selectedProjectId) void touchProject(selectedProjectId)
     } catch (error) {
       // 主进程说这个会话已经有 run 在跑：本地 runId 丢了（多半刚重载过）。
       // 转成排队而不是报失败；runId 与队列在同一个 then 里落地，
@@ -986,24 +865,16 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     const inAssistant = Boolean(target.closest('.message.assistant'))
     if (!inUser && !inAssistant) return
     event.preventDefault()
-    const selected = selectionText()
-    const items: ContextMenuItem[] = []
-    if (selected) items.push({ id: 'copy-selection', label: '复制选中', onSelect: () => void copyText(selected) })
-    if (inUser) {
-      items.push({ id: 'copy-message', label: '复制原文', onSelect: () => void copyText(turn.userMessage.text) })
-      items.push({ id: 'quote', label: '引用到输入框', onSelect: () => setQuoteRequest({ text: turn.userMessage.text, nonce: Date.now() }) })
-      items.push({ id: 'retry', label: '重新发送', onSelect: () => void rerunTurn(turn) })
-    } else {
-      items.push({ id: 'copy-message', label: '复制回答', onSelect: () => void copyText(turn.assistantMessage?.text ?? '') })
-      items.push({ id: 'quote', label: '引用到输入框', onSelect: () => setQuoteRequest({ text: turn.assistantMessage?.text ?? '', nonce: Date.now() }) })
-      items.push({ id: 'regenerate', label: '重新生成', onSelect: () => void rerunTurn(turn) })
-    }
-    // 保存为项目知识：只对已归属项目的会话给这一项，未归属会话没有可写入的知识库。
-    if (selectedProjectId) {
-      const text = selected || (inUser ? turn.userMessage.text : turn.assistantMessage?.text ?? '')
-      if (text.trim()) items.push({ id: 'save-knowledge', label: selected ? '把选中内容存为知识' : '存为项目知识', onSelect: () => void saveAsKnowledge(selectedProjectId, text) })
-    }
-    items.push({ id: 'delete', label: '删除本轮问答', danger: true, onSelect: () => void deleteTurn(turn.id) })
+    const items = buildMessageMenuItems(
+      { turn, side: inUser ? 'user' : 'assistant', selected: selectionText(), projectId: selectedProjectId },
+      {
+        copyText: (text) => void copyText(text),
+        quote: (text) => setQuoteRequest({ text, nonce: Date.now() }),
+        rerun: (target) => void rerunTurn(target),
+        saveKnowledge: (projectId, text) => void saveAsKnowledge(projectId, text),
+        deleteTurn: (turnId) => void deleteTurn(turnId)
+      }
+    )
     setContextMenu({ x: event.clientX, y: event.clientY, items })
   })
 
@@ -1146,46 +1017,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setInspectorId(null)
   }
 
-  function readScrollMetrics(node: HTMLDivElement) {
-    return { scrollTop: node.scrollTop, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight }
-  }
-
-  // 只在用户本来就贴着底部时才跟随，且用直接赋值而不是平滑滚动，否则流式输出会抖。
-  // 内容长高也要重算按钮：不重算的话流式输出把用户挤离底部后按钮不会出现。
-  useLayoutEffect(() => {
-    const node = scrollRef.current
-    if (!node) return
-    if (followRef.current) node.scrollTop = node.scrollHeight
-    const stuckNow = node.scrollTop > 6
-    setHeaderStuck((current) => (current === stuckNow ? current : stuckNow))
-    setScrollNav(scrollNavAction(readScrollMetrics(node), runId !== null))
-  }, [turns, runId, selectedConversationId])
-
-  function onConversationScroll() {
-    const node = scrollRef.current
-    if (!node) return
-    const metrics = readScrollMetrics(node)
-    followRef.current = nextFollowState(followRef.current, metrics)
-    setScrollNav(scrollNavAction(metrics, runId !== null))
-    // 原型交互：头部吸顶后才浮起背景与边框，阈值只踩一次setState，不随滚动条抖动
-    const stuck = node.scrollTop > 6
-    setHeaderStuck((current) => (current === stuck ? current : stuck))
-  }
-
-  function jumpConversation(target: 'top' | 'bottom') {
-    const node = scrollRef.current
-    if (!node) return
-    if (target === 'top') {
-      // 回顶是用户主动跳走，顺手停掉跟随，免得流式输出立刻又把他拽回底部。
-      followRef.current = false
-      node.scrollTo({ top: 0, behavior: 'smooth' })
-    } else {
-      followRef.current = true
-      node.scrollTop = node.scrollHeight
-    }
-    setScrollNav(scrollNavAction(readScrollMetrics(node), runId !== null))
-  }
-
   // responseActions 用空依赖记忆化（换引用会让整棵回答子树重渲染），读不到最新 state，用 ref 兜住当前预览目标。
   const artifactViewRef = useRef({ open: false, key: '' })
   artifactViewRef.current = { open: artifactOpen, key: artifactFile ? formatFileReference(artifactFile) : '' }
@@ -1205,7 +1036,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       setArtifactOpen(true)
     },
     copyText: (text) => void copyText(text),
-    notify: setNotice
+    notify: setNotice,
+    // 只用到 setState 系列，空依赖捕获首帧闭包也读不到过期值。
+    openSkill: (abilityId) => openSkill(abilityId)
   }), [])
 
   const selectedModel = allModels.find((item) => item.id === selectedModelId) ?? allModels[0] ?? null
@@ -1213,7 +1046,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
 
   /** 空会话没有落库上下文，窗口跟随当前模型，避免固定 128k 与模型设置不一致。 */
   function emptyContextHealth(model = selectedModel): ContextHealthData {
-    return { ...EMPTY_CONTEXT_HEALTH, contextWindow: model?.context_window || DEFAULT_CONTEXT_WINDOW }
+    return { ...EMPTY_CONTEXT_HEALTH, contextWindow: resolveContextWindow(model?.context_window, model?.model_name) }
   }
 
   function selectModel(nextId: number) {
@@ -1240,18 +1073,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         setContextHealth((current) => ({ ...context, latestCompactionAt: current.latestCompactionAt ?? null, usage: current.usage, usagePending: current.usagePending }))
       })
       .catch(() => undefined)
-  }
-
-  async function handleCreateLocal(input: LocalModelInput) {
-    await window.fastAgent.models.localCreate(input)
-  }
-
-  async function handleUpdateLocal(id: number, input: LocalModelInput) {
-    await window.fastAgent.models.localUpdate(id, input)
-  }
-
-  async function handleDeleteLocal(id: number) {
-    await window.fastAgent.models.localDelete(id)
   }
 
   function handleTestDialogue(id: number) {
@@ -1299,9 +1120,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const handleResetModePrompts = useEventCallback(() => setModePrompts({ ...defaultModePrompts }))
   const handleSelectModel = useEventCallback(selectModel)
   const handleToggleFavoriteModel = useEventCallback((modelId: number) => setFavoriteModelIds((current) => current.includes(modelId) ? current.filter((id) => id !== modelId) : [...current, modelId]))
-  const handleCreateLocalModel = useEventCallback(handleCreateLocal)
-  const handleUpdateLocalModel = useEventCallback(handleUpdateLocal)
-  const handleDeleteLocalModel = useEventCallback(handleDeleteLocal)
   const handleTestDialogueModel = useEventCallback(handleTestDialogue)
   const handleCopyText = useEventCallback((text: string) => { void copyText(text) })
   const handleDeleteTurn = useEventCallback((turnId: string) => { void deleteTurn(turnId) })
@@ -1370,6 +1188,12 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   })
 
   const handleOpenPermissionSettings = useEventCallback(() => openSettings('permissions'))
+  const handleStepHistory = useEventCallback((direction: -1 | 1) => stepHistory(direction))
+  const handleOpenGeneralSettings = useEventCallback(() => openSettings('general'))
+  const handleToggleTheme = useEventCallback((next: AppTheme) => {
+    onThemeChange(next)
+    setNotice(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题')
+  })
   const handleEnqueue = useEventCallback((text: string, attachments: Attachment[]) => {
     if (!selectedConversationId) return
     setQueuedPromptsByConversation((current) => ({ ...current, [selectedConversationId]: enqueuePrompt(current[selectedConversationId] ?? [], text, attachments) }))
@@ -1384,8 +1208,31 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   })
   const handleCancelRun = useEventCallback(() => {
     if (!runId) return
-    void window.fastAgent.chat.cancel(runId)
+    const stoppedRunId = runId
+    const conversationId = selectedConversationId
+    void window.fastAgent.chat.cancel(stoppedRunId)
     setNotice('已停止生成')
+    if (!conversationId) return
+    // 取消只是发出 abort：正在执行的工具、已发出的模型请求都可能还要一会儿才回来，
+    // 而界面要等终态事件才摘 runId。卡在某个不响应 abort 的等待上时终态永远不来，
+    // 用户看到的就是「按了没反应」。超时后在界面上自行收尾，主进程那边照常走它的清理。
+    window.setTimeout(() => {
+      if (runIdsRef.current[conversationId] !== stoppedRunId) return
+      setRunIdsByConversation((current) => {
+        if (current[conversationId] !== stoppedRunId) return current
+        const next = { ...current }
+        delete next[conversationId]
+        return next
+      })
+      setApprovals((current) => current.filter((item) => item.runId !== stoppedRunId))
+      const turnId = runTurnRef.current.get(stoppedRunId)
+      if (turnId) {
+        setTurns((current) => current.map((turn) => turn.id === turnId && turn.status === 'working'
+          ? { ...turn, status: 'cancelled', activity: turn.activity ? { ...turn.activity, status: 'cancelled', finishedAt: new Date().toISOString() } : turn.activity, updatedAt: new Date().toISOString() }
+          : turn))
+      }
+      setNotice('这一轮没有在停止后如期收尾，已在界面上结束；如果它还在做收尾清理，结果会在完成后补上')
+    }, CANCEL_TERMINAL_TIMEOUT_MS)
   })
   const handleCloseArtifactFile = useEventCallback(() => setArtifactFile(null))
   const handleCloseArtifactPanel = useEventCallback(() => { setArtifactOpen(false); setArtifactFile(null) })
@@ -1419,21 +1266,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   return (
     <ResponseActionsContext.Provider value={responseActions}>
     <div className="app-shell">
-      <header className="titlebar">
-        <div className="titlebar-drag">
-          <button className="icon-button no-drag" onClick={handleToggleSidebar} aria-label="切换侧栏" title="切换侧栏"><PanelLeft size={16} /></button>
-          <div className="window-nav no-drag"><button className="icon-button" onClick={() => stepHistory(-1)} disabled={navigation.index === 0} aria-label="后退" title="后退"><ChevronLeft size={16} /></button><button className="icon-button" onClick={() => stepHistory(1)} disabled={navigation.index >= navigation.entries.length - 1} aria-label="前进" title="前进"><ChevronRight size={16} /></button></div>
-          <span className="window-title">{workspaceRoot ? workspaceRoot.split('\\').pop() : 'FastAgent'}</span>
-        </div>
-        <div className="tb-center seg no-drag" role="tablist" aria-label="视图切换">
-          <button role="tab" aria-selected={section === 'chats'} className={section === 'chats' ? 'on' : ''} onClick={() => navigate('chats')}>主界面</button>
-          <button role="tab" aria-selected={section === 'settings'} className={section === 'settings' ? 'on' : ''} onClick={() => openSettings('general')}>设置</button>
-        </div>
-        <div className="titlebar-actions no-drag">
-          <button className="icon-button" onClick={() => navigate('search')} aria-label="搜索与命令" title="搜索与命令"><Command size={15} /></button>
-          <button className="icon-button" aria-label="切换主题" title="切换主题" onClick={() => { const next = effectiveDark ? 'light' : 'dark'; onThemeChange(next); setNotice(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题') }}>{effectiveDark ? <Moon size={15} /> : <Sun size={15} />}</button>
-        </div>
-      </header>
+      <WorkspaceTitlebar section={section} canGoBack={navigation.index > 0} canGoForward={navigation.index < navigation.entries.length - 1}
+        workspaceRoot={workspaceRoot} effectiveDark={effectiveDark} onToggleSidebar={handleToggleSidebar}
+        onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenGeneralSettings} onToggleTheme={handleToggleTheme} />
       <div className="shell-body">
         <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
         <main className={`conversation ${artifactOpen ? 'with-artifact' : ''}`}>
@@ -1453,15 +1288,13 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             {/* 本轮 Agent 对工作区的改动；与输入框同级，宽度和对齐都跟随 conversation-content */}
             <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
-            <Composer shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={mode === 'chat' ? null : permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
-          </> : <SectionView key={section} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onCreateLocal={handleCreateLocalModel} onUpdateLocal={handleUpdateLocalModel} onDeleteLocal={handleDeleteLocalModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
+            <Composer shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
+          </> : <SectionView key={section} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} />}
         {inspector && <ConversationInspector data={inspector} compaction={inspectorId ? compactionStates[inspectorId] ?? null : null} onCancelCompaction={() => { if (inspectorId) { void window.fastAgent.conversations.cancelCompaction(inspectorId); setCompactionStates((current) => cancelCompaction(current, inspectorId)) } }} onClose={closeInspector} onRefresh={() => { if (inspectorId) void openInspector(inspectorId) }} onCompact={() => void compactConversationNow(inspectorId)} />}
         {Object.entries(compactionStates).filter(([, state]) => state.status === 'failed' || state.status === 'timed_out').map(([conversationId, state]) => <CompactionFallbackDialog key={`${conversationId}:${state.taskId}`} state={state} models={allModels} onRetry={(modelId) => void compactConversationNow(conversationId, modelId)} onCancel={() => { void window.fastAgent.conversations.cancelCompaction(conversationId); setCompactionStates((current) => cancelCompaction(current, conversationId)) }} onClose={() => setCompactionStates((current) => clearCompaction(current, conversationId))} />)}
       </div>
-      {/* key 绑定文本：同一条 toast 元素不重挂，换新提示时重放入场动画 */}
-      {notice && <div key={notice} className={`toast${noticeClosing ? ' closing' : ''}`} role="status"><span>{notice}</span>{undoTurn && <button className="toast-action" onClick={() => void restoreTurn()}>撤销</button>}{noticeAction && <button className="toast-action" onClick={noticeAction.run}>{noticeAction.label}</button>}</div>}
       <LightboxLayer />
       {contextMenu && <MessageContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
       {approvals.filter((item) => item.conversationId === selectedConversationId).map((item) => <ApprovalDialog key={item.request.id} request={item.request} onRespond={(decision, answer) => void respondApproval(item.request.id, decision, answer)} />)}

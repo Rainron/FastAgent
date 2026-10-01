@@ -18,6 +18,35 @@ describe('model sampling parameters', () => {
     const { model } = await piRuntime.createModelRuntime({ id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test', extra_body: { enable_thinking: false } } as never)
     expect(model.samplingParams).toMatchObject({ enable_thinking: false })
   })
+  it('model_kind=multimodal 时模型定义申明图片输入', async () => {
+    const { model } = await piRuntime.createModelRuntime({ id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test', model_kind: 'multimodal' } as never)
+    expect(model.input).toContain('image')
+  })
+})
+
+describe('withDeclaredVision', () => {
+  const base = { id: 'm', name: 'm', api: 'openai-completions', provider: 'p', baseUrl: '', reasoning: false, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 1, maxTokens: 1 }
+
+  it('用户标记多模态时补上 image 输入', () => {
+    const model = piRuntime.withDeclaredVision({ ...base, input: ['text'] } as never, { model_kind: 'multimodal' })
+    expect(model.input).toEqual(['text', 'image'])
+  })
+
+  it('厂商目录已支持图片时不重复追加', () => {
+    const model = piRuntime.withDeclaredVision({ ...base, input: ['text', 'image'] } as never, { model_kind: 'multimodal' })
+    expect(model.input).toEqual(['text', 'image'])
+  })
+
+  it('只做并集：model_kind=chat 不会把目录里的图片能力降级', () => {
+    const model = piRuntime.withDeclaredVision({ ...base, input: ['text', 'image'] } as never, { model_kind: 'chat' })
+    expect(model.input).toEqual(['text', 'image'])
+  })
+
+  it('不修改传入的模型定义', () => {
+    const original = { ...base, input: ['text'] } as never
+    piRuntime.withDeclaredVision(original, { model_kind: 'multimodal' })
+    expect((original as { input: string[] }).input).toEqual(['text'])
+  })
 })
 
 /** 桌面应用与 pi CLI 环境隔离（方案 A）：只加载内联 tool-runtime 扩展，不发现磁盘扩展/skills/prompts。 */
@@ -57,6 +86,75 @@ function makeToolRuntime(cwd: string) {
     mcpToolRisk: new Map()
   }
 }
+
+describe('createRuntimeSettingsManager', () => {
+  it('覆写在 reload 后依然生效，不被磁盘上的 compaction.enabled=false 抹掉', async () => {
+    const cwd = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-cwd-')))
+    const agentDir = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-agentdir-')))
+    // 历史版本 setAutoCompactionEnabled(false) 落盘的脏数据
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ compaction: { enabled: false } }))
+
+    const settingsManager = piRuntime.createRuntimeSettingsManager(cwd, agentDir, { enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+    expect(settingsManager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+
+    // DefaultResourceLoader.reload() 内部就会调它：覆写必须活过这一步。
+    await settingsManager.reload()
+    expect(settingsManager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+  })
+
+  it('策略映射出的压缩参数活过 createPiSessionRuntime 内部的 resourceLoader.reload()', async () => {
+    const cwd = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-cwd-')))
+    const agentDir = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-agentdir-')))
+    writeFileSync(join(agentDir, 'settings.json'), JSON.stringify({ compaction: { enabled: false } }))
+    const runtime = await piRuntime.createPiSessionRuntime({
+      prompt: 'hi', mode: 'agent', modePrompt: '', planMode: false,
+      credentials: { id: -1, provider: 'x', protocol: 'openai', name: 'm', model_name: 'm', api_key: 'k' } as never,
+      thinkingLevel: 'off' as never,
+      contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, targetRatio: null, keepRecentTurns: null, inheritGlobal: true },
+      permission: null, attachments: [], workspaceRoot: cwd, signal: new AbortController().signal,
+      agentDir, namespace: 'ns', conversationId: 'c1', turnId: 't1', runId: 'r1',
+      store: { listPermissionRules: () => [] } as unknown as LocalStore,
+      shellToolName: 'bash', resolveRuleSet: () => presetRuleSet('ask'), sessionOverrides: new Map(),
+      requestApproval: async () => 'reject' as const, requestQuestion: async () => [],
+      onEvent: () => undefined
+    })
+    try {
+      // 128k 窗口 + conservative：触发点 85%（reserve 19200），压缩后落到 53%（keep 67840）。
+      expect(runtime.settingsManager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  it('后续覆写与既有覆写合并，reload 后一并保留', async () => {
+    const cwd = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-cwd-')))
+    const agentDir = track(mkdtempSync(join(tmpdir(), 'fastagent-settings-agentdir-')))
+    const settingsManager = piRuntime.createRuntimeSettingsManager(cwd, agentDir, { enabled: true })
+    piRuntime.applyPersistentOverrides(settingsManager, { retry: { provider: { maxRetries: 7 } } })
+
+    await settingsManager.reload()
+    expect(settingsManager.getCompactionSettings().enabled).toBe(true)
+    expect(settingsManager.getProviderRetrySettings().maxRetries).toBe(7)
+  })
+})
+
+describe('compactSessionFile', () => {
+  it('session 文件不存在时直接报错，不去建模型运行时', async () => {
+    const cwd = track(mkdtempSync(join(tmpdir(), 'fastagent-compact-cwd-')))
+    const agentDir = track(mkdtempSync(join(tmpdir(), 'fastagent-compact-agentdir-')))
+    let created = false
+    await expect(piRuntime.compactSessionFile({
+      credentials: { id: -1, provider: 'x', protocol: 'openai', name: 'm', model_name: 'm', api_key: 'k' } as never,
+      sessionFile: join(cwd, 'missing.jsonl'),
+      sessionDir: cwd,
+      agentDir,
+      cwd,
+      compaction: { enabled: true },
+      createModelRuntime: async () => { created = true; throw new Error('不应该走到这里') }
+    })).rejects.toThrow('会话运行时记录不存在')
+    expect(created).toBe(false)
+  })
+})
 
 describe('desktop resource loader isolation', () => {
   it('按当前模式提供内置系统提示，不发现磁盘扩展/skills/prompts', async () => {
@@ -131,8 +229,12 @@ describe('Pi 会话工具白名单', () => {
     expect(toolNamesForMode('agent', 'powershell')).toContain('powershell')
   })
 
-  it('Chat 模式只保留 read（skill 按需加载必需），不启用 Shell 与写类工具', () => {
-    expect(toolNamesForMode('chat', 'bash')).toEqual(['read'])
+  it('Chat 模式给全套只读工具与 shell，不给写类工具', () => {
+    expect(toolNamesForMode('chat', 'bash')).toEqual(['read', 'grep', 'find', 'ls', 'bash'])
+    expect(toolNamesForMode('chat', 'powershell')).toEqual(['read', 'grep', 'find', 'ls', 'powershell'])
+    for (const writeTool of ['edit', 'write', 'patch']) {
+      expect(toolNamesForMode('chat', 'bash')).not.toContain(writeTool)
+    }
   })
 })
 
@@ -198,6 +300,18 @@ describe('Agent 结局分类（长任务异常停止修复）', () => {
     const outcome = classify({ role: 'assistant', content: [{ type: 'thinking', thinking: '…' }], stopReason: 'length', usage: { input: 134, output: 1, cacheRead: 123_904, cacheWrite: 0, totalTokens: 124_039 } }, { contextWindow: 128_000, maxTokens: 8192 })
     expect(outcome.kind).toBe('interrupted')
     expect(outcome.reason).toContain('上下文空间不足')
+    // 调用方据此判断「压缩本该介入却没介入」，单次输出截断不能带这个标记。
+    expect((outcome as { contextPressure?: boolean }).contextPressure).toBe(true)
+    const truncated = classify({ role: 'assistant', content: [{ type: 'text', text: '部分内容' }], stopReason: 'length', usage: { input: 100, output: 8192, cacheRead: 0, cacheWrite: 0, totalTokens: 8292 } }, { contextWindow: 128_000, maxTokens: 8192 })
+    expect((truncated as { contextPressure?: boolean }).contextPressure).toBeUndefined()
+  })
+
+  it('runtimeCompactionSettings：带策略按策略换算，不带策略退回布尔开关', () => {
+    const credentials = { context_window: 128_000 } as never
+    expect(piRuntime.runtimeCompactionSettings({ credentials, contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, targetRatio: null, keepRecentTurns: null, inheritGlobal: true } }))
+      .toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+    expect(piRuntime.runtimeCompactionSettings({ credentials, autoCompaction: false })).toEqual({ enabled: false })
+    expect(piRuntime.runtimeCompactionSettings({ credentials })).toEqual({ enabled: true })
   })
 
   it('仅对真正吃满单次输出预算的响应自动续写', () => {
@@ -236,12 +350,10 @@ describe('Pi 运行设置', () => {
   it('启用 Pi 会话内自动压缩，避免单个应用回合耗尽上下文', () => {
     const cwd = track(mkdtempSync(join(tmpdir(), 'fastagent-loader-cwd-')))
     const agentDir = track(mkdtempSync(join(tmpdir(), 'fastagent-agentdir-')))
-    const createRuntimeSettingsManager = (piRuntime as unknown as {
-      createRuntimeSettingsManager(cwd: string, agentDir: string, compactionEnabled?: boolean): SettingsManager
-    }).createRuntimeSettingsManager
+    const { createRuntimeSettingsManager } = piRuntime
     const manager = createRuntimeSettingsManager(cwd, agentDir)
     expect(manager.getCompactionEnabled()).toBe(true)
-    expect(createRuntimeSettingsManager(cwd, agentDir, false).getCompactionEnabled()).toBe(false)
+    expect(createRuntimeSettingsManager(cwd, agentDir, { enabled: false }).getCompactionEnabled()).toBe(false)
   })
 
   it('按真实 Pi session 消息计算分类，并用 provider 总量校准', () => {

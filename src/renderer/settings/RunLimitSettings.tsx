@@ -15,57 +15,69 @@ export function RunLimitSettings({ settings, onSettingsChange }: {
     onSettingsChange({ limits: { ...limits, ...next } })
   }
 
-  return <div className="settings-block">
-    <h3>运行上限</h3>
-    <div className="settings-field">
-      <label htmlFor="limit-concurrent">同时运行的任务数</label>
+  return <section className="settings-panel" aria-labelledby="settings-run-limits">
+    <div className="settings-section-heading"><div><h2 id="settings-run-limits">运行上限</h2><p>控制并发、自动重试与单会话预算，达到上限后的行为都写在每项说明里。</p></div></div>
+    <div className="settings-row">
+      <div>
+        <strong>同时运行的任务数</strong>
+        <span>超出后新任务排队等待，不会被丢弃。同一会话本来就串行执行，这里限制的是跨会话并发。</span>
+      </div>
       <input
-        id="limit-concurrent"
+        className="settings-number-input"
         type="number"
         min={1}
         max={16}
         value={limits.maxConcurrentRuns}
         onChange={(event) => patch({ maxConcurrentRuns: Number(event.target.value) })}
+        aria-label="同时运行的任务数"
       />
-      <p className="settings-hint">超出后新任务排队等待，不会被丢弃。同一会话本来就串行执行，这里限制的是跨会话并发。</p>
     </div>
-    <div className="settings-field">
-      <label htmlFor="limit-empty-retries">空响应自动重试次数</label>
+    <div className="settings-row">
+      <div>
+        <strong>空响应自动重试次数</strong>
+        <span>模型返回空内容时的重试上限；设为 0 表示不重试，直接按失败结束这一轮。</span>
+      </div>
       <input
-        id="limit-empty-retries"
+        className="settings-number-input"
         type="number"
         min={0}
         max={10}
         value={limits.maxEmptyRetries}
         onChange={(event) => patch({ maxEmptyRetries: Number(event.target.value) })}
+        aria-label="空响应自动重试次数"
       />
-      <p className="settings-hint">模型返回空内容时的重试上限；设为 0 表示不重试，直接按失败结束这一轮。</p>
     </div>
-    <div className="settings-field">
-      <label htmlFor="limit-continuations">输出截断自动续写次数</label>
+    <div className="settings-row">
+      <div>
+        <strong>输出截断自动续写次数</strong>
+        <span>单次输出达到长度上限时自动续写的次数；设为 0 表示不续写，回答会停在截断处。</span>
+      </div>
       <input
-        id="limit-continuations"
+        className="settings-number-input"
         type="number"
         min={0}
         max={10}
         value={limits.maxLengthContinuations}
         onChange={(event) => patch({ maxLengthContinuations: Number(event.target.value) })}
+        aria-label="输出截断自动续写次数"
       />
-      <p className="settings-hint">单次输出达到长度上限时自动续写的次数；设为 0 表示不续写，回答会停在截断处。</p>
     </div>
-    <div className="settings-field">
-      <label htmlFor="limit-budget">单会话 token 预算</label>
+    <div className="settings-row">
+      <div>
+        <strong>单会话 token 预算</strong>
+        {/* 只按服务商返回的实际用量判断，不做估算，也不换算成金额 */}
+        <span>按服务商返回的实际用量统计（输入 + 输出）。达到后该会话拒绝开新一轮，并说明已用量与预算；可调高预算或新建会话继续。</span>
+      </div>
       <input
-        id="limit-budget"
+        className="settings-number-input wide"
         type="number"
         min={0}
         step={1000}
-        placeholder="留空表示不限制"
+        placeholder="不限制"
         value={limits.conversationTokenBudget ?? ''}
         onChange={(event) => patch({ conversationTokenBudget: event.target.value.trim() ? Number(event.target.value) : null })}
+        aria-label="单会话 token 预算"
       />
-      {/* 只按服务商返回的实际用量判断，不做估算，也不换算成金额 */}
-      <p className="settings-hint">按服务商返回的实际用量统计（输入 + 输出）。达到后该会话拒绝开新一轮，并说明已用量与预算；可调高预算或新建会话继续。</p>
     </div>
-  </div>
+  </section>
 }

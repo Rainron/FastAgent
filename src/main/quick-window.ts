@@ -8,6 +8,12 @@ import { BrowserWindow } from 'electron'
 import { join } from 'node:path'
 
 let quickWindow: BrowserWindow | null = null
+/**
+ * 钉住期间不因失焦隐藏。
+ * agent 模式一轮要跑几分钟且中途需要点审批，按「问完就走」的默认行为一失焦就藏，
+ * 用户既看不到进度也没法授权，运行会一直卡在审批上。
+ */
+let pinned = false
 
 function createQuickWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -33,7 +39,7 @@ function createQuickWindow(): BrowserWindow {
   })
   win.setAlwaysOnTop(true, 'floating')
   // 失焦即隐藏：快速对话的定位是「问完就走」，不占用任务栏与焦点管理
-  win.on('blur', () => { if (win.isVisible()) win.hide() })
+  win.on('blur', () => { if (!pinned && win.isVisible()) win.hide() })
   win.on('closed', () => { if (quickWindow === win) quickWindow = null })
   // 阻止窗口内导航：链接一律走主窗口的既有规则，这里直接不给开
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -59,7 +65,13 @@ export function showQuickWindow(): void {
 }
 
 export function hideQuickWindow(): void {
+  // 显式隐藏（Esc / 隐藏按钮）不受钉住影响：那是用户自己要求收起来的。
   if (isQuickWindow(quickWindow)) (quickWindow as BrowserWindow).hide()
+}
+
+/** agent 运行期间钉住小窗，避免失焦隐藏后审批无处可点。 */
+export function setQuickWindowPinned(value: boolean): void {
+  pinned = value
 }
 
 /** chat 事件需要同时投递给快速对话窗口，否则小窗里看不到流式回答。 */

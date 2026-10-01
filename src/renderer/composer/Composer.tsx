@@ -1,23 +1,22 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, FileText, ListEnd, Paperclip, Pause, Play, X } from 'lucide-react'
-import type { Attachment, ConversationMode, GitOperationResult, GitWorkspaceState, LocalSkillRecord, ModelOption, PermissionPreset, ShortcutSettings, ThinkingLevel, WorkspaceFileMatch } from '../../shared/types'
-import { findProfile, type PermissionProfile } from '../../shared/permission-profiles'
-import type { CompactionState } from '../conversation/compaction-state'
-import { ContextHealth, type ContextHealthData } from '../conversation/ContextHealth'
+import { AlertTriangle, ArrowUp, ChevronDown, FileText, ListEnd, Paperclip, Pause, Play, X } from 'lucide-react'
+import type { Attachment, LocalSkillRecord, PermissionPreset, WorkspaceFileMatch } from '../../shared/types'
+import { findProfile } from '../../shared/permission-profiles'
+import { ContextHealth } from '../conversation/ContextHealth'
 import { AttachmentImage, formatAttachmentSize, isImageAttachment } from '../conversation/AttachmentImage'
 import { activeMentionQuery, applyMention, applySlashCommand, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
 import { FileMentionMenu } from '../conversation/FileMentionMenu'
 import { GitBranchTrigger } from '../conversation/GitBranchMenu'
 import { createComposerHistory } from '../conversation/composer-history'
 import { createLocalStoragePromptHistory, createPromptHistory } from '../conversation/prompt-history'
-import type { QueuedPrompt } from '../conversation/prompt-queue'
 import { SkillMentionMenu } from '../conversation/SkillMentionMenu'
 import { thinkingLevelsForModel } from '../model-picker'
 import { effectiveInAppBinding, matchKeyboardBinding } from '../shortcuts'
 import { nextConversationMode } from '../workspace-actions'
 import type { WorkspaceConversation } from '../workspace/workspace-types'
-import { appendAttachments, attachmentFromFile } from './attachments'
+import { appendAttachments, attachmentFromFile, droppedImageCount } from './attachments'
 import { clampComposerHeight } from './composer-height'
+import type { ComposerProps } from './composer-types'
 import { useComposerDensity } from './composer-density'
 import { MOTION_DURATIONS, motionEnabled } from '../motion'
 import { ComposerOverflow, ModelSelector, PermissionSelector, ReasoningSelector } from './ComposerSelectors'
@@ -29,10 +28,11 @@ import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidat
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
-export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, compaction, onCompact, onCancelCompaction, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: { compaction: CompactionState | null; /** 输入框作用域的快捷键绑定，未设置时回落 DEFAULT_IN_APP_BINDINGS */ shortcuts: ShortcutSettings | undefined; contextHealth: ContextHealthData; onCompact: () => void; onNewChat: () => void; onSelectConversation: (item: WorkspaceConversation) => void; onClearConversation: () => Promise<void>; onInitProject: () => Promise<void>; /** /resume 的语境依据：当前选中项目 id，null 表示快速对话，列表按它过滤。 */ currentProjectId: string | null; mode: ConversationMode; /** 计划模式开启时显示 Plan 标记，回复只产出实施计划 */ planMode: boolean; onTogglePlanMode: () => void; /** Agent 仅在项目会话可用；快速对话固定 chat */ agentAvailable: boolean; setMode: (mode: ConversationMode) => void; model: ModelOption | null; selectedModelId: number | null; models: ModelOption[]; favoriteModelIds: number[]; recentModelIds: number[]; onSelectModel: (modelId: number) => void; thinkingLevel: ThinkingLevel; onThinkingLevelChange: (level: ThinkingLevel) => void; onToggleFavorite: (modelId: number) => void; permission: PermissionPreset | null; /** 可选档位，内置三档恒在最前 */ permissionProfiles: PermissionProfile[]; onPermissionChange: (preset: PermissionPreset) => void; /** 打开设置页的「Agent 执行权限」分区 */ onOpenPermissionSettings: () => void; attachmentRequest: number; runId: string | null; queue: QueuedPrompt[]; onEnqueue: (text: string, attachments: Attachment[]) => void; onRemoveQueued: (id: string) => void; quoteRequest: { text: string; nonce: number } | null; /** 直接写进输入框的提示（成果「继续修改」），不加引用块 */ prefillRequest: { text: string; nonce: number } | null; onSend: (text: string, attachments: Attachment[]) => Promise<void>; onCancel: () => void; /** 已请求暂停：按钮切成继续，提示区说明生效边界 */ paused: boolean; onPause: () => void; onResume: () => void; onCancelCompaction?: () => void; height: number; heightPinned: boolean; onHeightChange: (height: number, pinned: boolean) => void; onManageModels: () => void; onNotice: (notice: string) => void; /** Git 分支展示与切换；null 时不渲染入口。 */ gitState: GitWorkspaceState | null; gitAnyRunActive: boolean; onGitCheckout: (branch: string) => Promise<GitOperationResult>; onGitCreate: (name: string) => Promise<GitOperationResult>; onGitStopAndCheckout: (branch: string) => Promise<GitOperationResult> }) {
+export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, compaction, onCompact, onCancelCompaction, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
+  const droppedImages = useMemo(() => droppedImageCount(attachments, model?.model_kind), [attachments, model?.model_kind])
   useEffect(() => {
     void window.fastAgent.settings.get().then((next) => setAttachmentPolicy(normalizeAttachmentPolicy(next))).catch(() => undefined)
     return window.fastAgent.settings.onChange((next) => setAttachmentPolicy(normalizeAttachmentPolicy(next)))
@@ -606,6 +606,11 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
             : <><FileText size={15} /><span>{file.name.split('.').pop()?.slice(0, 6).toUpperCase() || 'FILE'}</span><span>{formatAttachmentSize(file.size)}</span></>}
           <button className="x" onClick={() => requestRemoveAttachment(file.id)} aria-label={`移除 ${file.name}`} title={`移除 ${file.name}`}><X size={10} /></button>
         </span>)}
+      </div>}
+      {droppedImages > 0 && <div className="attach-warning" role="status">
+        <AlertTriangle size={13} />
+        <span>当前模型未标记为多模态，{droppedImages} 张图片不会发送给模型。在「设置 › 模型服务」里勾选该模型的「多模态」，或换一个多模态模型。</span>
+        <button type="button" onClick={onManageModels}>去设置</button>
       </div>}
     </div>
     {resumeOpen && <ResumeMenu records={resumeList} activeIndex={resumeIndex} onHover={setResumeIndex} onSelect={pickResume} />}

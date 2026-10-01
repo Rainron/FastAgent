@@ -38,10 +38,14 @@ afterEach(() => {
   while (tempRoots.length) rmSync(tempRoots.pop() as string, { recursive: true, force: true })
 })
 
-function makeStore() {
+function makeDatabasePath() {
   const root = mkdtempSync(join(tmpdir(), 'fastagent-store-'))
   tempRoots.push(root)
-  return new LocalStore(join(root, 'fastagent.db'))
+  return join(root, 'fastagent.db')
+}
+
+function makeStore() {
+  return new LocalStore(makeDatabasePath())
 }
 
 describe('LocalStore Hub 源', () => {
@@ -679,7 +683,7 @@ describe('LocalStore conversations', () => {
     expect(store.updateContextPolicy('account-a', 'ctx', { strategy: 'conservative', inheritGlobal: false })).toMatchObject({ strategy: 'conservative', inheritGlobal: false })
     expect(store.getContextPolicy('account-b', 'ctx')).toBeNull()
     const state = store.upsertContextState('account-a', { conversationId: 'ctx', contextWindow: 1000, estimatedTokens: 700, messageTokens: 500, toolTokens: 100, systemTokens: 100, compactionCount: 1, latestSummaryId: null, updatedAt: '2026-08-30T10:00:00.000Z' })
-    const summary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 1, summaryText: 'goal', coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', inputTokens: 700, outputTokens: 120 })
+    const summary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 1, summaryText: 'goal', coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', inputTokens: 700, outputTokens: 120, source: 'turns' })
     store.upsertContextState('account-a', { ...state, latestSummaryId: summary.id, updatedAt: '2026-08-30T10:01:00.000Z' })
     store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'conservative', triggerReason: 'manual', beforeTokens: 900, afterTokens: 500, coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', summaryId: summary.id, durationMs: 12 })
     const detailed = store.getConversationDetailed('account-a', 'ctx')
@@ -690,6 +694,40 @@ describe('LocalStore conversations', () => {
     expect(store.getModelRuntimeSessionFile('account-a', 'ctx', 'openai', 9)).toBe('model-9.jsonl')
     store.setModelRuntimeSessionFile('account-a', 'ctx', 'openai', 9, 'model-9-next.jsonl')
     expect(store.getModelRuntimeSessionFile('account-a', 'ctx', 'openai', 9)).toBe('model-9-next.jsonl')
+    store.close()
+  })
+
+  it('压缩历史带出摘要正文，Pi 摘要不参与「重开 session 的种子摘要」', () => {
+    const store = makeStore()
+    store.createConversation('account-a', { id: 'ctx', title: 'Context' })
+    const turnSummary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 1, summaryText: '按回合切的摘要', coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', inputTokens: 700, outputTokens: 120, source: 'turns' })
+    const sessionSummary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 2, summaryText: 'Pi 会话内摘要', coveredTurnStart: null, coveredTurnEnd: null, inputTokens: 900, outputTokens: 150, source: 'session' })
+    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'auto', triggerReason: 'pi-threshold', beforeTokens: 900, afterTokens: 400, coveredTurnStart: null, coveredTurnEnd: null, summaryId: sessionSummary.id, durationMs: 20 })
+
+    // Pi 摘要版本更高，但种子摘要只能取按回合切的那份
+    expect(store.latestTurnSummary('account-a', 'ctx')?.id).toBe(turnSummary.id)
+    expect(store.getContextSummary('account-a', sessionSummary.id)?.source).toBe('session')
+    expect(store.listCompactionHistory('account-a', 'ctx')[0]?.summaryText).toBe('Pi 会话内摘要')
+    store.close()
+  })
+
+  it('旧库补上 source 列后既有摘要按 turns 处理', () => {
+    const databasePath = makeDatabasePath()
+    const legacy = new Database(databasePath)
+    legacy.exec(`
+      CREATE TABLE conversation_summaries (
+        namespace TEXT NOT NULL, id TEXT NOT NULL, conversation_id TEXT NOT NULL, version INTEGER NOT NULL,
+        summary_text TEXT NOT NULL, covered_turn_start TEXT, covered_turn_end TEXT,
+        input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, created_at TEXT NOT NULL,
+        PRIMARY KEY(namespace, id)
+      );
+      INSERT INTO conversation_summaries VALUES ('account-a', 'summary-old', 'ctx', 1, '旧摘要', 'turn-1', 'turn-2', 10, 5, '2026-08-30T10:00:00.000Z');
+    `)
+    legacy.close()
+
+    const store = new LocalStore(databasePath)
+    expect(store.getContextSummary('account-a', 'summary-old')).toMatchObject({ summaryText: '旧摘要', source: 'turns' })
+    expect(store.latestTurnSummary('account-a', 'ctx')?.id).toBe('summary-old')
     store.close()
   })
 })
@@ -1863,6 +1901,43 @@ describe('LocalStore 记忆会话内闭环', () => {
     store.recordMemoryRecalls('ns', 'c1', 't1', [memory.id])
     store.clearMemories('ns')
     expect(store.listMemoryRecallsForTurn('ns', 't1')).toEqual([])
+    store.close()
+  })
+})
+
+describe('LocalStore 云端模型参数覆盖', () => {
+  it('按 provider + 模型名读写，未设过时返回空对象', () => {
+    const store = makeStore()
+    expect(store.getModelOverride('OpenAI', 'gpt-4o')).toEqual({})
+    store.setModelOverride('OpenAI', 'gpt-4o', { context_window: 400_000 })
+    expect(store.getModelOverride('OpenAI', 'gpt-4o')).toEqual({ context_window: 400_000 })
+    // 同名不同 provider 互不影响
+    expect(store.getModelOverride('Anthropic', 'gpt-4o')).toEqual({})
+    store.close()
+  })
+
+  it('只保留合法字段，未知键被裁掉', () => {
+    const store = makeStore()
+    store.setModelOverride('OpenAI', 'gpt-4o', { context_window: 1, nonsense: true } as never)
+    expect(store.getModelOverride('OpenAI', 'gpt-4o')).toEqual({ context_window: 1 })
+    store.close()
+  })
+
+  it('覆盖清空即删行，listModelOverrides 不再返回它', () => {
+    const store = makeStore()
+    store.setModelOverride('OpenAI', 'gpt-4o', { max_tokens: 16_000 })
+    expect([...store.listModelOverrides().keys()]).toEqual(['OpenAI	gpt-4o'])
+    expect(store.setModelOverride('OpenAI', 'gpt-4o', {})).toEqual({})
+    expect(store.listModelOverrides().size).toBe(0)
+    store.close()
+  })
+
+  it('重复保存同一个模型是更新而不是插入第二行', () => {
+    const store = makeStore()
+    store.setModelOverride('OpenAI', 'gpt-4o', { context_window: 1 })
+    store.setModelOverride('OpenAI', 'gpt-4o', { context_window: 2, max_tokens: 3 })
+    expect(store.listModelOverrides().size).toBe(1)
+    expect(store.getModelOverride('OpenAI', 'gpt-4o')).toEqual({ context_window: 2, max_tokens: 3 })
     store.close()
   })
 })

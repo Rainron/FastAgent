@@ -39,6 +39,20 @@ describe('模型连接存储', () => {
     expect(store.runtimeConfig(-a.models[0].id)?.api_key).toBe('secret-a')
     expect(store.runtimeConfig(-b.models[0].id)?.api_key).toBe('secret-b')
   })
+  it('vision 决定 model_kind，并可单独补齐后被运行时读到', () => {
+    const { store } = createStore()
+    const connection = store.save({ providerId: 'openai', authMode: 'api-key', apiKey: 'secret', models: [{ modelId: 'vision-model', vision: true }, { modelId: 'text-model' }] })
+    expect(connection.models[0].model_kind).toBe('multimodal')
+    expect(connection.models[1].model_kind).toBe('chat')
+    store.setModelKind(-connection.models[1].id, 'multimodal')
+    expect(store.runtimeConfig(-connection.models[1].id)?.model_kind).toBe('multimodal')
+  })
+  it('未带 vision 的重新保存不会抹掉已有的多模态标记', () => {
+    const { store } = createStore()
+    const connection = store.save({ providerId: 'openai', authMode: 'api-key', apiKey: 'secret', models: [{ modelId: 'vision-model', vision: true }] })
+    const edited = store.save({ id: connection.id, providerId: 'openai', authMode: 'api-key', models: [{ id: connection.models[0].id, modelId: 'vision-model' }] })
+    expect(edited.models[0].model_kind).toBe('multimodal')
+  })
   it('新连接未提供能力元数据时默认保留思考等级', () => {
     const { store } = createStore()
     const connection = store.save({ providerId: 'openai', authMode: 'api-key', apiKey: 'secret', models: [{ modelId: 'reasoning-model' }] })

@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { LoaderCircle, Plus, Trash2 } from 'lucide-react'
-import type { LocalModelApi } from '../../shared/types'
+import { LoaderCircle, Plus, SlidersHorizontal, Trash2 } from 'lucide-react'
+import type { DiscoveredConnectionModel, LocalModelApi } from '../../shared/types'
+import { ModelParameterFields } from '../settings/ModelParameterFields'
+import { connectionPatchFromDraft, draftFromSource, type ModelParameterDraft } from '../settings/model-parameter-draft'
+import { inferContextWindow } from '../../shared/model-context-windows'
 import { addModel, connectionDraft } from './form-state'
 import './model-connections.css'
 
@@ -63,6 +66,43 @@ export function ModelConnections({ entering = false, selectedModelId, onSelectMo
   </div>
 }
 
+/**
+ * 连接内模型的参数面板。草稿在本地持有、每次改动即写回连接表单的 models[]，
+ * 真正落库仍由外层「保存模型服务」统一提交，与其他字段保持同一个提交时机。
+ */
+function ConnectionModelParameters({ model, onPatch }: {
+  model: DiscoveredConnectionModel
+  onPatch: (patch: Partial<DiscoveredConnectionModel>) => void
+}) {
+  const [draft, setDraft] = useState<ModelParameterDraft>(() => draftFromSource({
+    context_window: model.contextWindow ?? null,
+    max_tokens: model.maxTokens ?? null,
+    temperature: model.temperature,
+    timeout: model.timeout,
+    max_retries: model.maxRetries,
+    model_kind: model.vision === undefined ? undefined : model.vision ? 'multimodal' : 'chat',
+    supports_thinking: model.reasoning,
+    thinking_default: model.thinkingDefault,
+    extra_body: model.extraBody ?? null,
+    compat: model.compat ?? null
+  }))
+  const inferred = inferContextWindow(model.modelId)
+
+  function change(next: ModelParameterDraft) {
+    setDraft(next)
+    const patch = connectionPatchFromDraft(next)
+    // 草稿有错时只留在本地，不把半成品写回连接表单——否则保存会带上上一次的合法值，
+    // 用户以为自己改的那次生效了。
+    if (patch) onPatch(patch)
+  }
+
+  return <ModelParameterFields
+    draft={draft}
+    placeholders={inferred ? { contextWindow: { value: inferred, origin: '按模型名推断' } } : undefined}
+    onChange={change}
+  />
+}
+
 function ConnectionForm({ initial, providers, entering, selectedModelId, onSelectModel, onChanged }: {
   initial: Connection | null
   providers: Provider[]
@@ -77,8 +117,9 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, onSelec
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? '')
   const [protocol, setProtocol] = useState<LocalModelApi>(initial?.protocol ?? 'openai')
   const [apiKey, setApiKey] = useState('')
-  const [models, setModels] = useState<Input['models']>(initial?.models.map((model) => ({ id: model.id, modelId: model.model_name, name: model.name, contextWindow: model.context_window ?? undefined, maxTokens: model.max_tokens ?? undefined, reasoning: model.supports_thinking, thinkingLevelMap: model.thinking_level_map, thinkingDefault: model.thinking_default, thinkingProfiles: model.thinking_profiles })) ?? [])
+  const [models, setModels] = useState<Input['models']>(initial?.models.map((model) => ({ id: model.id, modelId: model.model_name, name: model.name, contextWindow: model.context_window ?? undefined, maxTokens: model.max_tokens ?? undefined, reasoning: model.supports_thinking, vision: model.model_kind === 'multimodal', thinkingLevelMap: model.thinking_level_map, thinkingDefault: model.thinking_default, thinkingProfiles: model.thinking_profiles })) ?? [])
   const [modelId, setModelId] = useState('')
+  const [expandedModel, setExpandedModel] = useState<string | null>(null)
   const [discovered, setDiscovered] = useState<Awaited<ReturnType<Api['models']>>>([])
   const [login, setLogin] = useState<Login | null>(null)
   const [answer, setAnswer] = useState('')
@@ -181,10 +222,15 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, onSelec
         {discovered.length > 0 && <label className="model-connection-field">可用模型<select value="" onChange={(event) => { const model = discovered.find((item) => item.modelId === event.target.value); if (model && !models.some((item) => item.modelId === model.modelId)) setModels([...models, model]) }}><option value="">选择模型添加到连接</option>{discovered.map((item) => <option key={item.modelId} value={item.modelId} disabled={models.some((model) => model.modelId === item.modelId)}>{item.name ?? item.modelId}</option>)}</select></label>}
         <div className="model-connection-add"><label className="model-connection-field">模型 ID<input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="手动输入模型 ID" spellCheck={false} /></label><button type="button" className="small-control" disabled={!modelId.trim()} onClick={() => { setModels(addModel(models, modelId)); setModelId('') }}>添加</button></div>
         <ul className="model-connection-models">{models.map((model) => <li key={model.modelId}><span><strong>{model.name ?? model.modelId}</strong><small>{model.modelId}</small></span><div className="model-connection-actions">
+          {/* 未勾选时运行时按纯文本申明能力，附件里的图片会被 pi 换成「image omitted」占位文本 */}
+          <label className="model-connection-vision" title="模型支持图片输入；关闭后附件中的图片不会发送给模型"><input type="checkbox" checked={model.vision ?? false} onChange={(event) => setModels(models.map((item) => item.modelId === model.modelId ? { ...item, vision: event.target.checked } : item))} />多模态</label>
+          <button type="button" className="small-control" aria-expanded={expandedModel === model.modelId} onClick={() => setExpandedModel(expandedModel === model.modelId ? null : model.modelId)}><SlidersHorizontal size={13} />参数</button>
           <button type="button" className="small-control" onClick={() => void run(async () => { const result = await window.fastAgent.modelConnections.test({ ...draft, modelId: model.modelId }); if (!result.ok) throw new Error(result.error ?? '连接失败'); setMessage(`连接成功（${result.latencyMs ?? '—'} ms）`) })}>测试</button>
           {model.id !== undefined && <button type="button" className="small-control" disabled={model.id === selectedModelId} onClick={() => void run(async () => { if (entering) await window.fastAgent.auth.enterWorkspace(model.id); else onSelectModel?.(model.id!) })}>{entering ? '进入工作区' : model.id === selectedModelId ? '使用中' : '设为当前模型'}</button>}
           <button type="button" className="small-control" aria-label={`移除模型 ${model.modelId}`} onClick={() => setModels(models.filter((item) => item.modelId !== model.modelId))}><Trash2 size={13} /></button>
-        </div></li>)}</ul>
+        </div>
+        {expandedModel === model.modelId && <ConnectionModelParameters model={model} onPatch={(patch) => setModels(models.map((item) => item.modelId === model.modelId ? { ...item, ...patch } : item))} />}
+        </li>)}</ul>
         <div className="model-connection-actions"><button className="primary-button" type="submit" disabled={!models.length || (mode === 'oauth' && !initial?.hasCredentials && login?.status !== 'success')}>{entering ? '测试并进入工作区' : '保存模型服务'}</button>{initial && <button type="button" className="small-control danger" onClick={() => setConfirmDelete(true)}>删除连接</button>}</div>
       </fieldset>
     </form>}

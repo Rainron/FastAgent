@@ -21,14 +21,22 @@ export function createDailyBackup(options: { backupsDir: string; databasePath: s
   return { backupPath }
 }
 
-/** 保留最近 N 份备份，返回被清理的文件名。 */
+const DAILY_BACKUP = /^fastagent-\d{4}-\d{2}-\d{2}\.db$/
+const SIDECAR_SUFFIX = /-(shm|wal)$/
+
+/**
+ * 保留最近 N 份备份，返回被清理的文件名。
+ * 除了过期的每日备份，还要收掉 -shm / -wal 边车：这两个文件由「谁打开过备份库」留下，
+ * 主文件删了它们不会跟着走，一份 -shm 就是 32KB，孤儿攒着只增不减。
+ */
 export function pruneBackups(backupsDir: string, keep: number): string[] {
-  const backups = readdirSync(backupsDir)
-    .filter((name) => /^fastagent-\d{4}-\d{2}-\d{2}\.db$/.test(name))
-    .sort()
-    .reverse()
+  const entries = readdirSync(backupsDir)
+  const expired = entries.filter((name) => DAILY_BACKUP.test(name)).sort().reverse().slice(keep)
+  const survivors = new Set(entries.filter((name) => name.endsWith('.db') && !expired.includes(name)))
+  // 主文件已不存在的边车同样清掉，包括历史上手工备份留下的那批。
+  const orphanSidecars = entries.filter((name) => SIDECAR_SUFFIX.test(name) && !survivors.has(name.replace(SIDECAR_SUFFIX, '')))
   const removed: string[] = []
-  for (const name of backups.slice(keep)) {
+  for (const name of [...expired, ...orphanSidecars]) {
     rmSync(join(backupsDir, name), { force: true })
     removed.push(name)
   }

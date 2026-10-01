@@ -33,7 +33,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
   }
 
   async providers() { return structuredClone(MODEL_PROVIDERS) }
-  async list() { return this.store.list() }
+  async list() { return this.healVisionFlags(this.store.list()) }
   async save(input: ModelConnectionInput) { const result = this.store.save({ ...input, models: await this.enrichModels(input, input.models) }); this.runtimes.delete(result.id); this.onChanged(); return result }
   async remove(id: string) {
     for (const session of this.sessions.values()) if (session.state.connectionId === id) await this.cancelLogin(session.state.sessionId)
@@ -74,7 +74,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
       const runtime = await this.runtime(input.id)
       return runtime.getModels(providerId).map((model) => {
         const capabilities = model as RuntimeModelCapabilities
-        return { modelId: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning, thinkingLevelMap: model.thinkingLevelMap, thinkingDefault: capabilities.thinkingDefault, thinkingProfiles: capabilities.thinkingProfiles }
+        return { modelId: model.id, name: model.name, contextWindow: model.contextWindow, maxTokens: model.maxTokens, reasoning: model.reasoning, vision: model.input?.includes('image') ?? false, thinkingLevelMap: model.thinkingLevelMap, thinkingDefault: capabilities.thinkingDefault, thinkingProfiles: capabilities.thinkingProfiles }
       })
     }
     const { metadata, secrets } = this.store.resolve(input)
@@ -89,17 +89,50 @@ export class ModelConnectionService implements ModelConnectionsApi {
     } catch { throw new Error('模型列表获取失败，可手动填写模型标识') }
   }
 
-  private async enrichModels(input: ModelConnectionDraft, models: DiscoveredConnectionModel[]): Promise<DiscoveredConnectionModel[]> {
-    if (input.authMode !== 'api-key' || !models.length || input.providerId === 'custom') return models
+  /** 把厂商 id 映射到 pi 静态目录里的 provider；账号连接直接用登录用的 provider。 */
+  private catalogProviders(providerId: string, authMode: 'api-key' | 'oauth'): string[] {
+    const preset = modelProvider(providerId)
+    if (authMode === 'oauth') return preset.oauthProviderId ? [preset.oauthProviderId] : []
+    const overrides: Record<string, string[]> = { zhipu: ['zai', 'zai-coding-cn'], kimi: ['moonshotai', 'moonshotai-cn'], gemini: ['google'], qwen: ['qwen-token-plan', 'qwen-token-plan-cn'], minimax: ['minimax', 'minimax-cn'] }
+    return overrides[providerId] ?? [providerId]
+  }
+
+  private async catalogModels(providers: string[]): Promise<RuntimeModelCapabilities[]> {
+    if (!providers.length) return []
     // 只查随 pi 安装的静态目录，避免获取能力时读取个人凭据或发起外部请求。
     this.catalogRuntime ??= this.buildRuntime(new InMemoryCredentialStore())
     const runtime = await this.catalogRuntime
-    const providerIds: Record<string, string[]> = { zhipu: ['zai', 'zai-coding-cn'], kimi: ['moonshotai', 'moonshotai-cn'], gemini: ['google'], qwen: ['qwen-token-plan', 'qwen-token-plan-cn'], minimax: ['minimax', 'minimax-cn'] }
-    const providers = providerIds[input.providerId] ?? [input.providerId]
-    const catalog = runtime.getModels().filter((model) => providers.includes(model.provider)) as RuntimeModelCapabilities[]
+    return runtime.getModels().filter((model) => providers.includes(model.provider)) as RuntimeModelCapabilities[]
+  }
+
+  /**
+   * 这次改动之前所有连接内模型都被硬编码成 model_kind='chat'，图片会被运行时换成占位文本。
+   * 读取连接列表时按 pi 静态目录补齐一次，用户不必重新「获取模型」再保存。
+   * 只升不降：目录不认识的模型保留用户手动勾选的结果。
+   */
+  private async healVisionFlags<T extends Awaited<ReturnType<ModelConnectionStore['list']>>>(connections: T): Promise<T> {
+    try {
+      for (const connection of connections) {
+        const catalog = await this.catalogModels(this.catalogProviders(connection.providerId, connection.authMode))
+        if (!catalog.length) continue
+        for (const model of connection.models) {
+          if (model.model_kind === 'multimodal') continue
+          const known = catalog.find((entry) => entry.id === model.model_name)
+          if (!known?.input.includes('image')) continue
+          model.model_kind = 'multimodal'
+          this.store.setModelKind(-model.id, 'multimodal')
+        }
+      }
+    } catch { /* 目录不可用时保持原样，能力标记退回用户手动勾选 */ }
+    return connections
+  }
+
+  private async enrichModels(input: ModelConnectionDraft, models: DiscoveredConnectionModel[]): Promise<DiscoveredConnectionModel[]> {
+    if (input.authMode !== 'api-key' || !models.length || input.providerId === 'custom') return models
+    const catalog = await this.catalogModels(this.catalogProviders(input.providerId, 'api-key'))
     return models.map((model) => {
       const known = catalog.find((entry) => entry.id === model.modelId.trim())
-      return known ? { ...model, contextWindow: model.contextWindow ?? known.contextWindow, maxTokens: model.maxTokens ?? known.maxTokens, reasoning: known.reasoning, thinkingLevelMap: known.thinkingLevelMap, thinkingDefault: known.thinkingDefault, thinkingProfiles: known.thinkingProfiles } : model
+      return known ? { ...model, contextWindow: model.contextWindow ?? known.contextWindow, maxTokens: model.maxTokens ?? known.maxTokens, reasoning: known.reasoning, vision: known.input?.includes('image') ?? false, thinkingLevelMap: known.thinkingLevelMap, thinkingDefault: known.thinkingDefault, thinkingProfiles: known.thinkingProfiles } : model
     })
   }
 

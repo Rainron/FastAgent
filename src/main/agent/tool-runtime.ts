@@ -19,6 +19,7 @@ import { createTodoTool } from './tools/todo'
 import { createSubAgentTool } from './tools/subagent'
 import type { SubAgentToolContext } from './tools/subagent'
 import { createShellOperations } from './sandbox/shell-operations'
+import { createBackgroundShellTools } from './tools/background-shell'
 import { isVerificationCommand, verificationPrompt, type VerificationCommand } from './verification'
 import { skillIdForPaths } from './skill-usage'
 import type { SandboxManager } from './sandbox/sandbox-manager'
@@ -42,6 +43,11 @@ export interface ToolRuntimeContext {
    * 是很自然的用法；把规则集在 run 开始时定死，用户改了却还在被问，只会以为没保存。
    */
   resolveRuleSet: () => PermissionRuleSet
+  /**
+   * 当前档位是否「完全访问」。为真时不再跑死循环守卫：所有工具本就全放行，
+   * 这层拦截只会在长任务里凭入参重复把用户拽回来确认，拦不住真正的风险。
+   */
+  resolveFullAccess?: () => boolean
   /** run/会话级已批准模式：`${toolKey}\t${pattern}` → decision，pattern 支持通配 */
   sessionOverrides: Map<string, ApprovalDecision>
   store: LocalStore
@@ -81,9 +87,15 @@ function runtimeContext(source: ToolRuntimeContext | ToolRuntimeContextRef): Too
 
 /** 每轮追加到系统提示的工具清单说明，防止旧会话历史里「没有工具」的认知残留误导模型。 */
 export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 'planMode' | 'shellToolName' | 'sandbox' | 'verificationCommands'>): string {
-  if (context.mode !== 'agent') return ''
+  // chat 也有工具（只读全套 + shell），同样要声明，否则模型会照旧回答「我没有工具」。
+  if (context.mode === 'chat') {
+    const chatShellNote = context.shellToolName === 'powershell'
+      ? '\npowershell 工具是 Windows PowerShell 5.1：不支持 && 与 ||，顺序执行用 ;。'
+      : ''
+    return `\n\n当前可用工具：read、grep、find、ls、${context.shellToolName}。文件与命令操作受权限规则约束，必要时会请求用户批准。edit、write、patch 在本模式不提供，需要新建或改写文件时请提示用户切到 Agent 模式，不要声称自己没有工具。${chatShellNote}`
+  }
   // 计划模式下写工具会被系统直接拒绝，提前说明，避免模型反复重试同一个写调用。
-  if (context.planMode) return `\n\n当前处于计划模式（桌面控制同样被禁止）：只有 read、grep、find、ls、question、todowrite 与 git status / git diff / git log / git show 可用。edit、write、patch 以及其他 ${context.shellToolName} 命令会被系统直接拒绝，不要尝试。请阅读代码后输出分步实施计划（步骤、涉及文件、验证方式），等用户确认并退出计划模式再执行。`
+  if (context.planMode) return `\n\n当前处于计划模式：只有 read、grep、find、ls、question、todowrite 与 git status / git diff / git log / git show 可用。edit、write、patch 以及其他 ${context.shellToolName} 命令会被系统直接拒绝，不要尝试。请阅读代码后输出分步实施计划（步骤、涉及文件、验证方式），等用户确认并退出计划模式再执行。`
   const sandboxed = context.sandbox?.session?.isolation === 'sandboxed'
   // 明确告知隔离状态，避免模型在被系统拒绝后反复重试同一条命令。
   const sandboxNote = sandboxed
@@ -95,7 +107,9 @@ export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 
     : ''
   // 验证说明只在 agent 模式且非计划模式下追加：计划模式本来就不许执行命令。
   const verifyNote = verificationPrompt(context.verificationCommands ?? [])
-  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${sandboxNote}${verifyNote}`
+  // 不写这段的话模型只会用 `&` 把服务甩到后台，既拿不到日志也停不掉，随后就得让用户自己去起服务。
+  const backgroundNote = `\n启动开发服务器、watch 这类不会自己退出的进程，用 shell_background 而不是 ${context.shellToolName}：${context.shellToolName} 会一直等到进程退出，整轮就卡在那里。命令里不要再加 &、start 或 nohup。启动后用 shell_background_output 确认它真的起来了，不再需要时用 shell_background_stop 停掉。后台进程会一直活到本会话结束。`
+  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、shell_background（后台启动长期运行的命令）、shell_background_output、shell_background_stop、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${backgroundNote}${sandboxNote}${verifyNote}`
 }
 
 /** 会话级放行按模式匹配而不是原串相等，否则换个参数就要重新批一次。 */
@@ -108,7 +122,9 @@ export function hasSessionOverride(overrides: ReadonlyMap<string, ApprovalDecisi
 }
 
 const PATH_TOOLS = new Set(['read', 'edit', 'write', 'grep', 'find', 'ls'])
-const SHELL_TOOLS = new Set(['bash', 'powershell'])
+// shell_background 一并算进来：它的入参同样是 command，权限主体、写入目标扫描与
+// 命令摘要都该按 shell 处理，否则后台命令会绕开 shell 那套规则。
+const SHELL_TOOLS = new Set(['bash', 'powershell', 'shell_background'])
 
 /** 从工具入参抽取文件路径列表；patch 从 diff 头抽取全部目标路径。 */
 function collectPathInputs(toolName: string, input: Record<string, unknown>): string[] {
@@ -326,14 +342,21 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       pi.registerTool(initial.shellToolName === 'powershell'
         ? createPowerShellToolDefinition(initial.cwd, { operations, exposeSessionEnvironment: false })
         : createBashToolDefinition(initial.cwd, { operations, exposeSessionEnvironment: false }))
+      // 后台命令共用同一份 operations：沙箱开着时后台进程一样落在沙箱账户下。
+      for (const tool of createBackgroundShellTools({
+        namespace: initial.namespace,
+        conversationId: initial.conversationId,
+        resolveContext: () => {
+          const context = runtimeContext(source)
+          return { cwd: context.cwd, operations, emit: context.emit }
+        }
+      })) pi.registerTool(tool)
     }
 
     // 兜底：把当前工具清单追加进系统提示，旧会话历史里「没有工具」的说法不会误导模型
-    if (initial.mode === 'agent') {
-      pi.on('before_agent_start', async (event) => ({
-        systemPrompt: `${event.systemPrompt}${toolAvailabilityNote(runtimeContext(source))}`
-      }))
-    }
+    pi.on('before_agent_start', async (event) => ({
+      systemPrompt: `${event.systemPrompt}${toolAvailabilityNote(runtimeContext(source))}`
+    }))
 
     const onToolCall: ExtensionHandler<ToolCallEvent, ToolCallEventResult> = async (event) => {
       const context = runtimeContext(source)
@@ -396,7 +419,8 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       const verifying = SHELL_TOOLS.has(toolName)
         && typeof input.command === 'string'
         && isVerificationCommand(input.command, context.verificationCommands ?? [])
-      const doom = verifying ? { hash: '', triggered: false } : doomLoop.check(toolName, input)
+      // 完全访问档位整体豁免：用户已经声明不再逐次确认，重复入参不该是唯一还会打断他的理由。
+      const doom = verifying || context.resolveFullAccess?.() ? { hash: '', triggered: false } : doomLoop.check(toolName, input)
       const evaluatePermission = (): PermissionAction => {
         const ruleSet = context.resolveRuleSet()
         const actions: PermissionAction[] = [resolvePermission(toolKey, subject, ruleSet)]

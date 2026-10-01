@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { defaultPermissionForMode, permissionPresets, permissionProfile, permissionSummary } from './permissions'
 
 describe('permission presets', () => {
-  it('uses mode-specific safe defaults', () => {
-    expect(defaultPermissionForMode('chat')).toBeNull()
+  it('两种模式都落到 ask 档：chat 也有 shell 工具，必须有审批闸门', () => {
+    expect(defaultPermissionForMode('chat')).toBe('ask')
     expect(defaultPermissionForMode('agent')).toBe('ask')
   })
 

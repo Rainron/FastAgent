@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 import type React from 'react'
-import type { ConversationRunState, ConversationTurn, TodoItem } from '../../shared/types'
-import { nextActivityRunStatus, resolveEventTurnId } from '../activity'
-import type { StreamBuffer } from '../ai-response/stream-buffer'
-import { completeCompaction, type CompactionStates } from '../conversation/compaction-state'
-import type { ContextHealthData } from '../conversation/ContextHealth'
-import type { PendingApproval, WorkspaceConversation } from './workspace-types'
+import type { ConversationRunState, ConversationTurn, TodoItem } from '../../../shared/types'
+import { nextActivityRunStatus, resolveEventTurnId } from '../../activity'
+import type { StreamBuffer } from '../../ai-response/stream-buffer'
+import { completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
+import type { ContextHealthData } from '../../conversation/ContextHealth'
+import type { PendingApproval, WorkspaceConversation } from '../workspace-types'
 
 export interface AgentEventSinks {
   selectedConversationId: string | null

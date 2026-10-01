@@ -27,6 +27,10 @@ export const TOOL_KEY_MAP: Record<string, LogicalToolKey> = {
   patch: 'edit',
   bash: 'shell',
   powershell: 'shell',
+  // 后台命令按 shell 判权限：启动和停止都是对进程的操作，只有查看输出是纯读。
+  shell_background: 'shell',
+  shell_background_stop: 'shell',
+  shell_background_output: 'read',
   question: 'question',
   todowrite: 'todowrite',
 }

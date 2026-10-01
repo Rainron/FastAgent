@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionTrace, formatElapsed, isDelegationToolAction, subAgentActivityLabel, thinkingTextByGroup, traceGroupLabel, traceGroupLiveLabel } from './execution-trace'
+import { buildExecutionTrace, formatElapsed, hasToolAction, isDelegationToolAction, subAgentActivityLabel, thinkingTextByGroup, traceGroupLabel, traceGroupLiveLabel } from './execution-trace'
 import type { AgentEvent } from '../shared/types'
 
 function event(patch: Partial<AgentEvent>): AgentEvent {
@@ -419,5 +419,19 @@ describe('thinkingTextByGroup', () => {
 
   it('Thinking 还在进行中（只有 pendingGroup）时挂到 pendingGroup', () => {
     expect(thinkingTextByGroup(buildExecutionTrace([thinkingOn]), ['进行中'], '进行中').get('pending')).toBe('进行中')
+  })
+})
+
+describe('hasToolAction', () => {
+  it('只有思考时为 false：纯问答回合仍走轻量分析卡', () => {
+    expect(hasToolAction(buildExecutionTrace([thinkingOn, thinkingOff, completed]))).toBe(false)
+  })
+
+  it('出现工具动作后为 true', () => {
+    expect(hasToolAction(buildExecutionTrace([readStarted(0), readResult(0), completed]))).toBe(true)
+  })
+
+  it('工具还在进行（pendingGroup）时也为 true', () => {
+    expect(hasToolAction(buildExecutionTrace([readStarted(0)]))).toBe(true)
   })
 })

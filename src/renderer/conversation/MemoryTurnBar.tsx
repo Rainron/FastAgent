@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react'
-import { Brain, ChevronRight, Trash2 } from 'lucide-react'
+import { Brain, ChevronRight, ChevronUp, Trash2 } from 'lucide-react'
 import type { MemoryRecord } from '../../shared/types'
 
 const TYPE_LABELS: Record<MemoryRecord['type'], string> = { preference: '偏好', fact: '事实', decision: '决策', experience: '经验' }
@@ -36,17 +36,18 @@ export const MemoryTurnBar = React.memo(function MemoryTurnBar({ turnId, onNotic
   const recalled = activity?.recalled ?? []
   const extracted = activity?.extracted ?? []
   return <section className="memory-turn-bar">
-    <button className="memory-turn-heading" onClick={toggle} aria-expanded={expanded}>
-      <Brain size={13} />
-      <span>记忆</span>
+    <button className="memory-turn-heading" onClick={toggle} aria-expanded={expanded} title={expanded ? '收起记忆' : '展开记忆'}>
+      <span className="memory-turn-icon" aria-hidden="true"><Brain size={13} /></span>
+      <span className="memory-turn-label">记忆</span>
       {activity && <span className="memory-turn-count">注入 {recalled.length} · 提取 {extracted.length}</span>}
-      <ChevronRight size={13} className={`memory-turn-chevron ${expanded ? 'open' : ''}`} />
+      <ChevronRight size={12} className="memory-turn-chevron" />
     </button>
     {expanded && <div className="memory-turn-details">
       {!activity && <div className="memory-turn-empty">加载中</div>}
       {activity && recalled.length === 0 && extracted.length === 0 && <div className="memory-turn-empty">这一轮没有记忆活动</div>}
       {recalled.length > 0 && <MemoryGroup title="本轮注入" items={recalled} onDelete={removeMemory} />}
       {extracted.length > 0 && <MemoryGroup title="本轮提取" items={extracted} onDelete={removeMemory} />}
+      <button type="button" className="memory-turn-collapse" onClick={toggle}><ChevronUp size={12} />收起</button>
     </div>}
   </section>
 })

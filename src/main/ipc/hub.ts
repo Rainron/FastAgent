@@ -1,8 +1,6 @@
 import type { HubQuery, HubSourceInput } from '../../shared/types'
 import type { createHubService } from '../hub/hub-service'
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type IpcRegistrar = (channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown) => void
+import type { IpcRegistrar } from '../app-context'
 
 /** IPC 调用没有取消通道，给每次调用一个上限，避免一个挂死的源把 handler 永久占住。 */
 const CALL_TIMEOUT_MS = 60_000
