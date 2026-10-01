@@ -28,7 +28,7 @@ describe('projectRunState', () => {
     })
     expect(projectRunState('cancelled')).toEqual<RunStateProjection>({
       terminal: 'cancelled', runStatus: 'cancelled', ledgerStatus: 'cancelled',
-      turnStatus: 'cancelled', activityStatus: 'cancelled', hasUnreadResult: true
+      turnStatus: 'cancelled', activityStatus: 'cancelled', hasUnreadResult: false
     })
   })
 
@@ -63,13 +63,13 @@ describe('projectRunState', () => {
     }
   })
 
-  it('只有终态事件带未读标记与台账终态', () => {
+  it('只有终态事件带台账终态；未读标记只给用户没主动结束的终态', () => {
     for (const type of ALL_EVENT_TYPES) {
       const projection = projectRunState(type)
       const isTerminal = TERMINAL_TYPES.includes(type)
       expect(Boolean(projection.terminal), type).toBe(isTerminal)
       expect(Boolean(projection.ledgerStatus), type).toBe(isTerminal)
-      expect(projection.hasUnreadResult, type).toBe(isTerminal)
+      expect(projection.hasUnreadResult, type).toBe(isTerminal && type !== 'cancelled')
     }
   })
 

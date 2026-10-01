@@ -257,6 +257,7 @@ const api: FastAgentApi = {
     listDirectory: (path: string): Promise<WorkspaceListing> => ipcRenderer.invoke('workspace:list-directory', path),
     searchFiles: (query: string): Promise<WorkspaceFileMatch[]> => ipcRenderer.invoke('workspace:search-files', query),
     reveal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:reveal', path),
+    exists: (path: string): Promise<boolean> => ipcRenderer.invoke('workspace:exists', path),
     absolutePath: (path: string): Promise<string> => ipcRenderer.invoke('workspace:absolute-path', path),
     openExternal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:open-external', path),
     delete: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:delete', path)

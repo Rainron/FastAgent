@@ -44,7 +44,8 @@ const PROJECTIONS: Partial<Record<AgentEvent['type'], RunStateProjection>> = {
   question_required: { ...WORKING, runStatus: 'waiting_user' },
   completed: { terminal: 'completed', runStatus: 'completed', ledgerStatus: 'completed', turnStatus: 'completed', activityStatus: 'done', hasUnreadResult: true },
   failed: { terminal: 'failed', runStatus: 'failed', ledgerStatus: 'failed', turnStatus: 'failed', activityStatus: 'failed', hasUnreadResult: true },
-  cancelled: { terminal: 'cancelled', runStatus: 'cancelled', ledgerStatus: 'cancelled', turnStatus: 'cancelled', activityStatus: 'cancelled', hasUnreadResult: true },
+  // 取消来自用户自己点停止（或退出应用），没有需要回头看的新结果，不点未读；被动中断才需要提醒
+  cancelled: { terminal: 'cancelled', runStatus: 'cancelled', ledgerStatus: 'cancelled', turnStatus: 'cancelled', activityStatus: 'cancelled', hasUnreadResult: false },
   interrupted: { terminal: 'interrupted', runStatus: 'cancelled', ledgerStatus: 'interrupted', turnStatus: 'interrupted', activityStatus: 'interrupted', hasUnreadResult: true }
 }
 

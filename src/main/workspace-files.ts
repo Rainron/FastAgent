@@ -306,6 +306,20 @@ export async function deleteWorkspaceEntry(root: string | null, requested: strin
   }
 }
 
+/**
+ * 工作区内是否存在这个文件。
+ * 回答里的 `a/b.ts:42` 只有确认存在才渲染成可点的引用——模型经常把主机、命令、
+ * 示例路径写成同样的形状，点开只会弹「文件不存在」。目录不算：引用芯片是「打开预览」。
+ */
+export async function workspaceFileExists(root: string | null, requested: string): Promise<boolean> {
+  if (!root) return false
+  try {
+    return (await stat(resolveWorkspaceFile(root, requested))).isFile()
+  } catch {
+    return false
+  }
+}
+
 export interface WorkspaceFileMatch {
   name: string
   /** 相对工作区根目录，`/` 分隔 */

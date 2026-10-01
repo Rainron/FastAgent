@@ -1,6 +1,7 @@
 import { memo, useCallback, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, History, Minimize2 } from 'lucide-react'
 import { useDismiss } from '../use-dismiss'
+import { usePopoverClamp } from '../use-popover-clamp'
 import type { CompactionState } from './compaction-state'
 import type { ContextPolicy, ModelUsageSummary } from '../../shared/types'
 import { compactionSummaryLabel, contextHealthView } from './context-health-view'
@@ -58,6 +59,9 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
   const [open, setOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  // 触发器可能落在很窄的输入框左端，280px 的浮层右对齐后会整个长到窗口外
+  const popoverRef = useRef<HTMLDivElement>(null)
+  usePopoverClamp(popoverRef, open)
   const close = useCallback(() => setOpen(false), [])
   // 与其他浮层一致：点外部或 Esc 关闭，不必回到触发按钮再点一次
   useDismiss(open, close, ref)
@@ -67,7 +71,7 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
     <button className="context-health-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" title={`${view.headline}${data.usagePending ? '；本次用量待返回' : ''}`}>
       <MeterRing ratio={view.ratio} mark={view.triggerMark} /><span>{view.percent}%</span><ChevronDown size={12} />
     </button>
-    {open && <div className="context-health-popover" role="dialog" aria-label="上下文使用情况">
+    {open && <div className="context-health-popover" ref={popoverRef} role="dialog" aria-label="上下文使用情况">
       <div className="context-health-heading"><strong>上下文使用情况</strong><span>{formatTokens(data.estimatedTokens)} / {formatTokens(data.contextWindow)}</span></div>
       <div className="context-health-bar">
         <span style={{ width: `${view.percent}%` }} />

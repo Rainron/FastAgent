@@ -5,7 +5,7 @@ import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFi
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
 import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState } from '../git'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
-import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from '../workspace-files'
+import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
 import { shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
@@ -122,6 +122,8 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
       return error instanceof Error ? error.message : '无法定位文件'
     }
   })
+  // 回答里的文件引用在渲染成可点芯片之前先问一次存在性，不存在就当普通文本。
+  handle('workspace:exists', (_event, path: string) => workspaceFileExists(ctx.workspaceRoot, path))
   // 右键菜单「复制绝对路径」：与 reveal 同一套解析，空串表示根目录；返回绝对路径字符串供剪贴板写入。
   handle('workspace:absolute-path', (_event, path: string) => {
     if (!ctx.workspaceRoot) return '尚未打开工作区'

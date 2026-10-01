@@ -30,8 +30,14 @@ describe('snapshotFile', () => {
     const path = tempFile('a\nb\n')
     const first = snapshotFile(path)
     expect(first.exists).toBe(true)
-    expect(first.lines).toEqual(['a', 'b', ''])
+    // 末尾换行不算一行：split 留下的空串若计入，新建 2 行的文件会被统计成 +3
+    expect(first.lines).toEqual(['a', 'b'])
     expect(snapshotFile(path).hash).toBe(first.hash)
+  })
+
+  it('空文件是 0 行，没有末尾换行的文本不丢最后一行', () => {
+    expect(snapshotFile(tempFile('', 'empty.txt')).lines).toEqual([])
+    expect(snapshotFile(tempFile('a\nb', 'nonl.txt')).lines).toEqual(['a', 'b'])
   })
 
   it('二进制文件不给行内容，避免把控制字符写进库', () => {

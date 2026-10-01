@@ -6,6 +6,7 @@ import { parseAllowedTools } from '../agent/skill/skill-manifest'
 import { availableToolNames } from '../agent/skill/skill-tools'
 import { dialog } from 'electron'
 import { readFileSync } from 'node:fs'
+import { basename } from 'node:path'
 import type { IpcRegistrar, MainContext } from '../app-context'
 
 /** Skill 的增删改查、版本回退、校验、导入与蒸馏。 */
@@ -44,7 +45,8 @@ export function registerSkillsIpc(handle: IpcRegistrar, ctx: MainContext) {
   // 静态校验，不是试运行：不启动模型也不执行脚本，只查配置与依赖缺不缺。
   handle('skills:check', (_event, name: string) => {
     const detail = ctx.skillRegistry.read(name)
-    const directoryName = ctx.skillRegistry.directoryOf(name).split(/[\/]/).filter(Boolean).at(-1) ?? name
+    // Windows 路径用反斜杠分隔：只按 / 切会把整条路径当成目录名，所有 Skill 都被误报「name 与目录名不一致」。
+    const directoryName = basename(ctx.skillRegistry.directoryOf(name)) || name
     return checkSkill({
       name: detail.name,
       content: readFileSync(detail.filePath, 'utf8'),

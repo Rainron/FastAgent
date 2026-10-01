@@ -314,6 +314,8 @@ export interface FastAgentApi {
     searchFiles(query: string): Promise<WorkspaceFileMatch[]>
     /** 在系统文件管理器中定位工作区内文件/目录（打开所在窗口并选中）；成功返回空串。 */
     reveal(path: string): Promise<string>
+    /** 工作区内是否存在这个文件（目录返回 false）；越界或未打开工作区返回 false，不抛错。 */
+    exists(path: string): Promise<boolean>
     /** 把工作区内相对路径解析成绝对路径（空串表示根目录）；越界路径会 reject。 */
     absolutePath(path: string): Promise<string>
     /** 用系统默认应用打开工作区内文件/目录；成功返回空串，失败返回错误信息。 */

@@ -46,6 +46,28 @@ describe('parseFileReference', () => {
     expect(parseFileReference('../secret.ts:1')).toBeNull()
   })
 
+  it('IP 与端口不当作文件加行号', () => {
+    expect(parseFileReference('10.101.3.87:1000')).toBeNull()
+    expect(parseFileReference('127.0.0.1:8080')).toBeNull()
+    expect(parseFileReference('192.168.1.1')).toBeNull()
+  })
+
+  it('带端口的域名不当作文件', () => {
+    expect(parseFileReference('example.com:8080')).toBeNull()
+    expect(parseFileReference('registry.npmjs.org:443')).toBeNull()
+  })
+
+  it('纯数字后缀不算扩展名（版本号不是文件）', () => {
+    expect(parseFileReference('1.0.0')).toBeNull()
+    expect(parseFileReference('v2.3.4')).toBeNull()
+  })
+
+  it('域名形状的真实文件路径仍然解析', () => {
+    // 带目录分隔符就不走主机判断，公司内网域名做目录名的仓库也不会被误伤。
+    expect(parseFileReference('config/example.com:8080')).toMatchObject({ path: 'config/example.com', line: 8080 })
+    expect(parseFileReference('example.com.ts:12')).toMatchObject({ path: 'example.com.ts', line: 12 })
+  })
+
   it('区间终点小于起点时拒绝', () => {
     expect(parseFileReference('src/main.ts:80-2')).toBeNull()
   })

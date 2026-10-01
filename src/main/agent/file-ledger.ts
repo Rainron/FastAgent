@@ -29,6 +29,16 @@ export function missingSnapshot(): FileSnapshot {
   return MISSING
 }
 
+/**
+ * 按行切分。以换行结尾的文本直接 split('\n') 末尾会多出一个空串，把它算成一行会让新建 2 行的文件显示 +3、
+ * 删除同理多算。末尾换行本身不是一行，去掉这个空串；空文件是 0 行。
+ */
+export function splitLines(text: string): string[] {
+  const lines = text.split('\n')
+  if (lines.at(-1) === '') lines.pop()
+  return lines
+}
+
 /** 读取文件当前状态；读不到（不存在 / 无权限 / 是目录）一律当作不存在。 */
 export function snapshotFile(absolutePath: string): FileSnapshot {
   try {
@@ -41,7 +51,7 @@ export function snapshotFile(absolutePath: string): FileSnapshot {
     const hash = createHash('sha1').update(buffer).digest('hex')
     // NUL 字节判定二进制：逐行 diff 对二进制没有意义，也会把控制字符写进库
     const binary = buffer.includes(0)
-    return { exists: true, hash, lines: binary ? null : buffer.toString('utf8').split('\n'), size: stat.size }
+    return { exists: true, hash, lines: binary ? null : splitLines(buffer.toString('utf8')), size: stat.size }
   } catch {
     return MISSING
   }

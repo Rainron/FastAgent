@@ -20,13 +20,16 @@ export interface GitExecResult {
  */
 export function execGit(root: string, args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<GitExecResult> {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd: root, timeout: timeoutMs, windowsHide: true, encoding: 'utf8' }, (error, stdout, stderr) => {
-      if (!error) { resolve({ code: 0, stdout: String(stdout ?? ''), stderr: String(stderr ?? ''), missing: false }); return }
+    // core.quotePath=false：默认会把含非 ASCII 的路径转义成 octal 序列，中文文件名在界面上就是一串转义。
+    // 取原始字节自己按 UTF-8 解码：Windows 上 execFile 即便传 encoding: 'utf8' 也可能按系统代码页解码子进程输出。
+    execFile('git', ['-c', 'core.quotePath=false', ...args], { cwd: root, timeout: timeoutMs, windowsHide: true, encoding: 'buffer' }, (error, stdout, stderr) => {
+      const decode = (value: Buffer | string | undefined) => value === undefined ? '' : Buffer.isBuffer(value) ? value.toString('utf8') : String(value)
+      if (!error) { resolve({ code: 0, stdout: decode(stdout), stderr: decode(stderr), missing: false }); return }
       const errno = (error as NodeJS.ErrnoException | null)?.code
       if (errno === 'ENOENT') { resolve({ code: -1, stdout: '', stderr: '', missing: true }); return }
       // 超时错误码是 'ETIMEDOUT'，其余是 git 自身非零退出（code 为数字）。
       const code = typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1
-      resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? error.message), missing: false })
+      resolve({ code, stdout: decode(stdout), stderr: decode(stderr) || error.message, missing: false })
     })
   })
 }

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, PanelRight } from 'lucide-react'
 import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, AuthSnapshot, BootstrapData, CompactionHistory, ContextPolicy, ConversationMode, ConversationRunState, ConversationTurn, GitOperationResult,  LocalModelSummary, SearchResult, TodoItem, ToolCallRecord } from '../../shared/types'
+import { resetFileExistsCache } from '../ai-response/file-exists-cache'
 import { formatFileReference, type FileReference } from '../ai-response/file-reference'
 import { ResponseActionsContext, type ResponseActions } from '../ai-response/response-context'
 import { AgentRunBar } from '../composer/AgentRunBar'
@@ -146,6 +147,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [batchSelectedIds, setBatchSelectedIds] = useState<Set<string>>(new Set())
   const [conversationTitle, setConversationTitle] = useState('新对话')
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
+  // 同一个相对路径在另一个项目里可能不存在：切工作区后文件引用的存在性结论必须作废。
+  useEffect(() => { resetFileExistsCache() }, [workspaceRoot])
   const { gitState, refreshGitState } = useGitWorkspace(workspaceRoot)
   const [bootstrap, setBootstrap] = useState<BootstrapData | null>(null)
   const [bootstrapLoaded, setBootstrapLoaded] = useState(false)
@@ -185,9 +188,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setComposerHeight(next)
     if (pinned) setComposerHeightPinned(true)
   }, [])
-  // notice / noticeClosing 目前没有渲染方（提示条 UI 缺失，.toast 样式仍在 styles.css 里），
-  // 这里只取写入口，保持既有行为不变。
-  const { setNotice, setNoticeAction } = useNotice()
+  // 提示条的内容与退场状态在下面渲染：所有「已复制 / 删除失败 / 运行失败」这类反馈都靠它，
+  // 不渲染的话这些提示全部静默丢失。
+  const { notice, noticeAction, noticeClosing, setNotice, setNoticeAction } = useNotice()
   const [artifactFile, setArtifactFile] = useState<FileReference | null>(null)
   const effectiveDark = useEffectiveDark(theme)
   // 审批按发起它的 run / 会话归属存放：后台会话的审批不能弹到当前会话，也不能被别的 run 结束时清掉。
@@ -367,7 +370,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const { scrollRef, followRef, scrollNav, headerStuck, onConversationScroll, jumpConversation } = useConversationScroll(turns, runId, selectedConversationId)
 
   useAgentEvents({
-    selectedConversationId, streamBuffer, thinkingBuffer, refreshGitState,
+    selectedConversationId, visibleConversationId: section === 'chats' && batchKind !== 'conversations' ? selectedConversationId : null, streamBuffer, thinkingBuffer, refreshGitState,
     conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef,
     setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
   })
@@ -1451,7 +1454,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
           {section === 'chats' && batchKind !== 'conversations' ? <>
             <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
               <div><span className="status-dot" /> <span>{conversationTitle}</span></div>
-              <div className="header-actions">{selectedConversationId && <ItemActions onDelete={() => deleteConversation(selectedConversationId)} onArchive={() => archiveConversation(selectedConversationId)} onBatch={() => startBatch('conversations')} onInspect={() => void openInspector(selectedConversationId)} onExport={() => void exportConversation(selectedConversationId)} />}<button className="icon-button" aria-label="打开资源面板" title="打开资源面板" onClick={() => { closeInspector(); setArtifactOpen((value) => !value) }}><PanelRight size={16} /></button></div>
+              <div className="header-actions">{selectedConversationId && <ItemActions onDelete={() => handleDeleteConversation(selectedConversationId)} onArchive={() => archiveConversation(selectedConversationId)} onBatch={() => startBatch('conversations')} onInspect={() => void openInspector(selectedConversationId)} onExport={() => void exportConversation(selectedConversationId)} />}<button className="icon-button" aria-label="打开资源面板" title="打开资源面板" onClick={() => { closeInspector(); setArtifactOpen((value) => !value) }}><PanelRight size={16} /></button></div>
             </div>
             {/* 页内查找条：挂在对话头下沿，搜索范围就是上面的滚动容器 */}
             <FindBar open={findOpen} request={findRequest} containerRef={scrollRef} contentVersion={turns} scopeKey={selectedConversationId} onClose={handleCloseFind} onBeforeJump={handleFindBeforeJump} />
@@ -1474,6 +1477,10 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       </div>
       <LightboxLayer />
       {contextMenu && <MessageContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+      {notice && <div className={`toast${noticeClosing ? ' closing' : ''}`} role="status" aria-live="polite">
+        <span className="toast-message">{notice}</span>
+        {noticeAction && <button className="toast-action" onClick={noticeAction.run}>{noticeAction.label}</button>}
+      </div>}
       {pendingConfirm && <ConfirmDialog title={pendingConfirm.title} lines={pendingConfirm.lines} confirmLabel={pendingConfirm.confirmLabel} danger onConfirm={() => { const action = pendingConfirm.onConfirm; setPendingConfirm(null); action() }} onCancel={() => setPendingConfirm(null)} />}
       {approvals.filter((item) => item.conversationId === selectedConversationId).map((item) => <ApprovalDialog key={item.request.id} request={item.request} onRespond={(decision, answer) => void respondApproval(item.request.id, decision, answer)} />)}
       {skillDraft && <SkillDistillDialog draft={skillDraft} onClose={() => setSkillDraft(null)} onSaved={(name) => { setSkillDraft(null); setNotice(`技能 ${name} 已保存，默认停用`) }} />}

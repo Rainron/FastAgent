@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type React from 'react'
 import type { CompactionHistory, ConversationRunState, ConversationTurn, TodoItem } from '../../../shared/types'
 import { nextActivityRunStatus, resolveEventTurnId } from '../../activity'
+import { hasUnreadResultFor } from '../../run-status'
 import type { StreamBuffer } from '../../ai-response/stream-buffer'
 import { beginCompaction, clearAutoCompaction, completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
 import type { ContextHealthData } from '../../conversation/ContextHealth'
@@ -9,6 +10,8 @@ import type { PendingApproval, WorkspaceConversation } from '../workspace-types'
 
 export interface AgentEventSinks {
   selectedConversationId: string | null
+  /** 用户此刻正看着的会话；停在设置等其他页面时为 null，这时跑完的结果仍要记未读。 */
+  visibleConversationId: string | null
   streamBuffer: StreamBuffer
   /** 思考正文的独立缓冲：与回答正文分开累积，冲刷频率也更低。 */
   thinkingBuffer: StreamBuffer
@@ -34,7 +37,7 @@ export interface AgentEventSinks {
 /** 主进程 agent 事件流的唯一订阅点：把事件分派到运行状态、上下文、审批、待办与回合活动。 */
 export function useAgentEvents(sinks: AgentEventSinks) {
   const {
-    selectedConversationId, streamBuffer, thinkingBuffer, refreshGitState,
+    selectedConversationId, visibleConversationId, streamBuffer, thinkingBuffer, refreshGitState,
     conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef,
     setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
   } = sinks
@@ -47,7 +50,11 @@ export function useAgentEvents(sinks: AgentEventSinks) {
     if (event.type === 'tool_result') refreshGitState()
     if (event.conversationId && (event.type === 'run_started' || event.type === 'approval_required' || event.type === 'approval_resolved' || event.type === 'question_required' || event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) {
       const status = event.type === 'approval_required' || event.type === 'question_required' ? 'waiting_user' : event.type === 'completed' ? 'completed' : event.type === 'failed' ? 'failed' : event.type === 'cancelled' || event.type === 'interrupted' ? 'cancelled' : 'running'
-      setRunStates((current) => ({ ...current, [event.conversationId!]: { conversationId: event.conversationId!, projectId: conversationItemsRef.current.find((item) => item.id === event.conversationId)?.projectId ?? current[event.conversationId!]?.projectId ?? null, status, hasUnreadResult: status === 'completed' || status === 'failed' || status === 'cancelled', updatedAt: Date.now() } }))
+      // 结果落在用户正看着的会话里就不算未读，否则侧栏会给眼前这条亮一个要点掉的点；
+      // 用户自己点停止的 cancelled 也不算（与主进程 run-state 的投影同一口径）。
+      const unread = hasUnreadResultFor(event.type) && !(event.conversationId === visibleConversationId && document.visibilityState === 'visible')
+      if (hasUnreadResultFor(event.type) && !unread) void window.fastAgent.chat.markRead(event.conversationId).catch(() => undefined)
+      setRunStates((current) => ({ ...current, [event.conversationId!]: { conversationId: event.conversationId!, projectId: conversationItemsRef.current.find((item) => item.id === event.conversationId)?.projectId ?? current[event.conversationId!]?.projectId ?? null, status, hasUnreadResult: unread, updatedAt: Date.now() } }))
       if (event.conversationId === selectedConversationId && event.type === 'run_started') setContextHealth((current) => ({ ...current, usagePending: true }))
       if (event.conversationId === selectedConversationId && (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) setContextHealth((current) => ({ ...current, usagePending: false }))
       // 运行已终态却还挂着自动压缩运行态，说明压缩在抛出后没能发出收尾事件；
@@ -160,5 +167,5 @@ export function useAgentEvents(sinks: AgentEventSinks) {
       // 回合结束，只清掉本 run 尚未处理的挂起审批（主进程侧已按拒绝结算），其他会话的照旧保留。
       setApprovals((current) => current.filter((item) => item.runId !== event.runId))
     }
-  }), [selectedConversationId, streamBuffer, thinkingBuffer, refreshGitState, conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef, setRunStates, setCompactionStates, setContextHealth, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice])
+  }), [selectedConversationId, visibleConversationId, streamBuffer, thinkingBuffer, refreshGitState, conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef, setRunStates, setCompactionStates, setContextHealth, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice])
 }

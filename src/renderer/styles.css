@@ -1394,6 +1394,8 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 @media (max-width: 1050px) {
   .sidebar { width: 52px; flex-basis: 52px; padding-left: 8px; padding-right: 8px; }
   .sidebar span, .sidebar kbd, .sidebar .sidebar-section, .sidebar .account-copy, .sidebar .sidebar-bottom > .nav-item span { display: none; }
+  /* 窄窗口侧栏只剩图标列：会话列表整块收起，否则列表滚动条与「查看全部」的竖排文字会漏出来 */
+  .sidebar .sidebar-lists { display: none; }
   .sidebar .sidebar-top { justify-content: center; }
   .sidebar .sidebar-top > .icon-button { display: none; }
   .sidebar .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, GitBranch, Plus, X } from 'lucide-react'
 import type { GitOperationResult, GitStatusEntry, GitWorkspaceState } from '../../shared/types'
 import { useDismiss } from '../use-dismiss'
+import { usePopoverClamp } from '../use-popover-clamp'
 
 /** 分支展示文本：detached 显示短哈希，普通分支显示名称。 */
 export function gitBranchLabel(state: GitWorkspaceState): string {
@@ -33,6 +34,7 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
   const [statusEntries, setStatusEntries] = useState<GitStatusEntry[] | null>(null)
   const [busy, setBusy] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const closePopover = useCallback(() => {
     setOpen(false)
     setCreating(false)
@@ -42,6 +44,7 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
     setStatusEntries(null)
   }, [])
   useDismiss(open, closePopover, ref)
+  usePopoverClamp(menuRef, open)
 
   // 打开时拉一次本地分支列表，保证与真实仓库同步（不缓存首屏数据）。
   useEffect(() => {
@@ -106,7 +109,7 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
       {!compact && state.isDirty && <span className="git-dirty-count">{state.changedFiles}</span>}
       {!compact && <ChevronDown size={12} />}
     </button>
-    {open && <div className="git-branch-menu popover-card" role="menu" aria-label="Git 分支">
+    {open && <div ref={menuRef} className="git-branch-menu popover-card" role="menu" aria-label="Git 分支">
       <div className="popover-heading">Git 分支</div>
       <div className="git-branch-list">
         {branches.length === 0

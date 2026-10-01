@@ -5,7 +5,7 @@ import { findProfile, type BuiltinPermissionPreset, type PermissionProfile } fro
 import { allSectionGroupIds, expandedSectionModels, initialExpandedGroups, modelMetaLabel, modelSections, modelTabs, stepModelIndex, thinkingLevelDescription, thinkingLevelLabel, thinkingLevelShortLabel, triggerModelLabel, visibleModelOptions, type ModelTabKey } from '../model-picker'
 import { useDismiss } from '../use-dismiss'
 import { useDelayedUnmount } from '../use-delayed-unmount'
-import { usePopoverClamp } from './use-popover-clamp'
+import { usePopoverClamp } from '../use-popover-clamp'
 import { MOTION_DURATIONS } from '../motion'
 import type { ComposerDensity } from './composer-density'
 

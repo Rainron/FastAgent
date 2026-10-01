@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Boxes, Brain, ChartColumn, CircleUserRound, Database, FileText, Keyboard, LibraryBig, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
+import { Boxes, Brain, ChartColumn, Database, FileText, Keyboard, LibraryBig, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { AppSettings, AppTheme, AuthSnapshot, ConversationMode,  LocalModelSummary, LocalModelTestResult, ModelOption } from '../../shared/types'
 import { mergeModelOptions } from '../model-picker'
@@ -82,8 +82,7 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
           <div className="settings-nav-label">{group}</div>
           {categories.filter((item) => item.group === group).map((item) => { const Icon = item.icon; return <button key={item.key} className={`snav${category === item.key ? ' on' : ''}`} onClick={() => setCategory(item.key)} aria-current={category === item.key}><Icon size={15} />{item.label}</button> })}
         </div>)}
-        <div className="settings-nav-label">即将推出</div>
-        <button className="snav" disabled title="后续版本提供"><CircleUserRound size={15} />账户</button>
+
       </nav>
       <div className="settings-content">
         <div className="set-head"><span className="eyebrow">PREFERENCES</span><h1>{active.label}</h1><p>{active.desc}</p></div>
@@ -106,10 +105,11 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'keybindings' && settings && <KeybindingSettings settings={settings} onChange={onSettingsChange} onNotice={onNotice} />}
             {category === 'storage' && <DataStorageSettings onNotice={onNotice} />}
           </>}
-        <div className="settings-account">
+        {/* 只有登录了后端账号才有「锁定」可言；纯本地模型连接下点它既没有效果、还会中止所有运行中的任务。 */}
+        {auth.user && <div className="settings-account">
           <div><strong>账户安全</strong><span>锁定后需要重新验证才能继续使用。</span></div>
           <button className="quick-secondary" onClick={() => void onLock()}><LockKeyhole size={14} />锁定账户</button>
-        </div>
+        </div>}
       </div>
     </div>
   </div>

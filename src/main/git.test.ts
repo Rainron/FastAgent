@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { checkoutBranch, createBranch, listLocalBranches, parsePorcelain, resolveGitWorkspaceState, validateBranchName } from './git'
+import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState, validateBranchName } from './git'
 
 describe('parsePorcelain', () => {
   it('空输出返回空列表', () => {
@@ -154,5 +154,20 @@ describe.skipIf(!gitAvailable())('git 集成', () => {
     expect(result.ok).toBe(false)
     expect(result.error).toBeTruthy()
     expect((await listLocalBranches(dir)).length).toBe(1)
+  })
+})
+
+describe('中文文件名', () => {
+  it('status 里的中文路径是原文，不是 octal 转义', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'fastagent-git-cjk-'))
+    try {
+      await execGit(root, ['init'])
+      writeFileSync(join(root, '中文文件.txt'), 'x')
+      const result = await execGit(root, ['status', '--porcelain'])
+      expect(result.stdout).toContain('中文文件.txt')
+      expect(result.stdout).not.toMatch(/\\d{3}/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })

@@ -35,11 +35,13 @@ export function normalizeAssistantMessage(turn: ConversationTurn, answerStart = 
   const text = stripThinkBlocks((turn.assistantMessage?.text ?? '').slice(answerStart))
   const failure = turn.status === 'failed' ? turn.activity?.events.filter((event) => event.type === 'failed').at(-1)?.detail ?? null : null
   const cancelled = turn.status === 'cancelled'
-  if (!text && !failure && !cancelled) return null
+  const denial = turn.status === 'completed' ? trailingDenial(turn) : null
+  if (!text && !failure && !cancelled && !denial) return null
   const status = messageStatus(turn)
   const blocks: MessageBlock[] = parseBlocks(text, turn.id)
   if (failure) blocks.push({ id: `${turn.id}-error`, type: 'error', title: '执行失败', detail: failure, status: 'error' })
   else if (cancelled) blocks.push({ id: `${turn.id}-cancelled`, type: 'error', title: '已取消', detail: null, status: 'completed' })
+  else if (denial) blocks.push({ id: `${turn.id}-denied`, type: 'error', title: '操作未执行', detail: denial, status: 'completed' })
   // 流式阶段最后一个块仍在增长，前面的块不再变化。
   if (status === 'streaming' && blocks.length) {
     const last = blocks[blocks.length - 1]
@@ -52,6 +54,22 @@ export function normalizeAssistantMessage(turn: ConversationTurn, answerStart = 
     blocks,
     createdAt: Date.parse(turn.assistantMessage?.createdAt ?? turn.createdAt) || 0
   }
+}
+
+/**
+ * 回合因工具被拒而收尾、之后模型没再说话时的原因。
+ * 权限拒绝会让 run 在当前批次后直接结束，正文要么是空的、要么停在「我来调用某工具」，
+ * 原因只藏在折叠的执行轨迹里，用户看到的就是一轮没头没尾的空回复。
+ * 用拒绝事件发出时的正文长度判断「之后还有没有输出」：计划模式拒绝后模型会接着写计划，那种不提示。
+ */
+export function trailingDenial(turn: ConversationTurn): string | null {
+  const results = turn.activity?.events.filter((event) => event.type === 'tool_result') ?? []
+  const last = results.at(-1)
+  if (!last || last.permissionResult !== 'denied') return null
+  const finalLength = (turn.assistantMessage?.text ?? '').length
+  if (typeof last.textLength === 'number' && finalLength > last.textLength) return null
+  const reason = last.detail || `${last.tool ?? '工具'} 未获允许`
+  return reason.includes('权限规则禁止执行') ? `${reason}。可在「设置 › Agent 与权限」中调整规则后重试` : reason
 }
 
 /** blocks 的纯文本形态，用于「复制为纯文本」。 */
