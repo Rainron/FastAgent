@@ -26,6 +26,8 @@ export function coverageLabel(item: Pick<CompactionHistoryItem, 'coveredTurnStar
 export function triggerLabel(triggerReason: string) {
   if (triggerReason === 'pi-threshold') return '自动（达到阈值）'
   if (triggerReason === 'pi-overflow') return '自动（上下文溢出）'
+  // 桌面侧在一轮结束后按同一阈值补的那次压缩，对用户来说与 Pi 的阈值压缩没有区别。
+  if (triggerReason === 'threshold-desktop') return '自动（达到阈值）'
   if (triggerReason === 'pi-manual' || triggerReason === 'manual') return '手动'
   if (triggerReason === 'model-switch') return '换模型'
   return triggerReason

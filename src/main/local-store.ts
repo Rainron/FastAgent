@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import Database from 'better-sqlite3'
 import type { AbilityInstallMeta, AbilityType, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, AgentTaskRecord, AgentTaskStatus, ResumableRun, RunErrorKind, AppSettings, Artifact, ArtifactQuery, CompactionHistory, ContextPolicy, ContextState, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, ConversationTurnPatch, ClientPreferences, CliToolCheck, FileOperation, FileVersionRecord, HubSource, LocalCliTool, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PageResult, ProjectRecord, SkillVersionRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnContextSource, TurnRuntimeConfig, TurnStatus } from '../shared/types'
-import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary } from '../shared/types'
+import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, TurnSessionAnchor } from '../shared/types'
 import type { PermissionAction } from '../shared/permission-rules'
 import type { ModelParameterOverride } from '../shared/model-parameters'
 import type { StoredPermissionProfile } from '../shared/permission-profiles'
@@ -178,7 +178,7 @@ export class LocalStore {
   updateConversationContextPolicy(namespace: string, conversationId: string, patch: Partial<Omit<ContextPolicy, 'conversationId'>>) { return this.contextRepository.updateConversationContextPolicy(namespace, conversationId, patch) }
   getModelRuntime(namespace: string, conversationId: string, provider: string, modelId: number) { return this.contextRepository.getModelRuntime(namespace, conversationId, provider, modelId) }
   upsertModelRuntime(...args: Parameters<ContextStore['upsertModelRuntime']>) { this.contextRepository.upsertModelRuntime(...args) }
-  hasProviderRuntime(namespace: string, conversationId: string, provider: string) { return this.contextRepository.hasProviderRuntime(namespace, conversationId, provider) }
+  listRuntimeModelIds(namespace: string, conversationId: string) { return this.contextRepository.listRuntimeModelIds(namespace, conversationId) }
   getModelRuntimeSessionFile(namespace: string, conversationId: string, provider: string, modelId: number) { return this.contextRepository.getModelRuntimeSessionFile(namespace, conversationId, provider, modelId) }
   setModelRuntimeSessionFile(namespace: string, conversationId: string, provider: string, modelId: number, sessionFile: string) { this.contextRepository.setModelRuntimeSessionFile(namespace, conversationId, provider, modelId, sessionFile) }
   getContextState(namespace: string, conversationId: string): ContextState | null { return this.contextRepository.getContextState(namespace, conversationId) }
@@ -232,10 +232,27 @@ export class LocalStore {
   updateTurn(namespace: string, turnId: string, patch: ConversationTurnPatch, known?: ConversationTurn | null): ConversationTurn | null { return this.conversationRepository.updateTurn(namespace, turnId, patch, known) }
   deleteTurn(namespace: string, turnId: string): ConversationTurn | null { return this.conversationRepository.deleteTurn(namespace, turnId) }
   restoreTurn(namespace: string, turn: ConversationTurn): ConversationTurn { return this.conversationRepository.restoreTurn(namespace, turn) }
+  deleteTurnsAfter(namespace: string, conversationId: string, turnId: string): string[] { return this.conversationRepository.deleteTurnsAfter(namespace, conversationId, turnId) }
+  getTurnSessionAnchor(namespace: string, turnId: string): TurnSessionAnchor | null { return this.conversationRepository.getTurnSessionAnchor(namespace, turnId) }
+  setTurnSessionAnchor(namespace: string, turnId: string, anchor: TurnSessionAnchor | null) { this.conversationRepository.setTurnSessionAnchor(namespace, turnId, anchor) }
   renameConversation(namespace: string, id: string, title: string): ConversationRecord | null { return this.conversationRepository.renameConversation(namespace, id, title) }
   archiveConversation(namespace: string, id: string) { this.conversationRepository.archiveConversation(namespace, id) }
   removeConversation(namespace: string, id: string) { this.conversationRepository.removeConversation(namespace, id) }
   clearConversationTurns(namespace: string, conversationId: string): number { return this.conversationRepository.clearConversationTurns(namespace, conversationId) }
+  /**
+   * 清空一个会话在库里的全部内容：消息、上下文、运行台账、成果登记，以及由它抽出的记忆。
+   * 会话条目本身保留（标题重置），磁盘上的 session 文件与附件由调用方清理。
+   * 跨域组合放在门面：这几张表分属不同仓库，但「清空会话」要么全清、要么不动。
+   */
+  purgeConversationContent(namespace: string, conversationId: string): { turns: number; runs: number; artifacts: number; memories: number } {
+    const purge = this.db.transaction(() => ({
+      turns: this.conversationRepository.clearConversationTurns(namespace, conversationId),
+      runs: this.agentRunRepository.deleteConversationRuns(namespace, conversationId),
+      artifacts: this.artifactRepository.deleteConversationArtifacts(namespace, conversationId),
+      memories: this.memoryRepository.deleteConversationMemories(namespace, conversationId)
+    }))
+    return purge()
+  }
   listProjectsPage(namespace: string, query?: PageQuery, archived?: boolean): PageResult<ProjectRecord> { return this.conversationRepository.listProjectsPage(namespace, query, archived) }
   listProjects(namespace: string, archived?: boolean): ProjectRecord[] { return this.conversationRepository.listProjects(namespace, archived) }
   getProjectByPath(namespace: string, path: string): ProjectRecord | null { return this.conversationRepository.getProjectByPath(namespace, path) }
@@ -246,7 +263,7 @@ export class LocalStore {
   getConversationModelId(namespace: string, id: string): number | null { return this.conversationRepository.getConversationModelId(namespace, id) }
   setConversationModelId(namespace: string, id: string, modelId: number | null) { this.conversationRepository.setConversationModelId(namespace, id, modelId) }
   getConversationSessionFile(namespace: string, id: string): string | null { return this.conversationRepository.getConversationSessionFile(namespace, id) }
-  setConversationSessionFile(namespace: string, id: string, sessionFile: string) { this.conversationRepository.setConversationSessionFile(namespace, id, sessionFile) }
+  setConversationSessionFile(namespace: string, id: string, sessionFile: string | null) { this.conversationRepository.setConversationSessionFile(namespace, id, sessionFile) }
   recordToolCall(...args: Parameters<ConversationStore['recordToolCall']>) { this.conversationRepository.recordToolCall(...args) }
   updateToolCall(...args: Parameters<ConversationStore['updateToolCall']>) { this.conversationRepository.updateToolCall(...args) }
   listToolCalls(namespace: string, turnId: string): ToolCallRecord[] { return this.conversationRepository.listToolCalls(namespace, turnId) }

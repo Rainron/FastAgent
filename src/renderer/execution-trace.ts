@@ -5,6 +5,7 @@ import type { AgentEvent } from '../shared/types'
  * 分段点 = Agent 可见正文输出：非 token 事件携带 textLength（截至该事件已输出的正文长度），
  * 一旦 textLength 超过已归档正文游标，说明模型在两段动作之间输出了说明文本，当前动作组收尾。
  * token 事件不落库，因此切分只依赖后续动作事件的 textLength，历史回放同样成立。
+ * 文本段止步于最终回答起点：正文区渲染的是最后一条助手消息，见 traceTextBoundary。
  */
 
 export type TraceToolStatus = 'waiting' | 'running' | 'done' | 'failed'
@@ -53,6 +54,28 @@ export interface ExecutionTrace {
 const TOOL_EVENT_TYPES = new Set(['tool_started', 'tool_result', 'approval_required', 'question_required', 'subagent_started', 'subagent_update', 'subagent_result', 'subagent_failed', 'subagent_cancelled'])
 const TERMINAL_EVENT_TYPES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
 
+/**
+ * 轨迹文本段的右边界（transcript 坐标）：终态正文区渲染的是最后一条助手消息，
+ * 越过这条线的文字已经在正文区出现过，再切进轨迹就是同一段正文渲染两次。
+ * 记账事件（usageUpdated 等）在正文写完后才带上完整长度，会把最终回答一起推进文本段，
+ * 这里用「终态事件长度 - 最终回答长度」把边界收在回答起点上。两个长度来自不同通道时可能差几个字符，
+ * 宁可少夹一点（说明文本留在轨迹里）也不把正文切成两半。拿不到这两个数字时不夹取。
+ */
+export function traceTextBoundary(events: AgentEvent[], finalAnswerLength: number): number {
+  if (finalAnswerLength <= 0) return Number.POSITIVE_INFINITY
+  const terminal = events.find((event) => TERMINAL_EVENT_TYPES.has(event.type) && event.textLength !== undefined)
+  if (!terminal || terminal.textLength === undefined) return Number.POSITIVE_INFINITY
+  return Math.max(0, terminal.textLength - finalAnswerLength)
+}
+
+/**
+ * 夹取长度只在终态取：执行中正文区按未归档尾部切片，必须传 0，否则说明文本会被提前夹掉，
+ * 而且流式期间长度每帧都在变，会把轨迹重算拖成逐帧。调用方的 kind 必须与轨迹同源（activity.status）。
+ */
+export function traceFinalAnswerLength(kind: 'working' | 'done' | 'failed' | 'cancelled' | 'interrupted', answerTextLength: number): number {
+  return kind === 'working' ? 0 : answerTextLength
+}
+
 /** 无 toolCallId 的旧事件按工具名聚合到同一动作，避免碎片化。 */
 function toolKey(event: AgentEvent): string | null {
   if (!TOOL_EVENT_TYPES.has(event.type)) return null
@@ -100,9 +123,11 @@ function settleActions(actions: TraceAction[], unfinished: 'done' | 'failed') {
   }
 }
 
-export function buildExecutionTrace(events: AgentEvent[]): ExecutionTrace {
+export function buildExecutionTrace(events: AgentEvent[], finalAnswerLength = 0): ExecutionTrace {
   const segments: TraceSegment[] = []
   let actions: TraceAction[] = []
+  // 正文区渲染最后一条助手消息，轨迹文本段不得越过它，否则同一段正文渲染两次。
+  const textLimit = traceTextBoundary(events, finalAnswerLength)
   // 已归档正文的游标；<= 它的部分要么进了文本段，要么在正文区。
   let cursor = 0
   let thinkingActive = false
@@ -116,10 +141,12 @@ export function buildExecutionTrace(events: AgentEvent[]): ExecutionTrace {
 
   // 文本分段点：正文在该事件之前又长出来了，固化上一组并归档说明文本。
   const checkTextBoundary = (event: AgentEvent) => {
-    if (event.textLength === undefined || event.textLength <= cursor) return
+    if (event.textLength === undefined) return
+    const end = Math.min(event.textLength, textLimit)
+    if (end <= cursor) return
     flush()
-    segments.push({ kind: 'text', start: cursor, end: event.textLength })
-    cursor = event.textLength
+    segments.push({ kind: 'text', start: cursor, end })
+    cursor = end
   }
 
   for (const event of events) {

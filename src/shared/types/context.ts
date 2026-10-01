@@ -97,13 +97,13 @@ export interface ContextPolicy {
   strategy: ContextStrategy
   autoSummary: boolean
   triggerRatio: number | null
-  /** 压缩后期望回落到的上下文占比；留空跟随策略默认值。 */
-  targetRatio: number | null
   /**
    * 仅作用于跨 provider 换模型时的回合摘要。
    * 常规压缩由 Pi 在会话内按 token 保留，没有「轮」这个概念。
    */
   keepRecentTurns: number | null
+  /** 越过触发点但常规压缩压不动时降级强压；见 AppSettings.forceCompaction。 */
+  forceCompaction: boolean
   inheritGlobal: boolean
 }
 
@@ -150,6 +150,13 @@ export interface CompactionHistory {
   triggerReason: string
   beforeTokens: number
   afterTokens: number
+  /**
+   * 这次压缩发生时生效的上下文窗口。
+   * 百分比必须按它换算：模型窗口改过（改设置、重新导入连接、换模型）之后，
+   * 用「当前窗口」重算历史记录会把同一条压缩显示成完全不同的占比。
+   * 旧库补列默认 0，表示窗口未知，此时只报 token 数不编百分比。
+   */
+  contextWindow: number
   coveredTurnStart: string | null
   coveredTurnEnd: string | null
   summaryId: string | null

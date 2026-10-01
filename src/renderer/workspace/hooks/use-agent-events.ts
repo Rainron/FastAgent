@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
 import type React from 'react'
-import type { ConversationRunState, ConversationTurn, TodoItem } from '../../../shared/types'
+import type { CompactionHistory, ConversationRunState, ConversationTurn, TodoItem } from '../../../shared/types'
 import { nextActivityRunStatus, resolveEventTurnId } from '../../activity'
 import type { StreamBuffer } from '../../ai-response/stream-buffer'
-import { completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
+import { beginCompaction, clearAutoCompaction, completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
 import type { ContextHealthData } from '../../conversation/ContextHealth'
 import type { PendingApproval, WorkspaceConversation } from '../workspace-types'
 
@@ -22,6 +22,8 @@ export interface AgentEventSinks {
   setRunStates: React.Dispatch<React.SetStateAction<Record<string, ConversationRunState>>>
   setCompactionStates: React.Dispatch<React.SetStateAction<CompactionStates>>
   setContextHealth: React.Dispatch<React.SetStateAction<ContextHealthData>>
+  /** 会话流里的压缩分隔卡：压缩一发生就补进时间线，不必等下次重新进会话。 */
+  setCompactionHistory: React.Dispatch<React.SetStateAction<CompactionHistory[]>>
   setApprovals: React.Dispatch<React.SetStateAction<PendingApproval[]>>
   setTodosByTurn: React.Dispatch<React.SetStateAction<Record<string, TodoItem[]>>>
   setTurns: React.Dispatch<React.SetStateAction<ConversationTurn[]>>
@@ -34,7 +36,7 @@ export function useAgentEvents(sinks: AgentEventSinks) {
   const {
     selectedConversationId, streamBuffer, thinkingBuffer, refreshGitState,
     conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef,
-    setRunStates, setCompactionStates, setContextHealth, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
+    setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
   } = sinks
 
   useEffect(() => window.fastAgent.chat.onEvent((event) => {
@@ -48,19 +50,39 @@ export function useAgentEvents(sinks: AgentEventSinks) {
       setRunStates((current) => ({ ...current, [event.conversationId!]: { conversationId: event.conversationId!, projectId: conversationItemsRef.current.find((item) => item.id === event.conversationId)?.projectId ?? current[event.conversationId!]?.projectId ?? null, status, hasUnreadResult: status === 'completed' || status === 'failed' || status === 'cancelled', updatedAt: Date.now() } }))
       if (event.conversationId === selectedConversationId && event.type === 'run_started') setContextHealth((current) => ({ ...current, usagePending: true }))
       if (event.conversationId === selectedConversationId && (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) setContextHealth((current) => ({ ...current, usagePending: false }))
+      // 运行已终态却还挂着自动压缩运行态，说明压缩在抛出后没能发出收尾事件；
+      // 不清掉的话输入框会被永久禁用。手动压缩不受影响：它不依附于任何 run。
+      if (event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted') {
+        setCompactionStates((current) => clearAutoCompaction(current, event.conversationId!))
+      }
     }
     if (event.phase === 'compacting' && event.conversationId) {
+      const conversationId = event.conversationId
       setCompactionStates((current) => {
-        const state = current[event.conversationId!]
-        if (!state || state.status !== 'running') return current
-        if (event.type === 'compactionCompleted' || event.status === 'completed') return completeCompaction(current, event.conversationId!)
-        return { ...current, [event.conversationId!]: { ...state, progress: event.progress ?? state.progress, phase: event.detail || state.phase } }
+        const state = current[conversationId]
+        // 主进程自己触发的压缩（阈值兜底、换模型前压缩）界面上没有起点，
+        // 收到第一条压缩阶段事件就补一个运行态，否则整段压缩期间用户只看到输入框莫名卡住。
+        if (!state || state.status !== 'running') {
+          if (event.type === 'compactionCompleted' || event.status !== 'running') return current
+          return beginCompaction(current, conversationId, event.modelId ?? null, Date.now(), true)
+        }
+        if (event.type === 'compactionCompleted' || event.status === 'completed') return completeCompaction(current, conversationId)
+        // 自动压缩失败不弹换模型重试弹层：用户没发起过它，压力提示条会继续提示上下文仍然是满的。
+        if (event.status === 'failed' || event.status === 'cancelled') {
+          return state.auto ? clearAutoCompaction(current, conversationId) : { ...current, [conversationId]: { ...state, status: event.status === 'cancelled' ? 'cancelled' : 'failed', phase: event.detail || '压缩失败', error: event.detail } }
+        }
+        return { ...current, [conversationId]: { ...state, progress: event.progress ?? state.progress, phase: event.detail || state.phase } }
       })
     }
     if (event.type === 'contextUpdated' || event.type === 'compactionCompleted') {
       if (event.conversationId !== selectedConversationId) return
       // contextUpdated 不带压缩记录，最近压缩时间沿用旧值而不是清空。
       if (event.context) setContextHealth((current) => ({ ...event.context!, latestCompactionAt: event.compaction?.createdAt ?? current.latestCompactionAt ?? null, usage: current.usage, usagePending: current.usagePending }))
+      if (event.type === 'compactionCompleted' && event.compaction) {
+        const compaction = event.compaction
+        // 同一条压缩可能因重放到达两次，按 id 去重。
+        setCompactionHistory((current) => current.some((item) => item.id === compaction.id) ? current : [compaction, ...current])
+      }
       if (event.type === 'compactionCompleted' && event.context) {
         const before = Math.round((event.compaction?.beforeTokens || 0) / event.context.contextWindow * 100)
         const after = Math.round((event.compaction?.afterTokens || 0) / event.context.contextWindow * 100)

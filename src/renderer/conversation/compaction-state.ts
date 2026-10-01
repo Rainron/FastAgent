@@ -8,6 +8,11 @@ export interface CompactionState {
   phase: string
   startedAt: number
   error?: string
+  /**
+   * 由主进程自动触发（阈值兜底、换模型前压缩），不是用户点的「立即压缩」。
+   * 自动压缩失败时不弹换模型重试弹层——用户没主动发起它，弹层只会打断当前工作。
+   */
+  auto?: boolean
 }
 
 export type CompactionStates = Record<string, CompactionState>
@@ -16,7 +21,7 @@ export function initialCompactionStates(): CompactionStates {
   return {}
 }
 
-export function beginCompaction(states: CompactionStates, conversationId: string, modelId: number | null, now = Date.now()): CompactionStates {
+export function beginCompaction(states: CompactionStates, conversationId: string, modelId: number | null, now = Date.now(), auto = false): CompactionStates {
   const current = states[conversationId]
   if (current?.status === 'running') return states
   return {
@@ -26,10 +31,21 @@ export function beginCompaction(states: CompactionStates, conversationId: string
       taskId: `compaction-${conversationId}-${now}`,
       modelId,
       progress: 0,
-      phase: '准备压缩',
-      startedAt: now
+      phase: auto ? '正在自动压缩' : '准备压缩',
+      startedAt: now,
+      auto
     }
   }
+}
+
+/**
+ * 自动压缩的收尾：成功由 completeCompaction 接管，失败与「运行已结束但压缩状态还挂着」都走这里。
+ * 不留在 failed 态是刻意的——那会弹出换模型重试弹层，而用户根本没发起过这次压缩。
+ */
+export function clearAutoCompaction(states: CompactionStates, conversationId: string): CompactionStates {
+  const current = states[conversationId]
+  if (!current?.auto || current.status !== 'running') return states
+  return clearCompaction(states, conversationId)
 }
 
 export function updateCompactionProgress(states: CompactionStates, conversationId: string, patch: Pick<CompactionState, 'progress' | 'phase'>): CompactionStates {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
-import type { Attachment, Citation, ArtifactReference, ConversationPageQuery, ConversationRunState, ConversationTurn, ConversationTurnPatch, PageQuery, PageResult, ProjectRecord, TodoItem, ToolCallRecord, TurnActivity, TurnRuntimeConfig, TurnStatus } from '../../shared/types'
+import type { Attachment, Citation, ArtifactReference, ConversationPageQuery, ConversationRunState, ConversationTurn, ConversationTurnPatch, PageQuery, PageResult, ProjectRecord, TodoItem, ToolCallRecord, TurnActivity, TurnRuntimeConfig, TurnSessionAnchor, TurnStatus } from '../../shared/types'
 import { normalizePageSize, pageOffset, resolvePage } from '../../shared/pagination'
 import { conversationFilter } from './conversation-filter'
 import { defaultRuntimeConfig, mapConversation, normalizeRuntimeConfig, normalizeTurnActivity, parseJson, type ConversationRecord, type ConversationRow, type TurnRow } from './row-mappers'
@@ -225,6 +225,33 @@ export class ConversationStore {
     return turn
   }
 
+  /**
+   * 删除某一轮之后的全部回合（不含该轮），返回被删的 id。排序口径与 listTurns 一致。
+   * 重跑/编辑重发第 N 轮时调用：后面的对话基于旧回答展开，留着只会和新回答对不上。
+   */
+  deleteTurnsAfter(namespace: string, conversationId: string, turnId: string): string[] {
+    const anchor = this.db.prepare('SELECT created_at FROM conversation_turns WHERE namespace = ? AND conversation_id = ? AND turn_id = ?').get(namespace, conversationId, turnId) as { created_at: string } | undefined
+    if (!anchor) return []
+    const rows = this.db.prepare(`
+      SELECT turn_id FROM conversation_turns
+      WHERE namespace = ? AND conversation_id = ? AND (created_at > ? OR (created_at = ? AND turn_id > ?))
+    `).all(namespace, conversationId, anchor.created_at, anchor.created_at, turnId) as Array<{ turn_id: string }>
+    if (!rows.length) return []
+    const remove = this.db.prepare('DELETE FROM conversation_turns WHERE namespace = ? AND turn_id = ?')
+    this.db.transaction(() => { for (const row of rows) remove.run(namespace, row.turn_id) })()
+    return rows.map((row) => row.turn_id)
+  }
+
+  getTurnSessionAnchor(namespace: string, turnId: string): TurnSessionAnchor | null {
+    const row = this.db.prepare('SELECT session_anchor FROM conversation_turns WHERE namespace = ? AND turn_id = ?').get(namespace, turnId) as { session_anchor: string | null } | undefined
+    const anchor = parseJson<TurnSessionAnchor | null>(row?.session_anchor ?? null, null)
+    return anchor && typeof anchor.sessionFile === 'string' && anchor.sessionFile ? { sessionFile: anchor.sessionFile, leafId: typeof anchor.leafId === 'string' ? anchor.leafId : null } : null
+  }
+
+  setTurnSessionAnchor(namespace: string, turnId: string, anchor: TurnSessionAnchor | null) {
+    this.db.prepare('UPDATE conversation_turns SET session_anchor = ? WHERE namespace = ? AND turn_id = ?').run(anchor ? JSON.stringify(anchor) : null, namespace, turnId)
+  }
+
   restoreTurn(namespace: string, turn: ConversationTurn): ConversationTurn {
     return this.createTurn(namespace, turn.conversationId, turn)
   }
@@ -277,6 +304,8 @@ export class ConversationStore {
       this.db.prepare('DELETE FROM conversation_context_state WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('DELETE FROM conversation_model_runtime WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('DELETE FROM turn_context_sources WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+      // 未读结果与运行状态属于被清掉的那些轮次，留着会让侧栏顶着一个指向空会话的红点。
+      this.db.prepare('DELETE FROM conversation_run_states WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
       this.db.prepare('UPDATE conversations SET title = ?, updated_at = ? WHERE namespace = ? AND conversation_id = ?').run('新对话', new Date().toISOString(), namespace, conversationId)
       return count
     })()
@@ -355,7 +384,8 @@ export class ConversationStore {
     return row?.session_file ?? null
   }
 
-  setConversationSessionFile(namespace: string, id: string, sessionFile: string) {
+  /** 传 null 表示解绑：清空会话时 session 文件会被删掉，指向它的路径必须一并清掉。 */
+  setConversationSessionFile(namespace: string, id: string, sessionFile: string | null) {
     this.db.prepare('UPDATE conversations SET session_file = ? WHERE namespace = ? AND conversation_id = ?').run(sessionFile, namespace, id)
   }
 

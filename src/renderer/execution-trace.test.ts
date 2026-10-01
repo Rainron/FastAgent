@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionTrace, formatElapsed, hasToolAction, isDelegationToolAction, subAgentActivityLabel, thinkingTextByGroup, traceGroupLabel, traceGroupLiveLabel } from './execution-trace'
+import { buildExecutionTrace, formatElapsed, hasToolAction, isDelegationToolAction, subAgentActivityLabel, thinkingTextByGroup, traceFinalAnswerLength, traceGroupLabel, traceGroupLiveLabel, traceTextBoundary } from './execution-trace'
 import type { AgentEvent } from '../shared/types'
 
 function event(patch: Partial<AgentEvent>): AgentEvent {
@@ -433,5 +433,28 @@ describe('hasToolAction', () => {
 
   it('工具还在进行（pendingGroup）时也为 true', () => {
     expect(hasToolAction(buildExecutionTrace([readStarted(0)]))).toBe(true)
+  })
+})
+
+describe('最终回答不在轨迹里重复', () => {
+  const ev = (type: AgentEvent['type'], textLength: number, extra: Partial<AgentEvent> = {}) => ({ runId: 'r', type, textLength, ...extra }) as AgentEvent
+  // 说明文本 10 字 → 调工具 → 最终回答 20 字；usageUpdated 在回答写完后才带上完整长度
+  const events = [
+    ev('tool_started', 10, { tool: 'ls', toolCallId: 't1' }),
+    ev('tool_result', 10, { tool: 'ls', toolCallId: 't1', status: 'completed' }),
+    ev('usageUpdated', 30),
+    ev('completed', 30)
+  ]
+
+  it('终态时文本段止步于最终回答起点', () => {
+    expect(traceTextBoundary(events, 20)).toBe(10)
+    const trace = buildExecutionTrace(events, traceFinalAnswerLength('done', 20))
+    const texts = trace.segments.filter((segment) => segment.kind === 'text')
+    expect(texts.every((segment) => segment.kind === 'text' && segment.end <= 10)).toBe(true)
+  })
+
+  it('执行中不夹取，拿不到回答长度时也不夹取', () => {
+    expect(traceFinalAnswerLength('working', 20)).toBe(0)
+    expect(traceTextBoundary(events, 0)).toBe(Number.POSITIVE_INFINITY)
   })
 })

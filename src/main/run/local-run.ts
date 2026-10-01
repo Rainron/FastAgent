@@ -1,4 +1,4 @@
-import type { Attachment, ConversationMode, PermissionPreset, ThinkingLevel } from '../../shared/types'
+import type { Attachment, ConversationMode, LocalModelApi, PermissionPreset, ThinkingLevel } from '../../shared/types'
 import type { Ability, AgentEvent, ApprovalDecision, KbEntry, SkillAbility } from '../../shared/types'
 import { resolveAgentAbilities } from '../abilities'
 import { buildFaDirectoryContext, mergeAgentContextFiles, readAgentContextFiles } from '../agent-context'
@@ -23,6 +23,8 @@ import type { SubAgentResult } from '../agent/subagent/subagent-types'
 import { clearRunBaselines } from '../agent/tool-runtime'
 import { createApprovalBridge } from '../approval-bridge'
 import { resolvePolicy, splitTurns } from '../context-manager'
+import { needsSessionRebuild, resolveModelProtocol } from '../../shared/model-protocols'
+import { compactIfOverThreshold } from './compaction-trigger'
 import type { ContextMeasurement } from '../context-meter'
 import { LocalStore } from '../local-store'
 import { breadcrumb } from '../logging/logger'
@@ -141,7 +143,9 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       const finalText = projection.terminal ? (fullEvent.text || '') : ''
       ctx.store.updateTurn(namespace, turnId, {
         // 事件副本不带 execution：顶层已存一份最新快照，逐条再存一份会让 activity 体积随事件数平方增长。
-        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: fullEvent.transcriptText || activity.transcript, execution },
+        // 轨迹正文按累计流式全文递增落库，不只认终态那一条：
+        // 刷新或闪退时渲染进程的流式缓冲会没，只有库里这份能让轨迹里各动作后的说明文本继续显示。
+        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: streamedText || activity.transcript, execution },
         status: write.turnStatus,
         assistantMessage: finalText ? { text: finalText, createdAt: new Date().toISOString() } : undefined
       }, turn)
@@ -154,12 +158,26 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     if (!modelId) throw new Error('未选择可用模型')
     if (signal.aborted) throw new DOMException('已取消', 'AbortError')
     const credentials = ctx.resolveModelCredentials(modelId)
-    // session 按会话共用，同 provider 换模型直接接着跑，完整历史（含工具调用）都在。
-    // 跨 provider 才需要兜底：旧消息不保证能被新 provider 接受，先把既有回合固化为摘要再重开 session。
-    const identity = ctx.modelRuntimeIdentity(credentials)
-    const hasProviderRuntime = ctx.store.hasProviderRuntime(namespace, conversationId, identity.provider)
-    // 只有换 provider 才要看历史。同 provider 续跑是常态，别为它每次都把整段历史读出来。
-    if (!hasProviderRuntime) {
+    // session 按会话共用，换模型直接接着跑，完整历史（含工具调用）都在。
+    // 只有跨协议才需要兜底：旧消息里的不透明内容（Anthropic 的 thinking 签名块等）
+    // 不保证能被另一套协议接受，那时先把既有回合固化为摘要再重开 session。
+    // 同协议换 provider 已实测可以直接续跑，不必白烧一次摘要调用、也不必丢掉工具调用细节。
+    const nextProtocol = resolveModelProtocol(credentials.protocol, credentials.provider)
+    // 解析不出此前任一模型的协议（模型被删、凭证没同步）时按 null 传，保守重开。
+    const priorProtocols = ((): LocalModelApi[] | null => {
+      const ids = ctx.store.listRuntimeModelIds(namespace, conversationId)
+      const protocols: LocalModelApi[] = []
+      for (const id of ids) {
+        try {
+          const prior = ctx.resolveModelCredentials(id)
+          protocols.push(resolveModelProtocol(prior.protocol, prior.provider))
+        } catch {
+          return null
+        }
+      }
+      return protocols
+    })()
+    if (needsSessionRebuild(priorProtocols, nextProtocol)) {
       const turns = ctx.store.listTurns(namespace, conversationId)
       const historyBeforeCurrentTurn = turns.filter((turn) => turn.id !== turnId)
       if (historyBeforeCurrentTurn.length && !ctx.latestSummaryText(namespace, conversationId)) {
@@ -175,7 +193,10 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     const policy = resolvePolicy(ctx.settings, ctx.store.getContextPolicy(namespace, conversationId), conversationId)
     // 阈值压缩全部交给 Pi：它在 session.prompt() 之前就用真实 usage 判过一次，
     // app 层再按回合历史估算判一次只会与之打架，还会作废 Pi 已经压好的 session。
+    // Pi 本轮是否已经压过。压过就不再叠加桌面侧的阈值兜底，否则一轮里压两次。
+    let sawRuntimeCompaction = false
     const recordRuntimeCompaction: NonNullable<RuntimeRunOptions['onCompaction']> = (event) => {
+      sawRuntimeCompaction = true
       const recorded = ctx.recordSessionCompaction(namespace, conversationId, {
         triggerReason: `pi-${event.reason}`,
         strategy: policy.strategy,
@@ -268,11 +289,22 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       let output = ''
       let forwarded = 0
       const forwardContext = { taskId: task.taskId, agentId: config.id, agentName: config.name, parentToolCallId, parentRunId: runId, subAgentRunId: childRunId }
+      // 工具调用次数是子运行唯一能观测到的边界：pi 的轮次循环在 session.prompt() 内部，
+      // SDK 也不提供上限选项，config 里那个 maxTurns 从来没有生效过。
+      const childController = new AbortController()
+      const forwardChildAbort = () => childController.abort()
+      childSignal.addEventListener('abort', forwardChildAbort, { once: true })
+      // 角色自己声明了就用角色的，否则跟随设置里的全局默认。
+      const maxToolCalls = config.maxToolCalls ?? ctx.settings.subAgentMaxToolCalls
+      let toolCalls = 0
+      let toolCallLimitHit = false
       const childRuntimeOptions: RuntimeRunOptions = {
-        prompt: `${config.systemPrompt}\n\n${task.task}`,
-        mode: 'agent', modePrompt: '', planMode: true, credentials, createModelRuntime: ctx.createModelRuntimeForCredentials, thinkingLevel: config.thinkingLevel,
+        // 角色指令走 modePrompt：buildModeRuntimePrompt 会把它渲染成独立的「用户补充提示词」
+        // 段落，拼进 prompt 会让角色设定和具体任务糊成一段，指令边界消失。
+        prompt: task.task,
+        mode: 'agent', modePrompt: config.systemPrompt, planMode: true, credentials, createModelRuntime: ctx.createModelRuntimeForCredentials, thinkingLevel: config.thinkingLevel,
         autoCompaction: false, permission: 'ask', attachments: [], workspaceRoot: conversationRoot,
-        signal: childSignal, contextSummary: null, sessionFile: null, agentDir: ctx.appPaths.agentDir,
+        signal: childController.signal, contextSummary: null, sessionFile: null, agentDir: ctx.appPaths.agentDir,
         namespace, conversationId, turnId, runId: childRunId, store: ctx.store, shellToolName, bashPath,
         resolveRuleSet: () => ctx.buildRuleSet(namespace, 'ask', false), sessionOverrides: new Map(), requestApproval: bridge.requestApproval,
         requestQuestion: bridge.requestQuestion, mcpBindings: [], sandbox: null,
@@ -285,6 +317,13 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         onEvent: (event) => {
           if (event.type === 'token' && event.text) output += event.text
           if (event.type === 'completed' && event.text) output = event.text
+          if (event.type === 'tool_started') {
+            toolCalls += 1
+            if (toolCalls > maxToolCalls && !toolCallLimitHit) {
+              toolCallLimitHit = true
+              childController.abort()
+            }
+          }
           // 逐 token 转发会让每个增量都触发一次整轮 activity 落库与 IPC，主进程直接被顶死。
           const next = forwardSubAgentEvent(event, forwardContext, forwarded)
           if (!next) return
@@ -306,20 +345,31 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         await child.run(childRuntimeOptions)
       } catch (error) {
         ctx.store.finishAgentTask(namespace, task.taskId, {
-          status: childSignal.aborted ? abortedTaskStatus() : 'failed',
-          error: error instanceof Error ? error.message : String(error)
+          status: childSignal.aborted ? abortedTaskStatus() : toolCallLimitHit ? 'timeout' : 'failed',
+          error: toolCallLimitHit && !childSignal.aborted
+            ? `Sub-agent 工具调用次数超过 ${maxToolCalls} 次上限`
+            : error instanceof Error ? error.message : String(error)
         })
         throw error
       } finally {
+        childSignal.removeEventListener('abort', forwardChildAbort)
         await child?.dispose()
       }
       const bounded = truncateSubAgentOutput(output)
       const handoff = parseSubAgentHandoff(bounded.output)
-      const status = childSignal.aborted ? abortedTaskStatus() : 'completed' as const
-      ctx.store.finishAgentTask(namespace, task.taskId, { status, summary: handoff?.goal?.slice(0, 500) ?? null })
-      return { taskId: task.taskId, agentId: config.id, agentName: config.name, status, output: bounded.output, handoff, truncated: bounded.truncated, startedAt, finishedAt: Date.now() }
+      // 触发工具上限时 pi 只发 cancelled 后正常返回，childSignal 并没有 abort：
+      // 不单独判一次就会把被截断的子运行记成「已完成」。
+      const limitExceeded = toolCallLimitHit && !childSignal.aborted
+      const status = limitExceeded ? 'timeout' as const : childSignal.aborted ? abortedTaskStatus() : 'completed' as const
+      const error = limitExceeded ? `Sub-agent 工具调用次数超过 ${maxToolCalls} 次上限` : undefined
+      ctx.store.finishAgentTask(namespace, task.taskId, { status, summary: handoff?.goal?.slice(0, 500) ?? null, error: error ?? null })
+      return { taskId: task.taskId, agentId: config.id, agentName: config.name, status, output: bounded.output, handoff, ...(error ? { error } : {}), truncated: bounded.truncated, startedAt, finishedAt: Date.now() }
     }
     const cacheKey = ctx.conversationRuntimeKey(namespace, conversationId)
+    // 摘要种子只在这一轮从空 session 开始时注入，而且必须在拿运行时之前取：
+    // 运行时一创建就会经 onSessionFile 把新 session 文件写回库里，之后再查 session_file 永远非空，
+    // 种子就被吞掉了（/clear 之外的重开：删回合、重跑、换协议压缩后，模型会突然什么都不记得）。
+    const seedSummary = ctx.store.getConversationSessionFile(namespace, conversationId) ? null : ctx.latestSummaryText(namespace, conversationId)
     const cached = await ctx.conversationRuntimeCache.getWithStatus(cacheKey, signature, async () => {
       let mcpManager: LocalMcpManager | null = null
       let mcpBindings: McpToolBinding[] = []
@@ -362,7 +412,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           signal,
           // agent 模式才探测：chat 模式没有 shell 工具，给了也用不上
           verificationCommands: mode === 'agent' ? verificationCommandsFor(conversationRoot) : undefined,
-          contextSummary: sessionFile ? null : ctx.latestSummaryText(namespace, conversationId),
+          contextSummary: seedSummary,
           sessionFile,
           sessionDir: ctx.conversationSessionDir(namespace, conversationId),
           agentDir: ctx.appPaths.agentDir,
@@ -437,7 +487,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         attachments,
         workspaceRoot: conversationRoot,
         signal,
-        contextSummary: sessionFile ? null : ctx.latestSummaryText(namespace, conversationId),
+        // 复用的运行时已经带着自己的 session，种子只在新建的这一次给。
+        contextSummary: cached.cacheHit ? null : seedSummary,
         sessionFile,
         sessionDir: ctx.conversationSessionDir(namespace, conversationId),
         agentDir: ctx.appPaths.agentDir,
@@ -446,6 +497,11 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         mcpBindings: cached.value.mcpBindings,
         onAbilityUsed,
         onSessionFile: (path) => ctx.store.setConversationSessionFile(namespace, conversationId, path),
+        // 记下本轮开始时 session 的位置：重跑这一轮要把上下文退回到这里。写失败不影响本轮，只是重跑时退回兜底路径。
+        onSessionAnchor: (anchor) => {
+          if (!anchor.sessionFile) return
+          try { ctx.store.setTurnSessionAnchor(namespace, turnId, { sessionFile: anchor.sessionFile, leafId: anchor.leafId }) } catch (error) { console.warn('[rerun] 记录回合锚点失败:', error) }
+        },
         onEvent: emit,
         onCompaction: recordRuntimeCompaction,
         onRetry: () => ctx.store.bumpAgentRunRetry(namespace, runId),
@@ -470,6 +526,18 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       // 压缩会改变有效消息树，必须从 Pi 当前 session 取快照，不能继续复用压缩前 usage。
       latestContextMeasurement = cached.value.pi.getContextMeasurement()
       ctx.rememberRuntimeMeasurement(namespace, conversationId, latestContextMeasurement)
+      // 阈值兜底：Pi 只在「发下一条前」和「一轮内准备下一次回答前」判，
+      // 且要有可信的 provider usage；这两个条件任一不满足，越过阈值的会话会一直挂在高位
+      // 直到下一次发送才可能压缩，甚至直接撞上下文溢出。这里按桌面侧同一份测量再判一次。
+      if (!signal.aborted) {
+        const fallback = await compactIfOverThreshold({
+          ctx, namespace, conversationId, policy, credentials,
+          measurement: latestContextMeasurement, runtimeCompacted: sawRuntimeCompaction, emit
+        })
+        // 压缩改写了消息树，压缩前那份测量值整段作废。落库的新状态由 compactConversation 写好，
+        // 清空后收尾时的 refreshContext 直接读库，不去碰可能已被作废的运行时。
+        if (fallback.compacted) latestContextMeasurement = undefined
+      }
       // 记忆抽取：一次性模型调用，不进会话历史，也不等它完成——用户的回合到此已经结束，
       // 抽取失败只记日志。userText 用原始输入，不能带上这一轮注入的记忆片段。
       if (memorySettings.enabled && memorySettings.autoExtract && !signal.aborted && streamedText.trim()) {

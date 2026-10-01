@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type Database from 'better-sqlite3'
+import { normalizeContextPolicyPatch } from '../../shared/context-policy'
 import type { AppSettings, CompactionHistory, ContextPolicy, ContextState, ContextStrategy, ContextSummary } from '../../shared/types'
 import { mapSummaryRow, type SummaryRow } from './row-mappers'
 
@@ -9,36 +10,43 @@ export class ContextStore {
 
   getContextPolicy(namespace: string, conversationId: string): ContextPolicy | null {
     const row = this.db.prepare('SELECT * FROM conversation_context_policy WHERE namespace = ? AND conversation_id = ?').get(namespace, conversationId) as {
-      conversation_id: string; strategy: ContextStrategy; auto_summary: number; trigger_ratio: number | null; target_ratio: number | null; keep_recent_turns: number | null; inherit_global: number
+      conversation_id: string; strategy: ContextStrategy; auto_summary: number; trigger_ratio: number | null; keep_recent_turns: number | null; force_compaction: number | null; inherit_global: number
     } | undefined
     return row ? {
       conversationId: row.conversation_id,
       strategy: row.strategy,
       autoSummary: Boolean(row.auto_summary),
       triggerRatio: row.trigger_ratio,
-      targetRatio: row.target_ratio ?? null,
       keepRecentTurns: row.keep_recent_turns,
+      forceCompaction: Boolean(row.force_compaction),
       inheritGlobal: Boolean(row.inherit_global)
     } : null
   }
 
   updateContextPolicy(namespace: string, conversationId: string, patch: Partial<Omit<ContextPolicy, 'conversationId'>>): ContextPolicy {
     const current = this.getContextPolicy(namespace, conversationId)
+    const settings = this.settings()
+    // 会话级覆盖走同一套不变量：档位为准回填 autoSummary、阈值裁进区间、目标低于触发点。
+    const normalized = normalizeContextPolicyPatch(patch, {
+      strategy: patch.strategy ?? current?.strategy ?? settings.contextStrategy,
+      triggerRatio: patch.triggerRatio === undefined ? (current?.triggerRatio ?? settings.triggerRatio) : patch.triggerRatio
+    })
     const next: ContextPolicy = {
       conversationId,
-      strategy: patch.strategy ?? current?.strategy ?? this.settings().contextStrategy,
-      autoSummary: patch.autoSummary ?? current?.autoSummary ?? this.settings().autoSummary,
-      triggerRatio: patch.triggerRatio === undefined ? (current?.triggerRatio ?? this.settings().triggerRatio) : patch.triggerRatio,
-      targetRatio: patch.targetRatio === undefined ? (current?.targetRatio ?? this.settings().targetRatio) : patch.targetRatio,
-      keepRecentTurns: patch.keepRecentTurns === undefined ? (current?.keepRecentTurns ?? this.settings().keepRecentTurns) : patch.keepRecentTurns,
-      inheritGlobal: patch.inheritGlobal ?? current?.inheritGlobal ?? true
+      strategy: normalized.strategy ?? current?.strategy ?? settings.contextStrategy,
+      autoSummary: normalized.autoSummary ?? current?.autoSummary ?? settings.autoSummary,
+      triggerRatio: normalized.triggerRatio === undefined ? (current?.triggerRatio ?? settings.triggerRatio) : normalized.triggerRatio,
+      keepRecentTurns: normalized.keepRecentTurns === undefined ? (current?.keepRecentTurns ?? settings.keepRecentTurns) : normalized.keepRecentTurns,
+      forceCompaction: normalized.forceCompaction === undefined ? (current?.forceCompaction ?? settings.forceCompaction) : normalized.forceCompaction,
+      inheritGlobal: normalized.inheritGlobal ?? current?.inheritGlobal ?? true
     }
     this.db.prepare(`
-      INSERT INTO conversation_context_policy(namespace, conversation_id, strategy, auto_summary, trigger_ratio, target_ratio, keep_recent_turns, inherit_global)
+      INSERT INTO conversation_context_policy(namespace, conversation_id, strategy, auto_summary, trigger_ratio, keep_recent_turns, force_compaction, inherit_global)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(namespace, conversation_id) DO UPDATE SET strategy=excluded.strategy, auto_summary=excluded.auto_summary,
-        trigger_ratio=excluded.trigger_ratio, target_ratio=excluded.target_ratio, keep_recent_turns=excluded.keep_recent_turns, inherit_global=excluded.inherit_global
-    `).run(namespace, conversationId, next.strategy, next.autoSummary ? 1 : 0, next.triggerRatio, next.targetRatio, next.keepRecentTurns, next.inheritGlobal ? 1 : 0)
+        trigger_ratio=excluded.trigger_ratio, keep_recent_turns=excluded.keep_recent_turns,
+        force_compaction=excluded.force_compaction, inherit_global=excluded.inherit_global
+    `).run(namespace, conversationId, next.strategy, next.autoSummary ? 1 : 0, next.triggerRatio, next.keepRecentTurns, next.forceCompaction ? 1 : 0, next.inheritGlobal ? 1 : 0)
     return next
   }
 
@@ -66,13 +74,12 @@ export class ContextStore {
   }
 
   /**
-   * 该会话是否已在这个 provider 下跑过。session 现在按会话共用，
-   * 同 provider 换模型可以直接接着跑；跨 provider 的消息格式（尤其 thinking 签名块）
-   * 不保证能被新 provider 接受，只有这种情况才需要先摘要再重开 session。
+   * 这条会话此前跑过哪些模型。换模型时用来判断新模型和它们是不是同一套协议——
+   * 同协议可以直接接着用同一个 pi session，跨协议才需要固化摘要重开。
    */
-  hasProviderRuntime(namespace: string, conversationId: string, provider: string) {
-    const row = this.db.prepare('SELECT 1 FROM conversation_model_runtime WHERE namespace = ? AND conversation_id = ? AND provider = ? LIMIT 1').get(namespace, conversationId, provider)
-    return Boolean(row)
+  listRuntimeModelIds(namespace: string, conversationId: string): number[] {
+    const rows = this.db.prepare('SELECT DISTINCT model_id FROM conversation_model_runtime WHERE namespace = ? AND conversation_id = ?').all(namespace, conversationId) as Array<{ model_id: number }>
+    return rows.map((row) => row.model_id)
   }
 
   getModelRuntimeSessionFile(namespace: string, conversationId: string, provider: string, modelId: number) {
@@ -159,9 +166,9 @@ export class ContextStore {
   recordCompaction(namespace: string, input: Omit<CompactionHistory, 'id' | 'createdAt'> & { id?: string; createdAt?: string }): CompactionHistory {
     const record: CompactionHistory = { ...input, id: input.id ?? `compaction-${randomUUID()}`, createdAt: input.createdAt ?? new Date().toISOString() }
     this.db.prepare(`
-      INSERT INTO conversation_compactions(namespace, id, conversation_id, strategy, trigger_reason, before_tokens, after_tokens, covered_turn_start, covered_turn_end, summary_id, duration_ms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(namespace, record.id, record.conversationId, record.strategy, record.triggerReason, record.beforeTokens, record.afterTokens, record.coveredTurnStart, record.coveredTurnEnd, record.summaryId, record.durationMs, record.createdAt)
+      INSERT INTO conversation_compactions(namespace, id, conversation_id, strategy, trigger_reason, before_tokens, after_tokens, context_window, covered_turn_start, covered_turn_end, summary_id, duration_ms, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(namespace, record.id, record.conversationId, record.strategy, record.triggerReason, record.beforeTokens, record.afterTokens, Math.max(0, Math.round(record.contextWindow || 0)), record.coveredTurnStart, record.coveredTurnEnd, record.summaryId, record.durationMs, record.createdAt)
     return record
   }
 
@@ -179,8 +186,8 @@ export class ContextStore {
       LEFT JOIN conversation_summaries s ON s.namespace = c.namespace AND s.id = c.summary_id
       WHERE c.namespace = ? AND c.conversation_id = ?
       ORDER BY c.created_at DESC, c.id DESC
-    `).all(namespace, conversationId) as Array<{ id: string; conversation_id: string; strategy: ContextStrategy; trigger_reason: string; before_tokens: number; after_tokens: number; covered_turn_start: string | null; covered_turn_end: string | null; summary_id: string | null; summary_text: string | null; duration_ms: number; created_at: string }>
-    return rows.map((row) => ({ id: row.id, conversationId: row.conversation_id, strategy: row.strategy, triggerReason: row.trigger_reason, beforeTokens: row.before_tokens, afterTokens: row.after_tokens, coveredTurnStart: row.covered_turn_start, coveredTurnEnd: row.covered_turn_end, summaryId: row.summary_id, summaryText: row.summary_text, durationMs: row.duration_ms, createdAt: row.created_at }))
+    `).all(namespace, conversationId) as Array<{ id: string; conversation_id: string; strategy: ContextStrategy; trigger_reason: string; before_tokens: number; after_tokens: number; context_window: number | null; covered_turn_start: string | null; covered_turn_end: string | null; summary_id: string | null; summary_text: string | null; duration_ms: number; created_at: string }>
+    return rows.map((row) => ({ id: row.id, conversationId: row.conversation_id, strategy: row.strategy, triggerReason: row.trigger_reason, beforeTokens: row.before_tokens, afterTokens: row.after_tokens, contextWindow: row.context_window ?? 0, coveredTurnStart: row.covered_turn_start, coveredTurnEnd: row.covered_turn_end, summaryId: row.summary_id, summaryText: row.summary_text, durationMs: row.duration_ms, createdAt: row.created_at }))
   }
 
   getCompactionHistory(namespace: string, conversationId: string) {

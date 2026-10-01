@@ -350,4 +350,25 @@ export class MemoryStore {
     write()
     return rows.length
   }
+
+  /**
+   * 清空一个会话产生的记忆与召回日志（物理删除）。
+   *
+   * 这些记忆是从该会话的内容里抽出来的，留着就会在后续对话里被召回注入——
+   * 「清空这个会话且不保留上下文」必须连它们一起删，否则清掉的只是看得见的那部分。
+   * 其它会话抽出的记忆不受影响。
+   */
+  deleteConversationMemories(namespace: string, conversationId: string): number {
+    const rows = this.db.prepare('SELECT rowid FROM memories WHERE namespace = ? AND source_conversation_id = ?')
+      .all(namespace, conversationId) as Array<{ rowid: number }>
+    const write = this.db.transaction(() => {
+      const removeFts = this.db.prepare('DELETE FROM memories_fts WHERE rowid = ?')
+      for (const row of rows) removeFts.run(row.rowid)
+      this.db.prepare('DELETE FROM memories WHERE namespace = ? AND source_conversation_id = ?').run(namespace, conversationId)
+      // 召回日志按会话清：既包含本会话召回的其它记忆，也包含刚被删掉的那些。
+      this.db.prepare('DELETE FROM memory_recall_log WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+    })
+    write()
+    return rows.length
+  }
 }

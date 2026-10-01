@@ -277,8 +277,11 @@ export interface FastAgentApi {
     export(conversationId: string): Promise<string | null>
     archive(conversationId: string): Promise<void>
     remove(conversationId: string): Promise<void>
-    /** 清空会话全部消息与运行时状态，保留会话条目并重置标题。 */
-    clear(conversationId: string): Promise<{ deleted: number }>
+    /**
+     * 彻底清空一个会话：消息、上下文、运行台账、成果登记、附件副本、Agent session 文件，
+     * 以及由这个会话抽出的记忆。会话条目保留并把标题重置为「新对话」。不可撤销。
+     */
+    clear(conversationId: string): Promise<{ deleted: number; turns: number; runs: number; artifacts: number; memories: number }>
   }
   git: {
     /** 当前工作区 Git 状态；非仓库或读取失败返回 null。 */

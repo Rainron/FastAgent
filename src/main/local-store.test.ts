@@ -358,6 +358,40 @@ describe('LocalStore conversations', () => {
     store.close()
   })
 
+  it('deleteTurnsAfter 只删目标轮之后的回合，不动目标轮、更早回合与其他会话', () => {
+    const store = makeStore()
+    store.createConversation('account-a', { id: 'rerun', title: 'Rerun' })
+    store.createConversation('account-a', { id: 'other', title: 'Other' })
+    const first = store.createTurn('account-a', 'rerun', { userMessage: { text: '一', createdAt: '2026-10-01T10:01:00.000Z' } })
+    const target = store.createTurn('account-a', 'rerun', { userMessage: { text: '二', createdAt: '2026-10-01T10:02:00.000Z' } })
+    // 与目标同一时刻创建的回合按 turn_id 排序，排在后面的也算「之后」
+    const sameTime = store.createTurn('account-a', 'rerun', { id: `${target.id}-z`, userMessage: { text: '同刻', createdAt: '2026-10-01T10:02:00.000Z' } })
+    const later = store.createTurn('account-a', 'rerun', { userMessage: { text: '三', createdAt: '2026-10-01T10:03:00.000Z' } })
+    const foreign = store.createTurn('account-a', 'other', { userMessage: { text: '别的会话', createdAt: '2026-10-01T10:04:00.000Z' } })
+    expect(store.deleteTurnsAfter('account-a', 'rerun', target.id).sort()).toEqual([sameTime.id, later.id].sort())
+    expect(store.listTurns('account-a', 'rerun').map((item) => item.id)).toEqual([first.id, target.id])
+    expect(store.getTurn('account-a', foreign.id)).not.toBeNull()
+    // 目标不在该会话里时什么都不删
+    expect(store.deleteTurnsAfter('account-a', 'other', target.id)).toEqual([])
+    expect(store.deleteTurnsAfter('account-a', 'rerun', target.id)).toEqual([])
+    store.close()
+  })
+
+  it('回合 session 锚点可写可读，更新回合不会冲掉它', () => {
+    const store = makeStore()
+    store.createConversation('account-a', { id: 'anchor', title: 'Anchor' })
+    const turn = store.createTurn('account-a', 'anchor', { userMessage: { text: '一', createdAt: '2026-10-01T10:01:00.000Z' } })
+    expect(store.getTurnSessionAnchor('account-a', turn.id)).toBeNull()
+    store.setTurnSessionAnchor('account-a', turn.id, { sessionFile: 'K:/s/1.jsonl', leafId: 'abc' })
+    store.updateTurn('account-a', turn.id, { status: 'completed' })
+    expect(store.getTurnSessionAnchor('account-a', turn.id)).toEqual({ sessionFile: 'K:/s/1.jsonl', leafId: 'abc' })
+    store.setTurnSessionAnchor('account-a', turn.id, { sessionFile: 'K:/s/1.jsonl', leafId: null })
+    expect(store.getTurnSessionAnchor('account-a', turn.id)).toEqual({ sessionFile: 'K:/s/1.jsonl', leafId: null })
+    store.setTurnSessionAnchor('account-a', turn.id, null)
+    expect(store.getTurnSessionAnchor('account-a', turn.id)).toBeNull()
+    store.close()
+  })
+
   it('migrates legacy user and assistant messages into turns', () => {
     const root = mkdtempSync(join(tmpdir(), 'fastagent-store-'))
     tempRoots.push(root)
@@ -411,6 +445,30 @@ describe('LocalStore conversations', () => {
     expect(migrated?.activity?.events[1]).toMatchObject({ type: 'completed', text: '好了' })
     expect(migrated?.activity?.execution).toMatchObject({ runId: 'r1' })
     expect(migrated?.activity?.thinking).toBe('想了想')
+    store.close()
+  })
+
+  it('旧库的会话级模型绑定按最近一轮实际模型回填', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fastagent-store-'))
+    tempRoots.push(root)
+    const databasePath = join(root, 'fastagent.db')
+    const seed = new LocalStore(databasePath)
+    seed.createConversation('account-a', { id: 'c1', title: '老会话' })
+    seed.createTurn('account-a', 'c1', { id: 't1', createdAt: '2026-09-02T10:00:00.000Z', userMessage: { text: '第一轮', createdAt: '2026-09-02T10:00:00.000Z' }, runtimeConfig: { modelId: 7, thinkingLevel: 'auto', mode: 'chat', permission: null, project: null } })
+    seed.createTurn('account-a', 'c1', { id: 't2', createdAt: '2026-09-02T11:00:00.000Z', userMessage: { text: '第二轮', createdAt: '2026-09-02T11:00:00.000Z' }, runtimeConfig: { modelId: -3, thinkingLevel: 'auto', mode: 'chat', permission: null, project: null } })
+    // 另一条会话已经绑定过，迁移不得覆盖用户显式选过的模型
+    seed.createConversation('account-a', { id: 'c2', title: '已绑定会话' })
+    seed.setConversationModelId('account-a', 'c2', 9)
+    seed.close()
+    const raw = new Database(databasePath)
+    raw.prepare('UPDATE conversations SET model_id = NULL').run()
+    raw.prepare("UPDATE conversations SET model_id = 9 WHERE conversation_id = 'c2'").run()
+    raw.pragma('user_version = 5')
+    raw.close()
+
+    const store = new LocalStore(databasePath)
+    expect(store.getConversationModelId('account-a', 'c1')).toBe(-3)
+    expect(store.getConversationModelId('account-a', 'c2')).toBe(9)
     store.close()
   })
 
@@ -509,14 +567,16 @@ describe('LocalStore conversations', () => {
     store.close()
   })
 
-  it('provider 运行记录按 provider 判定，不区分同 provider 下的不同模型', () => {
+  it('运行记录按模型去重，换模型的重开判定据此取协议', () => {
     const store = makeStore()
     store.createConversation('account-a', { id: 'provider', title: 'Provider' })
     const context = { conversationId: 'provider', contextWindow: 128_000, estimatedTokens: 10, messageTokens: 10, toolTokens: 0, systemTokens: 0, compactionCount: 0, latestSummaryId: null, updatedAt: '2026-08-30T10:00:00.000Z' }
     store.upsertModelRuntime('account-a', { conversationId: 'provider', provider: 'anthropic', modelId: 1, context })
+    // 同一个模型再跑一轮不会多出一条
+    store.upsertModelRuntime('account-a', { conversationId: 'provider', provider: 'anthropic', modelId: 1, context })
+    store.upsertModelRuntime('account-a', { conversationId: 'provider', provider: 'openai', modelId: 2, context })
 
-    expect(store.hasProviderRuntime('account-a', 'provider', 'anthropic')).toBe(true)
-    expect(store.hasProviderRuntime('account-a', 'provider', 'openai')).toBe(false)
+    expect(store.listRuntimeModelIds('account-a', 'provider').sort()).toEqual([1, 2])
     store.close()
   })
 
@@ -619,6 +679,35 @@ describe('LocalStore conversations', () => {
     store.close()
   })
 
+  it('purgeConversationContent 连运行台账、成果与本会话抽出的记忆一起清掉', () => {
+    const store = makeStore()
+    store.createConversation('account-a', { id: 'purge', title: '要清空', createdAt: '2026-08-30T10:00:00.000Z' })
+    store.createConversation('account-a', { id: 'keep', title: '别动我', createdAt: '2026-08-30T10:00:00.000Z' })
+    const turn = store.createTurn('account-a', 'purge', { userMessage: { text: '第一轮', createdAt: '2026-08-30T10:01:00.000Z' } })
+    store.startAgentRun('account-a', { runId: 'run-1', conversationId: 'purge', turnId: turn.id, mode: 'agent', startedAt: 1_000 })
+    store.upsertArtifact('account-a', { id: 'art-1', workspaceId: 'K:/repo', name: 'plan.md', type: 'markdown', path: 'docs/plan.md', conversationId: 'purge' })
+    store.saveRunState('account-a', { conversationId: 'purge', projectId: null, status: 'completed', hasUnreadResult: true, updatedAt: 2_000 })
+    const mine = store.createMemory('account-a', { scope: 'workspace', scopeId: 'p1', type: 'fact', content: '这个会话抽出来的记忆', sourceConversationId: 'purge' })
+    const other = store.createMemory('account-a', { scope: 'workspace', scopeId: 'p1', type: 'fact', content: '别的会话抽出来的记忆', sourceConversationId: 'keep' })
+    store.recordMemoryRecalls('account-a', 'purge', turn.id, [other.id])
+
+    const purged = store.purgeConversationContent('account-a', 'purge')
+    expect(purged).toMatchObject({ turns: 1, runs: 1, artifacts: 1, memories: 1 })
+    expect(store.listTurns('account-a', 'purge')).toEqual([])
+    expect(store.listAgentRunLedger('account-a', 'purge')).toEqual([])
+    expect(store.listArtifacts('account-a', { conversationId: 'purge' })).toEqual([])
+    expect(store.listRunStates('account-a').some((state) => state.conversationId === 'purge')).toBe(false)
+    expect(store.listMemoryRecallsForTurn('account-a', turn.id)).toEqual([])
+    // 别的会话抽出的记忆与检索索引都不受影响
+    const remaining = store.listMemories('account-a').items.map((item) => item.id)
+    expect(remaining).toContain(other.id)
+    expect(remaining).not.toContain(mine.id)
+    // FTS 行也要跟着删，否则检索还会命中已经删掉的那条
+    expect(store.searchMemories('account-a', { match: '"抽出来的记忆"', workspaceId: 'p1' }).map((item) => item.id)).toEqual([other.id])
+    expect(store.getConversation('account-a', 'purge')?.title).toBe('新对话')
+    store.close()
+  })
+
   it('keeps conversations and history after reopening the database', () => {
     const root = mkdtempSync(join(tmpdir(), 'fastagent-store-reopen-'))
     tempRoots.push(root)
@@ -680,12 +769,23 @@ describe('LocalStore conversations', () => {
     const store = makeStore()
     store.createConversation('account-a', { id: 'ctx', title: 'Context' })
     store.createConversation('account-b', { id: 'ctx', title: 'Other' })
-    expect(store.updateContextPolicy('account-a', 'ctx', { strategy: 'conservative', inheritGlobal: false })).toMatchObject({ strategy: 'conservative', inheritGlobal: false })
+    expect(store.updateContextPolicy('account-a', 'ctx', { strategy: 'conservative', inheritGlobal: false })).toMatchObject({ strategy: 'conservative', inheritGlobal: false, forceCompaction: false })
     expect(store.getContextPolicy('account-b', 'ctx')).toBeNull()
+    // 强压开关要真的落库：只在内存里生效的话，重开应用这条会话就又回到压不动的状态
+    expect(store.updateContextPolicy('account-a', 'ctx', { forceCompaction: true })).toMatchObject({ forceCompaction: true })
+    expect(store.getContextPolicy('account-a', 'ctx')?.forceCompaction).toBe(true)
+    // 不带这个键的 patch 不能把它清掉：updateContextPolicy 用 undefined 表示「保持原值」
+    expect(store.updateContextPolicy('account-a', 'ctx', { strategy: 'aggressive' }).forceCompaction).toBe(true)
+    // 换模型的重开判定要按「此前跑过哪些模型」算，没跑过就不该重开
+    expect(store.listRuntimeModelIds('account-a', 'ctx')).toEqual([])
+    store.upsertModelRuntime('account-a', { conversationId: 'ctx', provider: 'minimax', modelId: 7, context: { conversationId: 'ctx', contextWindow: 1000, estimatedTokens: 10, messageTokens: 10, toolTokens: 0, systemTokens: 0, compactionCount: 0, latestSummaryId: null, updatedAt: '2026-08-30T10:00:00.000Z' } })
+    store.upsertModelRuntime('account-a', { conversationId: 'ctx', provider: 'deepseek', modelId: 9, context: { conversationId: 'ctx', contextWindow: 1000, estimatedTokens: 10, messageTokens: 10, toolTokens: 0, systemTokens: 0, compactionCount: 0, latestSummaryId: null, updatedAt: '2026-08-30T10:00:00.000Z' } })
+    expect(store.listRuntimeModelIds('account-a', 'ctx').sort()).toEqual([7, 9])
+    expect(store.listRuntimeModelIds('account-b', 'ctx')).toEqual([])
     const state = store.upsertContextState('account-a', { conversationId: 'ctx', contextWindow: 1000, estimatedTokens: 700, messageTokens: 500, toolTokens: 100, systemTokens: 100, compactionCount: 1, latestSummaryId: null, updatedAt: '2026-08-30T10:00:00.000Z' })
     const summary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 1, summaryText: 'goal', coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', inputTokens: 700, outputTokens: 120, source: 'turns' })
     store.upsertContextState('account-a', { ...state, latestSummaryId: summary.id, updatedAt: '2026-08-30T10:01:00.000Z' })
-    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'conservative', triggerReason: 'manual', beforeTokens: 900, afterTokens: 500, coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', summaryId: summary.id, durationMs: 12 })
+    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'conservative', triggerReason: 'manual', beforeTokens: 900, afterTokens: 500, contextWindow: 1000, coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', summaryId: summary.id, durationMs: 12 })
     const detailed = store.getConversationDetailed('account-a', 'ctx')
     expect(detailed?.context?.latestSummaryId).toBe(summary.id)
     expect(detailed?.summary?.summaryText).toBe('goal')
@@ -702,7 +802,7 @@ describe('LocalStore conversations', () => {
     store.createConversation('account-a', { id: 'ctx', title: 'Context' })
     const turnSummary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 1, summaryText: '按回合切的摘要', coveredTurnStart: 'turn-1', coveredTurnEnd: 'turn-2', inputTokens: 700, outputTokens: 120, source: 'turns' })
     const sessionSummary = store.createContextSummary('account-a', { conversationId: 'ctx', version: 2, summaryText: 'Pi 会话内摘要', coveredTurnStart: null, coveredTurnEnd: null, inputTokens: 900, outputTokens: 150, source: 'session' })
-    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'auto', triggerReason: 'pi-threshold', beforeTokens: 900, afterTokens: 400, coveredTurnStart: null, coveredTurnEnd: null, summaryId: sessionSummary.id, durationMs: 20 })
+    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'auto', triggerReason: 'pi-threshold', beforeTokens: 900, afterTokens: 400, contextWindow: 1000, coveredTurnStart: null, coveredTurnEnd: null, summaryId: sessionSummary.id, durationMs: 20 })
 
     // Pi 摘要版本更高，但种子摘要只能取按回合切的那份
     expect(store.latestTurnSummary('account-a', 'ctx')?.id).toBe(turnSummary.id)
@@ -783,6 +883,28 @@ describe('LocalStore 启动迁移', () => {
     const store = new LocalStore(databasePath)
     store.upsertAbilityMeta({ abilityType: 'cli', abilityId: 'gh', source: 'created', sourceId: 'local' })
     expect(store.getAbilityMeta('cli', 'gh')?.sourceId).toBe('local')
+    store.close()
+  })
+
+  it('缺 context_window 列的旧库补列后，历史压缩记录按「窗口未知」读回', () => {
+    const root = mkdtempSync(join(tmpdir(), 'fastagent-store-'))
+    tempRoots.push(root)
+    const databasePath = join(root, 'fastagent.db')
+    const seeded = new LocalStore(databasePath)
+    seeded.createConversation('account-a', { id: 'ctx', title: 'Context' })
+    seeded.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'auto', triggerReason: 'pi-threshold', beforeTokens: 900, afterTokens: 400, contextWindow: 128_000, coveredTurnStart: null, coveredTurnEnd: null, summaryId: null, durationMs: 20 })
+    seeded.close()
+    const raw = new Database(databasePath)
+    raw.exec('ALTER TABLE conversation_compactions DROP COLUMN context_window')
+    raw.close()
+
+    const store = new LocalStore(databasePath)
+    const history = store.listCompactionHistory('account-a', 'ctx')
+    expect(history).toHaveLength(1)
+    // 补列默认 0：不知道当时的窗口，界面据此只报 token 数
+    expect(history[0]).toMatchObject({ beforeTokens: 900, afterTokens: 400, contextWindow: 0 })
+    store.recordCompaction('account-a', { conversationId: 'ctx', strategy: 'auto', triggerReason: 'manual', beforeTokens: 800, afterTokens: 300, contextWindow: 200_000, coveredTurnStart: null, coveredTurnEnd: null, summaryId: null, durationMs: 10 })
+    expect(store.listCompactionHistory('account-a', 'ctx')[0]?.contextWindow).toBe(200_000)
     store.close()
   })
 

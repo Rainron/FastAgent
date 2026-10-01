@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { Archive, ChevronRight, Copy, Edit3, FolderOpen, MoreHorizontal, Paperclip, Pause, RotateCw, TerminalSquare, Trash2, Zap } from 'lucide-react'
-import type { AgentEvent, Attachment, Citation, ConversationTurn, ModelOption, TodoItem } from '../../shared/types'
+import type { AgentEvent, Attachment, Citation, CompactionHistory, ConversationTurn, ModelOption, TodoItem } from '../../shared/types'
 import { groupToolCallEvents } from '../activity'
 import { AssistantMessageView } from '../ai-response/AssistantMessage'
 import { normalizeFlagEmoji } from '../ai-response/flag-emoji'
@@ -8,11 +8,13 @@ import { openExternalLink, useResponseActions } from '../ai-response/response-co
 import { sanitizeLinkHref } from '../ai-response/sanitize-url'
 import { appendAttachments, attachmentsFromClipboard } from '../composer/attachments'
 import { AttachmentImage, isImageAttachment } from './AttachmentImage'
-import { buildExecutionTrace, hasToolAction } from '../execution-trace'
+import { buildExecutionTrace, hasToolAction, traceFinalAnswerLength } from '../execution-trace'
 import { useDismiss } from '../use-dismiss'
 import { useDelayedUnmount } from '../use-delayed-unmount'
 import { MOTION_DURATIONS } from '../motion'
 import { ExecutionTraceView } from './ExecutionTrace'
+import { buildCompactionMarkers } from './compaction-marker'
+import { CompactionMarker } from './CompactionMarker'
 import { modelChangeTurnIds } from './model-change-marker'
 import { TodoPanel, type TodoRunStatus } from './TodoPanel'
 import { ThinkingText } from './ThinkingText'
@@ -21,18 +23,26 @@ import { ToolCallCard } from './ToolCallCard'
 import { MemoryTurnBar } from './MemoryTurnBar'
 import { ContextSourceBar } from './ContextSourceBar'
 
-export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, memoryTurnIds, contextSourceTurnIds, onNotice, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; memoryTurnIds: ReadonlySet<string>; contextSourceTurnIds: ReadonlySet<string>; onNotice: (notice: string) => void; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
+export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, memoryTurnIds, contextSourceTurnIds, compactionHistory, contextWindow, onNotice, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; memoryTurnIds: ReadonlySet<string>; contextSourceTurnIds: ReadonlySet<string>; compactionHistory?: CompactionHistory[]; contextWindow?: number; onNotice: (notice: string) => void; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
   const modelChanges = useMemo(() => modelChangeTurnIds(turns), [turns])
+  // 压缩分隔卡只跟回合的 id/createdAt 有关，流式期间正文变化不必重算。
+  const turnAnchors = useMemo(() => turns.map((turn) => ({ id: turn.id, createdAt: turn.createdAt })), [turns])
+  const compactionMarkers = useMemo(() => buildCompactionMarkers(turnAnchors, compactionHistory ?? []), [turnAnchors, compactionHistory])
+  const renderCompaction = (records: CompactionHistory[] | undefined) => records?.map((record) =>
+    <CompactionMarker key={record.id} record={record} contextWindow={contextWindow ?? 0} />)
   const knownTurnIds = useRef<Set<string> | null>(null)
   if (knownTurnIds.current === null) knownTurnIds.current = new Set(turns.map((turn) => turn.id))
   return <div className="conversation-content message-list">{turns.map((turn) => {
     const isNew = !knownTurnIds.current!.has(turn.id)
     knownTurnIds.current!.add(turn.id)
     return <React.Fragment key={turn.id}>
+      {renderCompaction(compactionMarkers.beforeTurnId[turn.id])}
       {modelChanges.has(turn.id) && <ModelChangeMarker label={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} />}
       <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} hasMemoryActivity={memoryTurnIds.has(turn.id)} hasContextSources={contextSourceTurnIds.has(turn.id)} modelName={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} onNotice={onNotice} />
     </React.Fragment>
-  })}</div>
+  })}
+    {renderCompaction(compactionMarkers.trailing)}
+  </div>
 })
 
 /** 模型已被删除或下架时拿不到名字，只说明发生过切换，不编造型号。 */
@@ -53,7 +63,11 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
   // 对话模式没有 Agent 那套动作编排，只思考不调工具时沿用轻量的「分析过程」折叠卡。
   const isChat = turn.runtimeConfig.mode === 'chat'
   // 执行轨迹：从事件流重建动作组与文本段，正文区只渲染从 answerStart 开始的未归档内容。
-  const trace = useMemo(() => buildExecutionTrace(activity?.events ?? []), [activity?.events])
+  // 终态正文区渲染的是最后一条助手消息，轨迹文本段必须在此之前收住，否则同一段正文会渲染两次。
+  // 夹取长度与 kind 同源取 activity.status；执行中恒为 0，依赖不随流式增长变化，轨迹不会逐帧重算。
+  const traceKind = activity && activity.status !== 'idle' ? activity.status : 'done'
+  const traceAnswerLength = traceFinalAnswerLength(traceKind, turn.assistantMessage?.text.length ?? 0)
+  const trace = useMemo(() => buildExecutionTrace(activity?.events ?? [], traceAnswerLength), [activity?.events, traceAnswerLength])
   // chat 调了工具就得看到执行轨迹，否则命令跑了什么完全不可见
   const lightweightActivity = isChat && !hasToolAction(trace)
   // 中断原因来自事件流里最后一条 interrupted 事件；没有事件（历史库）时回退到通用文案。

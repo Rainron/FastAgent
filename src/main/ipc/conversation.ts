@@ -7,10 +7,11 @@ import { buildConversationHtml, buildConversationMarkdown, exportFormatFromPath,
 import { breadcrumb } from '../logging/logger'
 import { dialog, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { CompactionError } from '../compaction-error'
 import type { IpcRegistrar, MainContext } from '../app-context'
+import { rewindSessionAfterTurnDelete } from '../run/rerun-rewind'
 
 /** 会话详情、上下文策略与压缩、会话与回合的增删改查。 */
 export function registerConversationIpc(handle: IpcRegistrar, ctx: MainContext) {
@@ -48,7 +49,26 @@ export function registerConversationIpc(handle: IpcRegistrar, ctx: MainContext) 
     return ctx.store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: input.createdAt }, attachments: input.attachments || [], runtimeConfig: { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: ctx.store.getConversationRoot(namespace, input.conversationId) }, createdAt: input.createdAt })
   })
   handle('turns:update', (_event, turnId: string, patch) => ctx.store.updateTurn(ctx.requireNamespace(), turnId, patch))
-  handle('turns:delete', (_event, turnId: string) => ctx.store.deleteTurn(ctx.requireNamespace(), turnId))
+  /**
+   * 删除一轮问答：库里删掉之后，模型上下文里的这一轮也要一起去掉，否则下一轮模型照样读得到。
+   * 回退要销毁缓存的运行时，只能排在该会话的串行队列里做；运行中的会话不允许删，避免和正在写的那一轮打架。
+   */
+  handle('turns:delete', async (_event, turnId: string) => {
+    const namespace = ctx.requireNamespace()
+    const turn = ctx.store.getTurn(namespace, turnId)
+    if (!turn) return null
+    if (ctx.hasActiveRun(namespace, turn.conversationId)) throw new Error('当前任务仍在运行，请先停止再删除问答')
+    return ctx.conversationRuns.run(ctx.conversationRuntimeKey(namespace, turn.conversationId), async () => {
+      const turnsBefore = ctx.store.listTurns(namespace, turn.conversationId)
+      const anchor = ctx.store.getTurnSessionAnchor(namespace, turnId)
+      const removed = ctx.store.deleteTurn(namespace, turnId)
+      if (removed) {
+        // 回退失败不该让删除本身报错：库里已经删了，最坏情况是退回改动前的行为（模型仍记得这一轮）。
+        await rewindSessionAfterTurnDelete(ctx, namespace, turn.conversationId, { turnId, turnsBefore, anchor }).catch((error) => console.warn('[turn-delete] 回退会话上下文失败:', error))
+      }
+      return removed
+    })
+  })
   handle('turns:restore', (_event, turn: ConversationTurn) => ctx.store.restoreTurn(ctx.requireNamespace(), turn))
   handle('conversations:listToolCalls', (_event, turnId: string) => ctx.store.listToolCalls(ctx.requireNamespace(), turnId))
   handle('conversations:contextSources', (_event, turnId: string) => ctx.store.listTurnContextSources(ctx.requireNamespace(), turnId))
@@ -146,12 +166,32 @@ export function registerConversationIpc(handle: IpcRegistrar, ctx: MainContext) 
     ctx.store.deleteModelUsage(namespace, conversationId)
     ctx.store.removeConversation(namespace, conversationId)
   })
-  handle('conversations:clear', (_event, conversationId: string) => {
+  /**
+   * /clear：把这个会话彻底清空，不留任何可被后续对话读到的痕迹。
+   *
+   * 清的范围：库里的消息、上下文、摘要与压缩记录、运行台账、成果登记、由本会话抽出的记忆，
+   * 加上磁盘上的 pi session 文件与本会话的附件副本。只保留会话条目本身（标题重置为「新对话」）。
+   *
+   * 顺序不能反：先销毁运行时再删 session 文件。反过来的话，销毁时 pi 会把内存里的会话状态
+   * 写回文件，刚删掉的上下文又长回来了。
+   */
+  handle('conversations:clear', async (_event, conversationId: string) => {
     const namespace = ctx.requireNamespace()
     if (!ctx.store.getConversation(namespace, conversationId)) throw new Error('会话不存在')
-    const deleted = ctx.store.clearConversationTurns(namespace, conversationId)
-    // 清空后当前会话的运行时缓存立即失效，下次发送会重建全新上下文。
-    void ctx.conversationRuntimeCache.invalidate(ctx.conversationRuntimeKey(namespace, conversationId))
-    return { deleted }
+    if (ctx.hasActiveRun(namespace, conversationId)) throw new Error('当前任务仍在运行，请先停止再清空会话')
+    const sessionDir = ctx.conversationSessionDir(namespace, conversationId)
+    await ctx.conversationRuntimeCache.invalidate(ctx.conversationRuntimeKey(namespace, conversationId))
+    const purged = ctx.store.purgeConversationContent(namespace, conversationId)
+    ctx.store.setConversationSessionFile(namespace, conversationId, null)
+    // 文件删不掉不该让整次清空失败：库里已经清干净了，残留文件在日志里留痕即可。
+    for (const target of [sessionDir, join(ctx.appPaths.attachmentsDir, conversationId)]) {
+      try {
+        rmSync(target, { recursive: true, force: true })
+      } catch (error) {
+        console.warn('[conversation:clear] 清理文件失败:', target, error)
+      }
+    }
+    breadcrumb('conversation', `clear ${conversationId} turns=${purged.turns} runs=${purged.runs} memories=${purged.memories}`)
+    return { deleted: purged.turns, ...purged }
   })
 }

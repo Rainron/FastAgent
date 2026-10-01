@@ -8,13 +8,13 @@ export interface ScheduledSubAgentTask {
   task: string
 }
 
+export type SubAgentRunner = (task: ScheduledSubAgentTask, signal: AbortSignal) => Promise<SubAgentResult>
+
 export interface SubAgentSchedulerOptions {
   concurrency?: number
   signal: AbortSignal
-  run: (task: ScheduledSubAgentTask, signal: AbortSignal, emit: (status: SubAgentStatus, detail?: string) => void) => Promise<SubAgentResult>
+  run: SubAgentRunner
 }
-
-export type SubAgentRunner = (task: ScheduledSubAgentTask, signal: AbortSignal) => Promise<SubAgentResult>
 
 /** 没有真正跑起来的任务也要有终态结果：调用方靠结果条数判断「是不是每个任务都有交代」。 */
 export function settledSubAgentResult(
@@ -85,9 +85,46 @@ export async function runSubAgentTasks(tasks: ScheduledSubAgentTask[], options: 
     for (;;) {
       const index = next++
       if (index >= tasks.length) return
-      results[index] = await runSubAgentTask(tasks[index], options.signal, (task, signal) => options.run(task, signal, () => undefined))
+      results[index] = await runSubAgentTask(tasks[index], options.signal, options.run)
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker))
   return results.filter((result): result is SubAgentResult => Boolean(result))
+}
+
+/**
+ * 链式执行：前一个任务的**结构化交接**作为后一个任务的输入。
+ *
+ * 中途失败必须为剩余任务补终态结果，否则模型看到的结果里完全看不出还有任务没跑，
+ * 台账里也查不到——与中止分支的行为对齐。
+ */
+export async function runSubAgentChain(
+  tasks: ScheduledSubAgentTask[],
+  options: SubAgentSchedulerOptions,
+  describeContext: (previous: SubAgentResult) => string
+): Promise<SubAgentResult[]> {
+  if (tasks.length > SUBAGENT_LIMITS.maxTasksPerCall) throw new Error(`Sub-agent 任务数不能超过 ${SUBAGENT_LIMITS.maxTasksPerCall}`)
+  const results: SubAgentResult[] = []
+  let context = ''
+  for (let index = 0; index < tasks.length; index++) {
+    const task = tasks[index]
+    if (options.signal.aborted) {
+      results.push(settledSubAgentResult(task, 'cancelled'))
+      continue
+    }
+    const result = await runSubAgentTask(
+      context ? { ...task, task: `${task.task}\n\n${context}` } : task,
+      options.signal,
+      options.run
+    )
+    results.push(result)
+    if (result.status !== 'completed') {
+      for (const skipped of tasks.slice(index + 1)) {
+        results.push(settledSubAgentResult(skipped, 'cancelled', '前序 Sub-agent 未完成，已跳过'))
+      }
+      break
+    }
+    context = describeContext(result)
+  }
+  return results
 }

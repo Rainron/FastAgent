@@ -1,9 +1,9 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
-import { Activity, ChevronDown } from 'lucide-react'
+import { memo, useCallback, useRef, useState } from 'react'
+import { ChevronDown, ChevronRight, History, Minimize2 } from 'lucide-react'
 import { useDismiss } from '../use-dismiss'
 import type { CompactionState } from './compaction-state'
-import type { ModelUsageSummary } from '../../shared/types'
-import { cacheHitLabel, usageAggregateForRecord } from './context-usage'
+import type { ContextPolicy, ModelUsageSummary } from '../../shared/types'
+import { compactionSummaryLabel, contextHealthView } from './context-health-view'
 import './context-usage.css'
 
 export interface ContextHealthData {
@@ -27,64 +27,88 @@ function formatTokens(value: number) {
   return new Intl.NumberFormat('en-US').format(Math.max(0, Math.round(value)))
 }
 
-/** 原型触发器上的环形表：外径 20、半径 8，弧长 50.3，用 dashoffset 表达占用比。 */
-function MeterRing({ ratio }: { ratio: number }) {
-  return <span className="meter" aria-hidden="true"><svg viewBox="0 0 20 20" width="18" height="18"><circle className="meter-track" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" /><circle className="meter-fill" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="50.3" strokeDashoffset={50.3 * (1 - ratio)} /></svg></span>
+/**
+ * 原型触发器上的环形表：外径 20、半径 8，弧长 50.3，用 dashoffset 表达占用比。
+ * 阈值刻度画在同一个圆上：不标出来的话，用户没法把这个百分比和「什么时候会压」对上。
+ */
+function MeterRing({ ratio, mark }: { ratio: number; mark: number | null }) {
+  const circumference = 50.3
+  return <span className="meter" aria-hidden="true"><svg viewBox="0 0 20 20" width="18" height="18">
+    <circle className="meter-track" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" />
+    <circle className="meter-fill" cx="10" cy="10" r="8" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - ratio)} />
+    {mark !== null && <circle
+      className="meter-mark"
+      cx="10" cy="10" r="8" fill="none" strokeWidth="2.5"
+      strokeDasharray={`1.4 ${circumference - 1.4}`}
+      strokeDashoffset={-circumference * mark}
+    />}
+  </svg></span>
 }
 
-export const ContextHealth = memo(function ContextHealth({ data, onCompact, onCancelCompaction, compaction }: { data: ContextHealthData; onCompact?: () => void; onCancelCompaction?: () => void; compaction?: CompactionState | null }) {
+export const ContextHealth = memo(function ContextHealth({ data, policy, onCompact, onCancelCompaction, onOpenHistory, compaction }: {
+  data: ContextHealthData
+  /** 这条会话实际生效的压缩策略；决定刻度位置与配色。未就绪时按「未启用」保守展示。 */
+  policy?: Pick<ContextPolicy, 'strategy' | 'autoSummary' | 'triggerRatio'> | null
+  onCompact?: () => void
+  onCancelCompaction?: () => void
+  /** 打开会话详情的压缩历史；没压过时不给入口。 */
+  onOpenHistory?: () => void
+  compaction?: CompactionState | null
+}) {
   const [open, setOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
   // 与其他浮层一致：点外部或 Esc 关闭，不必回到触发按钮再点一次
   useDismiss(open, close, ref)
-  const ratio = data.contextWindow > 0 ? Math.min(1, Math.max(0, data.estimatedTokens / data.contextWindow)) : 0
-  const percent = Math.round(ratio * 100)
-  const tone = percent >= 95 ? 'danger' : percent >= 85 ? 'warning' : percent >= 70 ? 'secondary' : 'tertiary'
-  const latestUsage = useMemo(() => usageAggregateForRecord(data.usage?.latest ?? null), [data.usage?.latest])
-  const hitLabel = cacheHitLabel(latestUsage)
-  return <div className={`context-health ${tone}`} ref={ref}>
-    <button className="context-health-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" title={`上下文已使用 ${percent}%；最近请求缓存命中率 ${hitLabel}${data.usagePending ? '；本次用量待返回' : ''}`}>
-      <MeterRing ratio={ratio} /><span>{percent}%</span><ChevronDown size={12} />
+  const view = contextHealthView({ estimatedTokens: data.estimatedTokens, contextWindow: data.contextWindow, policy: policy ?? null })
+  const running = compaction?.status === 'running'
+  return <div className={`context-health ${view.level}`} ref={ref}>
+    <button className="context-health-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" title={`${view.headline}${data.usagePending ? '；本次用量待返回' : ''}`}>
+      <MeterRing ratio={view.ratio} mark={view.triggerMark} /><span>{view.percent}%</span><ChevronDown size={12} />
     </button>
     {open && <div className="context-health-popover" role="dialog" aria-label="上下文使用情况">
       <div className="context-health-heading"><strong>上下文使用情况</strong><span>{formatTokens(data.estimatedTokens)} / {formatTokens(data.contextWindow)}</span></div>
-      <div className="context-health-bar"><span style={{ width: `${percent}%` }} /></div>
-      <dl className="context-health-breakdown"><div><dt>消息</dt><dd>{formatTokens(data.messageTokens)}</dd></div><div><dt>工具</dt><dd>{formatTokens(data.toolTokens)}</dd></div><div><dt>系统</dt><dd>{formatTokens(data.systemTokens)}</dd></div>{Boolean(data.summaryTokens) && <div><dt>摘要</dt><dd>{formatTokens(data.summaryTokens || 0)}</dd></div>}{Boolean(data.attachmentTokens) && <div><dt>附件</dt><dd>{formatTokens(data.attachmentTokens || 0)}</dd></div>}</dl><div className="context-health-meta"><span>计量</span><span>{data.countingMethod === 'provider-usage' ? '总量：模型 usage · 分类：比例估算' : '统一估算'}</span></div>
-      <ModelCacheUsage usage={data.usage} pending={data.usagePending} />
-      <div className="context-health-meta"><span><Activity size={12} />压缩 {data.compactionCount} 次</span><span>{data.latestCompactionAt ? `最近 ${new Date(data.latestCompactionAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : '尚未压缩'}</span></div>
-      {compaction?.status === 'running' && <div className="context-health-compaction" aria-live="polite"><div className="context-health-compaction-label"><span>{compaction.phase}</span><span>{compaction.progress}%</span></div><div className="context-health-compaction-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={compaction.progress}><span style={{ width: `${compaction.progress}%` }} /></div><small>当前会话正在压缩，暂时无法发送；可切换到其它会话继续问答</small>{onCancelCompaction && <button className="context-health-action" onClick={onCancelCompaction}>取消压缩</button>}</div>}
-      {compaction?.status !== 'running' && onCompact && <button className="context-health-action" onClick={() => { onCompact(); setOpen(false) }}>立即压缩</button>}
+      <div className="context-health-bar">
+        <span style={{ width: `${view.percent}%` }} />
+        {view.triggerMark !== null && <i className="context-health-threshold" style={{ left: `${Math.round(view.triggerMark * 100)}%` }} aria-hidden="true" />}
+      </div>
+      <p className="context-health-headline">{view.headline}</p>
+
+      {running
+        ? <div className="context-health-compaction" aria-live="polite">
+          <div className="context-health-compaction-label"><span>{compaction.phase}</span><span>{compaction.progress}%</span></div>
+          <div className="context-health-compaction-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={compaction.progress}><span style={{ width: `${compaction.progress}%` }} /></div>
+          <small>{compaction.auto ? '本轮上下文正在自动压缩' : '当前会话正在压缩，暂时无法发送；可切换到其它会话继续问答'}</small>
+          {onCancelCompaction && <button className="context-health-action" onClick={onCancelCompaction}>取消压缩</button>}
+        </div>
+        : onCompact && <button className="context-health-action primary" onClick={() => { onCompact(); setOpen(false) }}><Minimize2 size={12} />立即压缩</button>}
+
+      <button
+        className="context-health-compactions"
+        onClick={() => { if (data.compactionCount) { onOpenHistory?.(); setOpen(false) } }}
+        disabled={!data.compactionCount || !onOpenHistory}
+        title={data.compactionCount ? '查看压缩历史' : '这个会话还没有压缩记录'}
+      >
+        <History size={12} />{compactionSummaryLabel(data.compactionCount, data.latestCompactionAt)}
+        {Boolean(data.compactionCount) && onOpenHistory && <ChevronRight size={12} />}
+      </button>
+
+      <button className={`context-health-detail-toggle${detailOpen ? ' open' : ''}`} onClick={() => setDetailOpen((value) => !value)} aria-expanded={detailOpen}>
+        <ChevronRight size={12} />占用明细
+      </button>
+      {detailOpen && <>
+        <dl className="context-health-breakdown">
+          <div><dt>消息</dt><dd>{formatTokens(data.messageTokens)}</dd></div>
+          <div><dt>工具</dt><dd>{formatTokens(data.toolTokens)}</dd></div>
+          <div><dt>系统</dt><dd>{formatTokens(data.systemTokens)}</dd></div>
+          {Boolean(data.summaryTokens) && <div><dt>摘要</dt><dd>{formatTokens(data.summaryTokens || 0)}</dd></div>}
+          {Boolean(data.attachmentTokens) && <div><dt>附件</dt><dd>{formatTokens(data.attachmentTokens || 0)}</dd></div>}
+        </dl>
+        <div className="context-health-meta"><span>计量</span><span>{data.countingMethod === 'provider-usage' ? '总量：模型 usage · 分类：比例估算' : '统一估算'}</span></div>
+        {data.usagePending && <p className="context-health-pending" role="status">正在生成，本次用量待返回。</p>}
+        <p className="context-health-note">模型缓存与 token 成本在「会话详情 › Context」里。</p>
+      </>}
     </div>}
   </div>
 })
-
-const ModelCacheUsage = memo(function ModelCacheUsage({ usage, pending }: { usage?: ModelUsageSummary; pending?: boolean }) {
-  const [scope, setScope] = useState<'latest' | 'turn' | 'session'>('latest')
-  const latest = usage?.latest ?? null
-  const aggregate = useMemo(() => scope === 'latest' || !usage ? usageAggregateForRecord(latest) : usage[scope], [latest, scope, usage])
-  const partial = aggregate.reportedReadRequests < aggregate.requestCount
-  const hitLabel = cacheHitLabel(aggregate)
-  return <section className="context-cache" aria-label="模型缓存用量">
-    <div className="context-cache-heading"><strong>模型缓存</strong><span>按输入 token 计算</span></div>
-    <div className="context-cache-scopes" role="group" aria-label="缓存统计范围">
-      {([['latest', '最近请求'], ['turn', '本轮累计'], ['session', '会话累计']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={scope === value} onClick={() => setScope(value)}>{label}</button>)}
-    </div>
-    <div className="context-cache-rate"><span>{partial && aggregate.reportedReadRequests ? '已报告请求命中率' : '缓存命中率'}</span><strong>{hitLabel}</strong></div>
-    {aggregate.requestCount > 0 ? <>
-      <dl className="context-cache-breakdown">
-        <div><dt>输入总量</dt><dd>{formatTokens(aggregate.inputTokens)}</dd></div>
-        <div><dt>缓存读取</dt><dd>{aggregate.reportedReadRequests ? formatTokens(aggregate.cacheReadTokens) : '未确认'}</dd></div>
-        <div><dt>缓存写入</dt><dd>{aggregate.reportedWriteRequests ? formatTokens(aggregate.cacheWriteTokens) : '未上报'}</dd></div>
-        <div><dt>输出</dt><dd>{formatTokens(aggregate.outputTokens)}</dd></div>
-      </dl>
-      <p className="context-cache-note">已报告读取 {aggregate.reportedReadRequests}/{aggregate.requestCount} 次 · 写入 {aggregate.reportedWriteRequests}/{aggregate.requestCount} 次</p>
-      {scope === 'latest' && latest && <p className="context-cache-note context-cache-model" title={`${latest.provider} / ${latest.modelName}`}>
-        {latest.modelName} · {new Date(latest.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}{latest.status !== 'completed' && ` · ${latest.status === 'cancelled' ? '已取消' : '请求失败'}，保留已返回用量`}
-      </p>}
-      <p className="context-cache-note">命中率 = 缓存读取 ÷ 输入总量。输入包含缓存读取与写入；未确认的请求不计入命中率。</p>
-    </> : <p className="context-cache-note">尚无请求用量；收到模型返回后更新。</p>}
-    {pending && <p className="context-cache-pending" role="status">正在生成，本次用量待返回{latest ? '；当前显示已有记录。' : '。'}</p>}
-  </section>
-})
-

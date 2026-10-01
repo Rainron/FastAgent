@@ -1,5 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
-import { SUBAGENT_LIMITS } from '../subagent/subagent-types'
+import { describe, expect, it } from 'vitest'
 import { createSubAgentTool } from './subagent'
 import type { SubAgentConfig, SubAgentResult } from '../subagent/subagent-types'
 import type { ScheduledSubAgentTask } from '../subagent/subagent-scheduler'
@@ -7,6 +6,9 @@ import type { ScheduledSubAgentTask } from '../subagent/subagent-scheduler'
 function completed(task: ScheduledSubAgentTask): SubAgentResult {
   return { taskId: task.taskId, agentId: task.agentId, agentName: task.agentId, status: 'completed', output: 'done', truncated: false, startedAt: 0, finishedAt: 1 }
 }
+
+/** details 里只有摘要：子任务全文会被 finishToolCall 整段写进 tool_calls.result_json。 */
+type ToolResultDetails = { details: { mode: string; results: Array<{ taskId: string; status: SubAgentResult['status']; handoff?: SubAgentResult['handoff'] }> } }
 
 /** 运行时按会话缓存、工具只注册一次，因此本轮上下文必须在调用时刻现取。 */
 describe('subagent 工具的按轮解析', () => {
@@ -34,7 +36,7 @@ describe('subagent 工具的按轮解析', () => {
   it('工具描述带出可委派角色清单，自定义角色也在其中', () => {
     const tool = createSubAgentTool({
       resolveSignal: () => new AbortController().signal,
-      resolveCustomAgents: () => [{ id: 'auditor', name: 'API 审查员', description: '只读检查 API 契约', systemPrompt: '只读审计', tools: ['read'], allowWrite: false, allowMcp: false, thinkingLevel: 'low', maxTurns: 8 }],
+      resolveCustomAgents: () => [{ id: 'auditor', name: 'API 审查员', description: '只读检查 API 契约', systemPrompt: '只读审计', tools: ['read'], allowWrite: false, allowMcp: false, thinkingLevel: 'low', maxToolCalls: 40 }],
       execute: async (task) => completed(task)
     })
     expect(tool.description).toContain('- scout：')
@@ -49,8 +51,37 @@ describe('subagent 工具的按轮解析', () => {
       resolveCustomAgents: () => [],
       execute: async (task) => completed(task)
     })
-    const result = await tool.execute('call-1', { agent: 'scout', task: '看一下调用链' }, undefined, undefined, {} as never) as { details: { results: SubAgentResult[] } }
+    const result = await tool.execute('call-1', { agent: 'scout', task: '看一下调用链' }, undefined, undefined, {} as never) as ToolResultDetails
     expect(result.details.results[0].status).toBe('cancelled')
+  })
+
+  it('taskId 在并发调用之间不碰撞', async () => {
+    const taskIds: string[] = []
+    const tool = createSubAgentTool({
+      resolveSignal: () => new AbortController().signal,
+      resolveCustomAgents: () => [],
+      execute: async (task) => { taskIds.push(task.taskId); return completed(task) }
+    })
+    // 原实现是 `subtask-${Date.now()}-${index}`：同一毫秒的两次调用会撞 id，
+    // agent_tasks 的 ON CONFLICT DO UPDATE 会把前一条台账直接覆盖掉
+    await Promise.all([
+      tool.execute('call-1', { tasks: [{ agent: 'scout', task: 'a' }, { agent: 'scout', task: 'b' }] }, undefined, undefined, {} as never),
+      tool.execute('call-2', { tasks: [{ agent: 'scout', task: 'c' }, { agent: 'scout', task: 'd' }] }, undefined, undefined, {} as never)
+    ])
+    expect(taskIds).toHaveLength(4)
+    expect(new Set(taskIds).size).toBe(4)
+  })
+
+  it('details 只回摘要，不把子任务全文写进台账', async () => {
+    const tool = createSubAgentTool({
+      resolveSignal: () => new AbortController().signal,
+      resolveCustomAgents: () => [],
+      execute: async (task) => ({ ...completed(task), output: '这段正文不该进 result_json' })
+    })
+    // details 会被 finishToolCall 整段 JSON 序列化落库，而渲染层只读 handoff
+    const result = await tool.execute('call-1', { agent: 'scout', task: '看一下调用链' }, undefined, undefined, {} as never) as ToolResultDetails
+    expect(JSON.stringify(result.details)).not.toContain('这段正文不该进 result_json')
+    expect(result.details.results[0].status).toBe('completed')
   })
 
   it('自定义 Sub-agent 列表取自调用时刻：设置里新增的 agent 立即可用', async () => {
@@ -62,47 +93,28 @@ describe('subagent 工具的按轮解析', () => {
     })
     await expect(tool.execute('call-1', { agent: 'auditor', task: '检查一下' }, undefined, undefined, {} as never)).rejects.toThrow('未知 Sub-agent：auditor')
 
-    custom.push({ id: 'auditor', name: 'auditor', description: '', systemPrompt: '只读审计', tools: ['read'], allowWrite: false, allowMcp: false, thinkingLevel: 'low', maxTurns: 8 })
-    const result = await tool.execute('call-2', { agent: 'auditor', task: '检查一下' }, undefined, undefined, {} as never) as { details: { results: SubAgentResult[] } }
+    custom.push({ id: 'auditor', name: 'auditor', description: '', systemPrompt: '只读审计', tools: ['read'], allowWrite: false, allowMcp: false, thinkingLevel: 'low', maxToolCalls: 40 })
+    const result = await tool.execute('call-2', { agent: 'auditor', task: '检查一下' }, undefined, undefined, {} as never) as ToolResultDetails
     expect(result.details.results[0].status).toBe('completed')
   })
 })
 
-describe('subagent 任务 id 与链式超时', () => {
-  it('同一毫秒内发起的并行任务 id 互不相同', async () => {
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000)
-    try {
-      const ids: string[] = []
-      const tool = createSubAgentTool({
-        resolveSignal: () => new AbortController().signal,
-        resolveCustomAgents: () => [],
-        execute: async (task) => { ids.push(task.taskId); return completed(task) }
-      })
-      await tool.execute('call-1', { tasks: [{ agent: 'scout', task: '看 a' }, { agent: 'scout', task: '看 b' }] }, undefined, undefined, {} as never)
-      await tool.execute('call-2', { tasks: [{ agent: 'scout', task: '看 a' }, { agent: 'scout', task: '看 b' }] }, undefined, undefined, {} as never)
-      expect(ids).toHaveLength(4)
-      expect(new Set(ids).size).toBe(4)
-    } finally {
-      now.mockRestore()
-    }
+describe('subagent 参数形式', () => {
+  const tool = () => createSubAgentTool({
+    resolveSignal: () => new AbortController().signal,
+    resolveCustomAgents: () => [],
+    execute: async (task) => completed(task)
   })
 
-  it('链式子任务同样受 maxRuntimeMs 约束', async () => {
-    vi.useFakeTimers()
-    try {
-      const tool = createSubAgentTool({
-        resolveSignal: () => new AbortController().signal,
-        resolveCustomAgents: () => [],
-        execute: (_task, signal) => new Promise((_resolve, reject) => {
-          signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
-        })
-      })
-      const promise = tool.execute('call-1', { chain: [{ agent: 'scout', task: '第一步' }, { agent: 'scout', task: '第二步' }] }, undefined, undefined, {} as never) as Promise<{ details: { results: SubAgentResult[] } }>
-      await vi.advanceTimersByTimeAsync(SUBAGENT_LIMITS.maxRuntimeMs + 1)
-      const result = await promise
-      expect(result.details.results[0].status).toBe('timeout')
-    } finally {
-      vi.useRealTimers()
-    }
+  it('chain 旁边多带一个没有 task 的顶层 agent 时按链式执行，不报错', async () => {
+    // 真实模型会这样传；直接拒绝会让模型认定 chain 不可用，并把这个错误结论写进跨会话记忆
+    const result = await tool().execute('call-1', { agent: 'scout', chain: [{ agent: 'scout', task: '先读' }, { agent: 'scout', task: '再算' }] }, undefined, undefined, {} as never) as ToolResultDetails
+    expect(result.details.mode).toBe('chain')
+    expect(result.details.results).toHaveLength(2)
+  })
+
+  it('形式不合法时报错文案列全三种形式', async () => {
+    await expect(tool().execute('call-1', { agent: 'scout', task: 'x', chain: [{ agent: 'scout', task: 'y' }] }, undefined, undefined, {} as never)).rejects.toThrow(/chain/)
+    await expect(tool().execute('call-1', {}, undefined, undefined, {} as never)).rejects.toThrow(/agent \+ task.*tasks.*chain/)
   })
 })

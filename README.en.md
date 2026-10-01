@@ -86,7 +86,7 @@ Turn a successful conversation into a reusable Skill, with static validation for
 Concurrency, retry, and continuation limits stop a run with an explicit reason instead of silently continuing. The origin of each turn's context can be traced. Conversations can be exported, and artifact files keep per-turn versions that can be restored.
 
 **Context management and local workflow tools**  
-Provider-reported usage drives context accounting, with automatic summarization and manual compaction (trigger ratio, post-compaction target, and retained turns are configurable). Cloud model parameters such as context window and output limit can be overridden locally. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
+Provider-reported usage drives context accounting, with automatic summarization and manual compaction (trigger ratio and retained turns are configurable; individual conversations can override the policy and show their compaction history, with an optional force-compaction fallback that is off by default). Cloud model parameters such as context window and output limit can be overridden locally. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
 
 ## Quick start
 

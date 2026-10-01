@@ -160,6 +160,19 @@ export class ModelConnectionStore {
     this.db.prepare('UPDATE local_models SET payload=? WHERE id=?').run(JSON.stringify({ ...payload, model_kind: kind }), dbId)
   }
 
+  /**
+   * 单独补 context_window：窗口是自动压缩阈值的分母，缺了就只能按模型名推断，
+   * 不能等用户重新保存整条连接才修正。只在当前没有正数窗口时写入。
+   */
+  setModelContextWindow(dbId: number, contextWindow: number): void {
+    if (!(contextWindow > 0)) return
+    const row = this.db.prepare('SELECT payload FROM local_models WHERE id=?').get(dbId) as { payload: string } | undefined
+    if (!row) return
+    const payload = JSON.parse(row.payload)
+    if (Number(payload.context_window) > 0) return
+    this.db.prepare('UPDATE local_models SET payload=? WHERE id=?').run(JSON.stringify({ ...payload, context_window: Math.round(contextWindow) }), dbId)
+  }
+
   runtimeConfig(dbId: number): Omit<ModelCredentials, 'id'> | null {
     const row = this.db.prepare('SELECT payload FROM local_models WHERE id=?').get(dbId) as { payload: string } | undefined
     if (!row) return null

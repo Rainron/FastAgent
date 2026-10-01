@@ -33,6 +33,8 @@ import { suggestReadOnlyDecomposition } from './agent/subagent/subagent-decompos
 import { createModelUsageCollector } from './model-usage'
 import { resolveThinkingLevel } from '../shared/thinking-level'
 import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../shared/model-context-windows'
+import { INITIAL_CONVERGENCE_STATE, convergenceStalledDetail, trackCompactionConvergence, type ConvergenceState } from './agent/compaction-convergence'
+import { cjkKeepRecentScale, scaleKeepRecentTokens } from './agent/compaction-units'
 
 const DEFAULT_MAX_TOKENS = 8_192
 
@@ -189,6 +191,11 @@ export interface RuntimeRunOptions {
   /** 桌面应用私有的 agent 配置目录；用空目录隔离 pi CLI 的全局扩展/skills/settings */
   agentDir: string
   onSessionFile?: (path: string) => void
+  /**
+   * 本轮发出提示词之前 session 的位置（所在文件 + 叶子节点）。重跑这一轮时按它回退上下文。
+   * 只有主运行传；子运行共用同一个 turnId，传了会把主运行的锚点覆盖掉。
+   */
+  onSessionAnchor?: (anchor: { sessionFile: string | null; leafId: string | null }) => void
   onEvent: (event: Omit<AgentEvent, 'runId'>) => void
   /** Pi 会话内压缩完成后同步给桌面持久层。 */
   onCompaction?: (event: { reason: 'manual' | 'threshold' | 'overflow'; summary: string; tokensBefore: number; estimatedTokensAfter: number; durationMs: number; measurement: ContextMeasurement }) => void
@@ -370,7 +377,7 @@ export interface RuntimeCompactionSettings {
 /** 本轮实际生效的会话内压缩参数：带策略时按策略换算，否则退回布尔开关。 */
 export function runtimeCompactionSettings(options: Pick<RuntimeRunOptions, 'contextPolicy' | 'autoCompaction' | 'credentials'>): RuntimeCompactionSettings {
   return options.contextPolicy
-    ? piCompactionSettings(options.contextPolicy, credentialContextWindow(options.credentials))
+    ? piCompactionSettings(options.contextPolicy, credentialContextWindow(options.credentials), options.credentials.max_tokens)
     : { enabled: options.autoCompaction !== false }
 }
 
@@ -453,6 +460,13 @@ export async function summarizeTurns(options: { credentials: ModelCredentials; t
 export interface SessionCompactionOutcome {
   summary: string
   tokensBefore: number
+  /**
+   * 压缩后的上下文用量，取自压缩后重新做的整份测量。
+   *
+   * 不能用 Pi 的 `estimatedTokensAfter`：那只是保留区消息的字符估算，不含系统提示词与摘要，
+   * 而 `tokensBefore` 是 provider usage 口径。两个数并排显示就成了「62k → 612」这种
+   * 看上去压掉 99% 的假象，还和压缩后上下文条上的数字对不上。这里统一到界面同源的那份测量。
+   */
   estimatedTokensAfter: number
   durationMs: number
   measurement: ContextMeasurement
@@ -473,7 +487,7 @@ async function runSessionCompaction(session: AgentSession, credentials: ModelCre
     return {
       summary: result.summary,
       tokensBefore: result.tokensBefore,
-      estimatedTokensAfter: result.estimatedTokensAfter ?? measurement.estimatedTokens,
+      estimatedTokensAfter: measurement.estimatedTokens,
       durationMs: Date.now() - started,
       measurement
     }
@@ -590,8 +604,11 @@ export interface PiSessionRuntime {
   toolRuntimeRef: ToolRuntimeContextRef | null
   run(options: RuntimeRunOptions): Promise<void>
   getContextMeasurement(): ContextMeasurement
-  /** 手动压缩当前会话；活跃运行时优先走这条，状态与 session 文件天然一致。 */
-  compact(signal?: AbortSignal): Promise<SessionCompactionOutcome>
+  /**
+   * 手动压缩当前会话；活跃运行时优先走这条，状态与 session 文件天然一致。
+   * `override` 只在强压时给：临时替换压缩参数，压完还原。
+   */
+  compact(signal?: AbortSignal, override?: RuntimeCompactionSettings): Promise<SessionCompactionOutcome>
   dispose(): Promise<void>
 }
 
@@ -677,24 +694,49 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     toolRuntimeRef,
     async run(runOptions) {
       if (toolRuntimeRef) toolRuntimeRef.current = toolRuntimeContext(runOptions)
+      // 锚点要在本轮追加任何节点（思考级别变更、用户消息）之前取，回退时才正好落在上一轮末尾。
+      runOptions.onSessionAnchor?.({ sessionFile: sessionManager.getSessionFile() ?? null, leafId: sessionManager.getLeafId() })
       const nextThinkingLevel = resolveThinkingLevel(runOptions.thinkingLevel, runOptions.credentials)
       session.setThinkingLevel(nextThinkingLevel)
       await consumeSession(session, {
         ...runOptions,
         thinkingEnabled: Boolean(runOptions.credentials.supports_thinking && nextThinkingLevel !== 'off')
-      })
+      }, settingsManager)
     },
     getContextMeasurement() {
       return measureRuntimeContext(session, options.credentials)
     },
-    compact(signal) {
-      return runSessionCompaction(session, options.credentials, signal)
+    /**
+     * `override` 用于强压：临时把保留区收小再压，压完原样还原。
+     * 覆盖只写进进程内的 override 表（不落盘），但运行时跨轮复用同一个 settingsManager，
+     * 不还原会让这条会话之后每一轮都按强压参数跑。
+     */
+    async compact(signal, override) {
+      if (!override) return runSessionCompaction(session, options.credentials, signal)
+      const previous = settingsManager.getCompactionSettings()
+      applyPersistentOverrides(settingsManager, { compaction: override })
+      try {
+        return await runSessionCompaction(session, options.credentials, signal)
+      } finally {
+        applyPersistentOverrides(settingsManager, { compaction: previous })
+      }
     },
     async dispose() {
       if (!session.isIdle) await session.abort().catch(() => undefined)
       session.dispose()
     }
   }
+}
+
+/**
+ * 从 session 文件里切出「根 → leafId」这一条路径，存成同目录下的新文件，返回新文件路径。
+ * 原文件不动（新文件头里记着 parentSession）。路径上没有助手消息时 Pi 不落盘，返回 null，
+ * 调用方按「从空 session 开始」处理——那段历史本来也没有可带的对话。
+ */
+export function branchSessionFile(options: { sessionFile: string; sessionDir: string; cwd: string; leafId: string }): string | null {
+  const manager = SessionManager.open(options.sessionFile, options.sessionDir, options.cwd)
+  const next = manager.createBranchedSession(options.leafId)
+  return next && existsSync(next) ? next : null
 }
 
 export async function runPiSession(options: RuntimeRunOptions) {
@@ -840,19 +882,20 @@ export function classifyRunOutcome(last: unknown, limits: { contextWindow?: numb
   return { kind: 'completed', text, reason: '生成完成' }
 }
 
-function emitOutcome(outcome: RunOutcome, options: RuntimeRunOptions) {
+function emitOutcome(outcome: RunOutcome, options: RuntimeRunOptions, haltDetail = '') {
+  const withHalt = (reason: string) => haltDetail && outcome.kind !== 'completed' ? `${reason}｜${haltDetail}` : reason
   switch (outcome.kind) {
     case 'completed':
       options.onEvent({ type: 'completed', text: outcome.text, detail: outcome.reason, status: 'completed' })
       break
     case 'failed':
-      options.onEvent({ type: 'failed', text: outcome.text, detail: outcome.reason, status: 'failed' })
+      options.onEvent({ type: 'failed', text: outcome.text, detail: withHalt(outcome.reason), status: 'failed' })
       break
     case 'cancelled':
       options.onEvent({ type: 'cancelled', detail: outcome.reason })
       break
     case 'interrupted':
-      options.onEvent({ type: 'interrupted', text: outcome.text, detail: outcome.reason, status: 'interrupted' })
+      options.onEvent({ type: 'interrupted', text: outcome.text, detail: withHalt(outcome.reason), status: 'interrupted' })
       break
   }
 }
@@ -892,7 +935,7 @@ export function mapAssistantStreamEvent(
   return { events, thinkingActive: active }
 }
 
-async function consumeSession(session: AgentSession, options: RuntimeRunOptions) {
+async function consumeSession(session: AgentSession, options: RuntimeRunOptions, settingsManager?: SettingsManager) {
   let thinkingActive = Boolean(options.thinkingEnabled)
   if (thinkingActive) options.onEvent({ type: 'thinking_started' })
   // 取消可能在 session.prompt 尚未把 agent 跑起来（扩展事件、鉴权检查）时到达：
@@ -924,6 +967,26 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
   // Pi 在「没有模型」「保留区之外无可摘要消息」时会直接 return false，连 compaction_start 都不发。
   // 长任务现在全靠会话内压缩兜底，这条静默路径必须能被结局判定看见。
   let sawCompaction = false
+  // 本轮压缩的收敛状态。判定为不收敛时停掉自动压缩，避免一轮之内反复压到烧光额度。
+  let convergence: ConvergenceState = INITIAL_CONVERGENCE_STATE
+  let compactionHalted = false
+  // 本轮交给 Pi 的压缩参数：保留区按会话的中文占比折算成 Pi 的「字符/4」口径（见 compaction-units）。
+  // 每轮重算一次，结束时还原成这一份，而不是未折算的原值。
+  const roundCompaction = (() => {
+    const base = runtimeCompactionSettings(options)
+    if (base.keepRecentTokens === undefined) return base
+    const sample = `${JSON.stringify(session.messages)}${options.prompt}`
+    return { ...base, keepRecentTokens: scaleKeepRecentTokens(base.keepRecentTokens, cjkKeepRecentScale(sample)) }
+  })()
+  if (settingsManager && roundCompaction.keepRecentTokens !== undefined) applyPersistentOverrides(settingsManager, { compaction: roundCompaction })
+  // 停手后这一轮多半会撞上下文不足，provider 只会回一句裸错误。
+  // 把「为什么不再压了」接到结局文案上，否则用户只看到 Stream ended without finish_reason。
+  let compactionHaltDetail = ''
+  const compactionTriggerTokens = (() => {
+    const settings = runtimeCompactionSettings(options)
+    const window = credentialContextWindow(options.credentials)
+    return settings.reserveTokens === undefined ? 0 : window - settings.reserveTokens
+  })()
   const collectUsage = createModelUsageCollector({
     conversationId: options.conversationId, turnId: options.turnId, runId: options.runId,
     modelId: options.credentials.id, provider: options.credentials.provider, modelName: options.credentials.model_name,
@@ -946,12 +1009,24 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
       if (event.result) {
         const measurement = measureRuntimeContext(session, options.credentials)
         try {
-          options.onCompaction?.({ reason: event.reason, summary: event.result.summary, tokensBefore: event.result.tokensBefore, estimatedTokensAfter: event.result.estimatedTokensAfter ?? measurement.estimatedTokens, durationMs, measurement })
+          options.onCompaction?.({ reason: event.reason, summary: event.result.summary, tokensBefore: event.result.tokensBefore, estimatedTokensAfter: measurement.estimatedTokens, durationMs, measurement })
         } catch (error) {
           // 压缩已经在 Pi 内生效，桌面统计落库失败不能反过来中止 Agent 恢复。
           console.error('[runtime-compaction] 同步压缩记录失败:', error)
         }
         options.onEvent({ type: 'run_phase', phase: 'compacting', detail: event.willRetry ? '上下文压缩完成，正在恢复执行' : '长任务上下文压缩完成', status: 'completed' })
+        // 收敛判定：压完仍在触发点之上时 Pi 会立刻再压一次，连续压不下去就是结构性不收敛
+        // （系统提示词这类不可压内容本身就高过触发点），必须主动停手。
+        const verdict = trackCompactionConvergence(convergence, { tokensBefore: event.result.tokensBefore, tokensAfter: measurement.estimatedTokens }, compactionTriggerTokens)
+        convergence = verdict.state
+        if (verdict.stalled && !compactionHalted && settingsManager) {
+          compactionHalted = true
+          const ratio = measurement.contextWindow > 0 ? measurement.estimatedTokens / measurement.contextWindow : 0
+          console.warn('[compaction] 本轮压缩不收敛，已停用自动压缩', { runId: options.runId, conversationId: options.conversationId, reason: verdict.reason, total: convergence.total, tokensBefore: event.result.tokensBefore, tokensAfter: measurement.estimatedTokens, compactionTriggerTokens })
+          applyPersistentOverrides(settingsManager, { compaction: { enabled: false } })
+          compactionHaltDetail = convergenceStalledDetail(verdict.reason!, ratio, convergence.total)
+          options.onEvent({ type: 'run_phase', phase: 'compacting', status: 'failed', detail: compactionHaltDetail })
+        }
       } else {
         options.onEvent({ type: 'run_phase', phase: 'compacting', detail: event.errorMessage || (event.aborted ? '上下文压缩已取消' : '上下文压缩失败'), status: event.aborted ? 'cancelled' : 'failed' })
       }
@@ -1027,7 +1102,8 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
         if (options.signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
           options.onEvent({ type: 'cancelled', detail: '已取消' })
         } else {
-          options.onEvent({ type: 'failed', detail: error instanceof Error ? error.message : '运行失败', status: 'failed' })
+          const message = error instanceof Error ? error.message : '运行失败'
+          options.onEvent({ type: 'failed', detail: compactionHaltDetail ? `${message}｜${compactionHaltDetail}` : message, status: 'failed' })
         }
         return
       }
@@ -1055,14 +1131,16 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions)
       // 压缩本该介入却一次都没触发：Pi 那边是静默 return，不留任何事件，只能在这里补出可见信号。
       if (outcome.contextPressure && runtimeCompactionSettings(options).enabled && !sawCompaction) {
         console.warn('[compaction] 上下文已满但本轮自动压缩一次都没触发', { runId: options.runId, conversationId: options.conversationId, contextWindow: limits.contextWindow })
-        emitOutcome({ ...outcome, reason: `${outcome.reason}；本轮自动压缩未触发` }, options)
+        emitOutcome({ ...outcome, reason: `${outcome.reason}；本轮自动压缩未触发` }, options, compactionHaltDetail)
         return
       }
-      emitOutcome(outcome, options)
+      emitOutcome(outcome, options, compactionHaltDetail)
       return
     }
   } finally {
     options.signal.removeEventListener('abort', ensureAborted)
     unsubscribe()
+    // 停用是「本轮」的事：settingsManager 随运行时跨轮复用，不还原会让这条会话此后永不自动压缩。
+    if (compactionHalted && settingsManager) applyPersistentOverrides(settingsManager, { compaction: roundCompaction })
   }
 }

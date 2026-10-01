@@ -68,6 +68,15 @@ export interface ArtifactReference {
   [key: string]: unknown
 }
 
+/**
+ * 一轮开始时 Pi session 的位置：所在 session 文件与发出本轮提示词之前的叶子节点。
+ * 重跑这一轮时按它把 session 回退到本轮之前；leafId 为 null 表示本轮是这个 session 的第一轮。
+ */
+export interface TurnSessionAnchor {
+  sessionFile: string
+  leafId: string | null
+}
+
 export interface ConversationTurn {
   id: string
   conversationId: string

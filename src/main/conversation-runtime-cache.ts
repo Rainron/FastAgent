@@ -31,10 +31,27 @@ interface CacheEntry<T> {
 
 export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
   private readonly entries = new Map<string, CacheEntry<T>>()
+  /**
+   * 已失效但还被运行占用的条目：它们已经从 entries 里摘掉，仍要等 release 才能销毁。
+   * 不单独记着的话 release 按 conversationId 查已经查不到，那份运行时（含 MCP 连接与沙箱）
+   * 就永远泄漏了。同一会话的运行由 ConversationRunCoordinator 串行化，任一时刻最多一份租约，
+   * 所以这里按会话取一条即可，不会释放错对象。
+   */
+  private readonly detached = new Map<string, CacheEntry<T>[]>()
   private readonly operations = new ConversationRunCoordinator()
   private readonly capacity: number
   private readonly idleMs: number
   private readonly now: () => number
+
+  /** 从 entries 摘掉一条：没人占用就地销毁，还被占用就转入 detached 等 release。 */
+  private async retire(conversationId: string, entry: CacheEntry<T>): Promise<void> {
+    this.entries.delete(conversationId)
+    entry.invalidated = true
+    if (entry.leases === 0) { await entry.value.dispose(); return }
+    const list = this.detached.get(conversationId) ?? []
+    list.push(entry)
+    this.detached.set(conversationId, list)
+  }
 
   constructor(options: { capacity?: number; idleMs?: number; now?: () => number } = {}) {
     this.capacity = Math.max(1, options.capacity ?? 8)
@@ -55,11 +72,7 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
         existing.lastUsedAt = usedAt
         return { value: existing.value, cacheHit: true }
       }
-      if (existing) {
-        this.entries.delete(conversationId)
-        existing.invalidated = true
-        if (existing.leases === 0) await existing.value.dispose()
-      }
+      if (existing) await this.retire(conversationId, existing)
       const value = await create()
       this.entries.set(conversationId, { signature, value, lastUsedAt: usedAt, leases: 0, invalidated: false })
       await this.trimToCapacity(conversationId)
@@ -80,9 +93,7 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
     return this.operations.run(conversationId, async () => {
       const entry = this.entries.get(conversationId)
       if (!entry) return
-      this.entries.delete(conversationId)
-      entry.invalidated = true
-      if (entry.leases === 0) await entry.value.dispose()
+      await this.retire(conversationId, entry)
     })
   }
 
@@ -93,6 +104,18 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
   }
 
   async release(conversationId: string): Promise<void> {
+    // 运行期间条目可能已被失效摘走（压缩作废 session、容量淘汰），这时租约挂在 detached 上。
+    const detached = this.detached.get(conversationId)
+    if (detached?.length) {
+      const entry = detached[0]
+      entry.leases = Math.max(0, entry.leases - 1)
+      if (entry.leases === 0) {
+        detached.shift()
+        if (!detached.length) this.detached.delete(conversationId)
+        await entry.value.dispose()
+      }
+      return
+    }
     const entry = this.entries.get(conversationId)
     if (!entry) return
     entry.leases = Math.max(0, entry.leases - 1)
@@ -107,8 +130,9 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
   }
 
   async disposeAll(): Promise<void> {
-    const entries = [...this.entries.values()]
+    const entries = [...this.entries.values(), ...[...this.detached.values()].flat()]
     this.entries.clear()
+    this.detached.clear()
     await Promise.all(entries.map((entry) => entry.value.dispose()))
   }
 
@@ -117,9 +141,7 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
       .filter(([conversationId, entry]) => conversationId !== keepConversationId && now - entry.lastUsedAt > this.idleMs)
     for (const [conversationId, entry] of expired) {
       if (this.entries.get(conversationId) !== entry) continue
-      this.entries.delete(conversationId)
-      entry.invalidated = true
-      if (entry.leases === 0) await entry.value.dispose()
+      await this.retire(conversationId, entry)
     }
   }
 
@@ -131,9 +153,7 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
     while (this.entries.size > this.capacity && candidates.length) {
       const [conversationId, entry] = candidates.shift() as [string, CacheEntry<T>]
       if (this.entries.get(conversationId) !== entry) continue
-      this.entries.delete(conversationId)
-      entry.invalidated = true
-      if (entry.leases === 0) await entry.value.dispose()
+      await this.retire(conversationId, entry)
     }
   }
 }

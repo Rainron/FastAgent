@@ -95,7 +95,7 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'appearance' && settings && <AppearanceSettings settings={settings} theme={theme} onThemeChange={onThemeChange} onChange={onSettingsChange} />}
             {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
             {category === 'usage' && <><UsageSettings onNotice={onNotice} /><RunLimitSettings settings={settings} onSettingsChange={onSettingsChange} /></>}
-            {category === 'context' && settings && <ContextSettings settings={settings} onChange={onSettingsChange} />}
+            {category === 'context' && settings && <ContextSettings settings={settings} model={selectableModels.find((item) => item.id === selectedModelId) ?? null} onChange={onSettingsChange} />}
             {category === 'permissions' && settings && <PermissionSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'memory' && settings && <MemorySettings settings={settings} models={selectableModels} onChange={onSettingsChange} onNotice={onNotice} />}
             {category === 'knowledge' && <KnowledgeSettings onNotice={onNotice} />}

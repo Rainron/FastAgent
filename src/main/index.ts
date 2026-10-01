@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell } from 'electron'
+import { EnvHttpProxyAgent, ProxyAgent, setGlobalDispatcher } from 'undici'
+import { applyOutboundProxy } from './network-proxy'
 import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -14,7 +16,7 @@ import { WORKSPACE_NAMESPACE } from './local-store/shared-workspace'
 import { migrateConversationSessions } from './session-layout-migration'
 import { conversationSessionDir as conversationSessionPath, sessionUserSegment } from './session-paths'
 import type { PiSessionRuntime, SessionCompactionOutcome } from './pi-runtime'
-import { estimateTokens, heuristicSummary, piCompactionSettings, projectCompactedState, resolvePolicy, splitTurns, turnsAfterCoveredTurn } from './context-manager'
+import { estimateTokens, heuristicSummary, piCompactionSettings, piForcedCompactionSettings, projectCompactedState, resolvePolicy, splitTurns, turnsAfterCoveredTurn } from './context-manager'
 import { ContextMeter, type ContextMeasurement } from './context-meter'
 import { createTray, destroyTray, handleWindowClose, isQuitting, setQuitting, setTrayClosePolicy, showWindow } from './tray'
 import { startDoubleCtrlHook, type DoubleCtrlHook } from './double-key'
@@ -52,10 +54,11 @@ import { isExternalHttpUrl } from '../renderer/ai-response/sanitize-url'
 import type { AppRuntimeInfo, AppSettings, ApprovalDecision, AuthSnapshot, ContextStrategy, KbSource, LocalModelTestResult, ModelCredentials, PermissionPreset, StartupPhase, StartupWarning } from '../shared/types'
 import type { PermissionRuleSet } from '../shared/permission-rules'
 import { findProfile, mergeProfiles } from '../shared/permission-profiles'
-import { DEFAULT_CONTEXT_WINDOW, inferContextWindow, resolveContextWindow } from '../shared/model-context-windows'
+import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../shared/model-context-windows'
 import { applyOverride, overrideKey } from '../shared/model-parameters'
 import { defaultSandboxSettings, normalizeSandboxSettings } from '../shared/sandbox'
 import { SandboxManager } from './agent/sandbox/sandbox-manager'
+import { SUBAGENT_LIMITS } from './agent/subagent/subagent-types'
 import { resolveSandboxPaths, WindowsSandboxProvider } from './agent/sandbox/providers/windows-native/windows-sandbox-provider'
 import { installBundledRuntime, prependPathEntries, resolveBundledRuntimeSource, resolveRuntimeInstallDir } from './runtime/bundled-tools'
 import type { SandboxSession } from './agent/sandbox/sandbox-types'
@@ -256,13 +259,14 @@ const defaultSettings: AppSettings = {
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,
-  targetRatio: null,
   keepRecentTurns: null,
+  forceCompaction: false,
   shellPreference: 'bash',
   bashPath: '',
   externalEditorPath: '',
   agentAbilityPolicy: { mode: 'all_enabled', agentAbilityIds: [] },
   subAgentEnabled: true,
+  subAgentMaxToolCalls: SUBAGENT_LIMITS.defaultMaxToolCalls,
   subAgents: [],
   memory: { enabled: true, autoExtract: true, maxRecall: DEFAULT_RECALL, extractModelId: null },
   sandbox: defaultSandboxSettings,
@@ -741,10 +745,27 @@ function rememberRuntimeMeasurement(namespace: string, conversationId: string, m
   if (measurement) latestRuntimeMeasurements.set(conversationRuntimeKey(namespace, conversationId), measurement)
 }
 
+/**
+ * 某个模型在这条会话里该用的上下文窗口。
+ *
+ * 窗口缓存是登录同步时填的，冷启动后第一次换模型、或本地模型还没跑过时都是空的；
+ * 只看缓存就会静默退回上一个模型留在库里的窗口，用户换了模型却看不出余量变化。
+ * 缓存 miss 时按凭证现算一次（`resolveModelCredentials` 顺带把缓存补上）。
+ */
 function contextWindowFor(namespace: string, conversationId: string, modelIdOverride?: number | null) {
   // 只要末轮绑定的模型，不必把整段历史读出来。
   const modelId = modelIdOverride ?? store.latestTurnRuntime(namespace, conversationId)?.runtimeConfig.modelId
-  return (modelId !== null && modelId !== undefined ? modelContextWindows.get(modelId) : undefined) ?? store.getContextState(namespace, conversationId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
+  if (modelId !== null && modelId !== undefined) {
+    const cached = modelContextWindows.get(modelId)
+    if (cached) return cached
+    try {
+      const credentials = resolveModelCredentials(modelId)
+      return resolveContextWindow(credentials.context_window, credentials.model_name)
+    } catch {
+      // 凭证缺失（未登录同步、模型已删）时才让位给库里的旧值。
+    }
+  }
+  return store.getContextState(namespace, conversationId)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW
 }
 
 /**
@@ -756,9 +777,10 @@ function refreshContext(namespace: string, conversationId: string, contextWindow
   const credentials = modelId === null ? null : (() => { try { return resolveModelCredentials(modelId) } catch { return null } })()
   const identity = credentials ? modelRuntimeIdentity(credentials) : null
   const modelRuntime = identity ? store.getModelRuntime(namespace, conversationId, identity.provider, identity.modelId) : null
-  // 窗口按「显式配置 > 按模型名推断」定；两者都没有才让位给运行时快照里的旧值，
-  // 否则每个模型都会显示同一个默认 128k，用户看不出换模型后余量的差别。
-  const configuredWindow = credentials ? credentials.context_window || inferContextWindow(credentials.model_name) : null
+  // 窗口按「显式配置 > 按模型名推断 > 默认值」定，只要解析得到凭证就一定给出当前模型的窗口。
+  // 推断落空时沿用运行时快照里的旧值，会把上一个模型的窗口留给新模型：
+  // 换到一个名字认不出来的模型后，界面上的百分比仍按旧窗口算，压缩阈值也跟着错。
+  const configuredWindow = credentials ? resolveContextWindow(credentials.context_window, credentials.model_name) : null
   const state = modelRuntime ? {
     conversationId, contextWindow: modelRuntime.context_window, estimatedTokens: modelRuntime.estimated_tokens,
     messageTokens: modelRuntime.message_tokens, toolTokens: modelRuntime.tool_tokens, systemTokens: modelRuntime.system_tokens,
@@ -866,6 +888,8 @@ function recordSessionCompaction(namespace: string, conversationId: string, inpu
     triggerReason: input.triggerReason,
     beforeTokens: outcome.tokensBefore,
     afterTokens: outcome.estimatedTokensAfter,
+    // 判定用的就是这个窗口（Pi 的 model.contextWindow），百分比也只能按它算。
+    contextWindow: outcome.measurement.contextWindow,
     coveredTurnStart: null,
     coveredTurnEnd: null,
     summaryId: summary.id,
@@ -886,7 +910,7 @@ function isNothingToCompact(error: unknown) {
  * 手动压缩当前会话的 Pi session。
  * 活跃运行时优先：另开一份去压会让缓存里的 agent.state 与刚写入的 compaction entry 分叉。
  */
-async function compactConversationSession(namespace: string, conversationId: string, sessionFile: string, credentials: ModelCredentials) {
+async function compactConversationSession(namespace: string, conversationId: string, sessionFile: string, credentials: ModelCredentials, reason = 'manual', force = false) {
   const started = Date.now()
   const compactionKey = `${namespace}:${conversationId}`
   const runtimeKey = conversationRuntimeKey(namespace, conversationId)
@@ -894,15 +918,21 @@ async function compactConversationSession(namespace: string, conversationId: str
   let timedOut = false
   activeCompactions.set(compactionKey, controller)
   const policy = resolvePolicy(settings, store.getContextPolicy(namespace, conversationId), conversationId)
-  const contextWindow = credentials.context_window ?? contextWindowFor(namespace, conversationId, credentials.id)
+  // `??` 会把库里存的 0 当成有效窗口，piCompactionSettings 拿到 0 就整段退回 Pi 默认预留量，
+  // 用户设的触发占比对这条路径完全失效。0 与未配置是同一回事，必须走同一套解析。
+  const contextWindow = credentials.context_window || contextWindowFor(namespace, conversationId, credentials.id)
   const sendPhase = (progress: number, detail: string) => mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress, modelId: credentials.id, detail, timestamp: Date.now(), elapsedMs: Date.now() - started })
   sendPhase(20, '正在压缩会话上下文')
   const timer = setTimeout(() => { timedOut = true; controller.abort() }, COMPACTION_TIMEOUT_MS)
   try {
+    // 强压只收缩保留区，触发点不动：改的是「压多狠」，不是「什么时候压」。
+    const compaction = force
+      ? piForcedCompactionSettings(policy, contextWindow, credentials.max_tokens)
+      : piCompactionSettings(policy, contextWindow, credentials.max_tokens)
     const live = conversationRuntimeCache.peek(runtimeKey)
     let outcome: SessionCompactionOutcome
     if (live) {
-      outcome = await live.pi.compact(controller.signal)
+      outcome = await live.pi.compact(controller.signal, force ? compaction : undefined)
     } else {
       const { compactSessionFile } = await loadPiRuntime()
       outcome = await compactSessionFile({
@@ -911,14 +941,14 @@ async function compactConversationSession(namespace: string, conversationId: str
         sessionDir: conversationSessionDir(namespace, conversationId),
         agentDir: appPaths.agentDir,
         cwd: store.getConversationRoot(namespace, conversationId) ?? appPaths.quickWorkspaceDir,
-        compaction: piCompactionSettings(policy, contextWindow),
+        compaction,
         signal: controller.signal,
         createModelRuntime: createModelRuntimeForCredentials
       })
       // 旁路压缩改的是 session 文件，缓存里若之后又建起运行时必须重新读盘。
       await conversationRuntimeCache.invalidate(runtimeKey)
     }
-    const recorded = recordSessionCompaction(namespace, conversationId, { triggerReason: 'manual', strategy: policy.strategy, outcome, modelId: credentials.id })
+    const recorded = recordSessionCompaction(namespace, conversationId, { triggerReason: reason, strategy: policy.strategy, outcome, modelId: credentials.id })
     mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'compactionCompleted', phase: 'compacting', status: 'completed', progress: 100, modelId: credentials.id, context: recorded.context, compaction: recorded.compaction, detail: '上下文压缩完成', timestamp: Date.now(), elapsedMs: Date.now() - started })
     return recorded
   } catch (error) {
@@ -939,9 +969,38 @@ async function compactConversationSession(namespace: string, conversationId: str
 async function compactConversation(namespace: string, conversationId: string, reason = 'manual', credentials?: ModelCredentials | null) {
   const sessionFile = store.getConversationSessionFile(namespace, conversationId)
   if (reason !== 'model-switch' && credentials && sessionFile && existsSync(sessionFile)) {
-    return compactConversationSession(namespace, conversationId, sessionFile, credentials)
+    return compactConversationSession(namespace, conversationId, sessionFile, credentials, reason)
   }
   return compactConversationTurns(namespace, conversationId, reason, credentials)
+}
+
+/**
+ * 强压：常规压缩已经压不动、且这条会话开了 forceCompaction 时才走这里。
+ *
+ * 两级降级，都复用现成路径，不引入第二套压缩实现：
+ * 1. 收缩保留区重压一次 Pi session —— Pi 的切点按 keepRecentTokens 往回找，
+ *    保留区比可压区间还大时切点落在开头，可摘要消息为空，compact() 静默返回。收小就一定切得动。
+ * 2. 仍压不动（整段历史就是一个巨型回合、或上一条 entry 已经是压缩点）时，改按应用回合切摘要
+ *    并作废 session —— 这条路不依赖 Pi 的消息树结构，只要会话回合数够就一定有可压缩内容。
+ *
+ * 两级都失败只可能是「整条会话只有两三个回合却已经撑满窗口」，那时压缩本来也救不了，
+ * 返回 null 让调用方去提示用户换模型或开新会话。
+ */
+async function forceCompactConversation(namespace: string, conversationId: string, credentials: ModelCredentials) {
+  const sessionFile = store.getConversationSessionFile(namespace, conversationId)
+  if (sessionFile && existsSync(sessionFile)) {
+    try {
+      const shrunk = await compactConversationSession(namespace, conversationId, sessionFile, credentials, 'threshold-force', true)
+      if (shrunk) return shrunk
+    } catch (error) {
+      // 用户按了取消就到此为止：接着跑第二级等于无视这次取消。
+      if (error instanceof CompactionError && error.code === 'COMPACTION_CANCELLED') throw error
+      // 其余失败不该吃掉第二级：回合摘要走的是完全不同的路径，很可能仍然成功。
+      console.warn('[compaction] 收缩保留区强压失败，转按回合摘要:', error)
+    }
+    console.info('[compaction] 收缩保留区仍压不动，降级到回合摘要', { conversationId })
+  }
+  return compactConversationTurns(namespace, conversationId, 'threshold-force-turns', credentials)
 }
 
 /** 按应用回合切摘要并作废 session：只服务跨 provider 换模型与无 session 的会话。 */
@@ -951,22 +1010,25 @@ async function compactConversationTurns(namespace: string, conversationId: strin
   const controller = new AbortController()
   let timedOut = false
   activeCompactions.set(compactionKey, controller)
-  if (reason === 'manual') mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 10, modelId: credentials?.id ?? null, detail: '正在读取会话历史', timestamp: started })
+  // 换模型时 local-run 自己在发阶段事件，这里再发一遍会让界面出现两条压缩进度；
+  // 其余原因（手动、阈值兜底）都必须发，否则自动压缩对用户是完全不可见的。
+  const announce = reason !== 'model-switch'
+  if (announce) mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 10, modelId: credentials?.id ?? null, detail: '正在读取会话历史', timestamp: started })
   const policy = resolvePolicy(settings, store.getContextPolicy(namespace, conversationId), conversationId)
-  const before = refreshContext(namespace, conversationId, credentials?.context_window ?? contextWindowFor(namespace, conversationId, credentials?.id), credentials?.id)
+  const before = refreshContext(namespace, conversationId, credentials?.context_window || contextWindowFor(namespace, conversationId, credentials?.id), credentials?.id)
   const { compressible } = splitTurns(store.listTurns(namespace, conversationId), policy.keepRecentTurns)
   if (!compressible.length) {
     activeCompactions.delete(compactionKey)
     return null
   }
-  if (reason === 'manual') mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 30, modelId: credentials?.id ?? null, detail: '正在准备摘要内容', timestamp: Date.now(), elapsedMs: Date.now() - started })
+  if (announce) mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 30, modelId: credentials?.id ?? null, detail: '正在准备摘要内容', timestamp: Date.now(), elapsedMs: Date.now() - started })
   const previousSummary = latestSummaryText(namespace, conversationId)
   let summaryText = heuristicSummary(compressible, previousSummary)
   if (credentials) {
     // 摘要质量优先走模型，但压缩绝不能因为一次网络失败而阻断发送。
     try {
       const { summarizeTurns } = await loadPiRuntime()
-      if (reason === 'manual') mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 45, modelId: credentials?.id ?? null, detail: '正在生成摘要', timestamp: Date.now(), elapsedMs: Date.now() - started })
+      if (announce) mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'run_phase', phase: 'compacting', status: 'running', progress: 45, modelId: credentials?.id ?? null, detail: '正在生成摘要', timestamp: Date.now(), elapsedMs: Date.now() - started })
       const timer = setTimeout(() => { timedOut = true; controller.abort() }, COMPACTION_TIMEOUT_MS)
       try {
         summaryText = await summarizeTurns({ credentials, turns: compressible, previousSummary, agentDir: appPaths.agentDir, signal: controller.signal, createModelRuntime: createModelRuntimeForCredentials })
@@ -986,19 +1048,19 @@ async function compactConversationTurns(namespace: string, conversationId: strin
   activeCompactions.delete(compactionKey)
   if (controller.signal.aborted) throw new CompactionError(timedOut ? 'COMPACTION_TIMEOUT' : 'COMPACTION_CANCELLED', timedOut ? '压缩模型响应超时' : '压缩已取消')
   const summary = store.createContextSummary(namespace, { conversationId, version: (store.listContextSummaries(namespace, conversationId).at(-1)?.version ?? 0) + 1, summaryText, coveredTurnStart: compressible[0]?.id ?? null, coveredTurnEnd: compressible.at(-1)?.id ?? null, inputTokens: before.estimatedTokens, outputTokens: estimateTokens(summaryText), source: 'turns' })
-  const projected = projectCompactedState(before, policy.strategy, summaryText)
+  const projected = projectCompactedState(before, policy, summaryText)
   const after = store.upsertContextState(namespace, { ...projected, compactionCount: before.compactionCount + 1, latestSummaryId: summary.id, updatedAt: new Date().toISOString() })
   if (credentials) {
     const identity = modelRuntimeIdentity(credentials)
     store.upsertModelRuntime(namespace, { conversationId, ...identity, context: after })
   }
-  const compaction = store.recordCompaction(namespace, { conversationId, strategy: policy.strategy, triggerReason: reason, beforeTokens: before.estimatedTokens, afterTokens: after.estimatedTokens, coveredTurnStart: summary.coveredTurnStart, coveredTurnEnd: summary.coveredTurnEnd, summaryId: summary.id, durationMs: Date.now() - started })
+  const compaction = store.recordCompaction(namespace, { conversationId, strategy: policy.strategy, triggerReason: reason, beforeTokens: before.estimatedTokens, afterTokens: after.estimatedTokens, contextWindow: before.contextWindow, coveredTurnStart: summary.coveredTurnStart, coveredTurnEnd: summary.coveredTurnEnd, summaryId: summary.id, durationMs: Date.now() - started })
   // 摘要改变了请求上下文，作废该会话的 session，下一轮以摘要重开。
   store.setConversationSessionFile(namespace, conversationId, '')
   // session 已作废，上一段 Pi 会话的测量值不再代表下一轮的上下文。
   latestRuntimeMeasurements.delete(conversationRuntimeKey(namespace, conversationId))
   await conversationRuntimeCache.invalidate(conversationRuntimeKey(namespace, conversationId))
-  if (reason === 'manual') mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'compactionCompleted', phase: 'compacting', status: 'completed', progress: 100, modelId: credentials?.id ?? null, context: after, compaction, detail: '上下文压缩完成', timestamp: Date.now(), elapsedMs: Date.now() - started })
+  if (announce) mainWindow?.webContents.send('chat:event', { runId: `compaction-${conversationId}`, conversationId, type: 'compactionCompleted', phase: 'compacting', status: 'completed', progress: 100, modelId: credentials?.id ?? null, context: after, compaction, detail: '上下文压缩完成', timestamp: Date.now(), elapsedMs: Date.now() - started })
   return { context: after, summary, compaction }
 }
 
@@ -1369,6 +1431,7 @@ const mainContext: MainContext = {
   broadcastModelsChanged,
   cacheModelCredentials,
   compactConversation,
+  forceCompactConversation,
   confirmInterruptRuns,
   contextWindowFor,
   invalidateModelCredentialCache,
@@ -1500,6 +1563,15 @@ app.whenReady().then(async () => {
   // 尽早开窗：下面几步是同步的，会把主进程阻塞住，而启动页在自己的渲染进程里照常动。
   // 此刻还读不到设置，所以先建不显示，等主题和「启动时是否显示窗口」定下来再决定露不露。
   createSplashWindow()
+  // 出网代理要赶在第一次请求之前定下来：模型请求、OAuth 令牌交换都在主进程用 fetch 发，
+  // 而 Node 侧的 fetch 默认不走系统代理。目标地址只用来让系统 PAC 规则给出结论，全局只取这一次。
+  await applyOutboundProxy({
+    env: process.env,
+    resolveSystemProxy: () => session.defaultSession.resolveProxy('https://api.openai.com'),
+    applyEnvProxy: () => setGlobalDispatcher(new EnvHttpProxyAgent()),
+    applyProxy: (url) => setGlobalDispatcher(new ProxyAgent(url)),
+    log: (message) => breadcrumb('network', message)
+  })
   pushStartupPhase('config')
   scheduleVerbosityRefresh()
   // 本地数据初始化整体兜底：任一步抛出都不能吞掉窗口创建，
@@ -1511,10 +1583,15 @@ app.whenReady().then(async () => {
     store = new LocalStore(appPaths.databasePath)
     modelConnectionService = new ModelConnectionService(store.modelConnections(), {
       openExternal: (url) => isExternalHttpUrl(url) ? shell.openExternal(url) : undefined,
-      onChanged: broadcastModelsChanged
+      onChanged: broadcastModelsChanged,
+      onLoginFailed: ({ providerId, message, status }) => logIntegrationError({ service: 'model', endpoint: `oauth/${providerId}`, message, ...(status === undefined ? {} : { status }) })
     })
     skillRegistry = new LocalSkillRegistry(appPaths.skillsDir, store)
     pluginInstaller = new PluginInstaller(catalogProvider, skillRegistry, store)
+    // 存量模型缺 context_window 时按 pi 目录补一次：窗口是自动压缩阈值的分母，
+    // 缺了就按模型名推断，偏小十几倍的分母会让压缩在真实用量百分之几时就触发。
+    // 只在后台跑，读目录失败或表里没有可补的都不影响启动。
+    void modelConnectionService.list().then(broadcastModelsChanged).catch((error) => logStartup('模型窗口补齐失败', error))
   } catch (error) {
     logStartup('本地数据初始化失败', error)
   }

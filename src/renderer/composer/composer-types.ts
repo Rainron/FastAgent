@@ -1,4 +1,4 @@
-import type { Attachment, ConversationMode, GitOperationResult, GitWorkspaceState, ModelOption, PermissionPreset, ShortcutSettings, ThinkingLevel } from '../../shared/types'
+import type { Attachment, ContextPolicy, ConversationMode, GitOperationResult, GitWorkspaceState, ModelOption, PermissionPreset, ShortcutSettings, ThinkingLevel } from '../../shared/types'
 import type { PermissionProfile } from '../../shared/permission-profiles'
 import type { CompactionState } from '../conversation/compaction-state'
 import type { ContextHealthData } from '../conversation/ContextHealth'
@@ -52,9 +52,13 @@ export interface ComposerRunProps {
 
 export interface ComposerContextProps {
   contextHealth: ContextHealthData
+  /** 这条会话实际生效的压缩策略；上下文环的刻度与配色都由它决定。 */
+  contextPolicy: Pick<ContextPolicy, 'strategy' | 'autoSummary' | 'triggerRatio'> | null
   compaction: CompactionState | null
   onCompact: () => void
   onCancelCompaction?: () => void
+  /** 打开会话详情的压缩历史。 */
+  onOpenCompactionHistory?: () => void
 }
 
 export interface ComposerCommandProps {

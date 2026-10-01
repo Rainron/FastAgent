@@ -14,16 +14,36 @@ export function ensureFileChangeBeforeText(db: Database.Database) {
 }
 
 /**
+ * 重跑回退 session 用的本轮锚点。旧库补空列，历史回合没有锚点，重跑时走摘要兜底。
+ * 必须排在 ensureTurnStatusInterrupted 之后：那次整表重建按固定列名搬数据，会把这一列丢掉。
+ */
+export function ensureTurnSessionAnchorColumn(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(conversation_turns)').all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === 'session_anchor')) return
+  db.exec('ALTER TABLE conversation_turns ADD COLUMN session_anchor TEXT')
+}
+
+/** 会话级「压不动就强压」；旧库补 0，与新建会话的默认（关闭）一致。 */
+export function ensureContextPolicyForceCompaction(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(conversation_context_policy)').all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === 'force_compaction')) return
+  db.exec('ALTER TABLE conversation_context_policy ADD COLUMN force_compaction INTEGER NOT NULL DEFAULT 0')
+}
+
+/**
+ * 压缩发生时的上下文窗口。旧记录没有这一列，补 0 表示未知——
+ * 界面遇到 0 只报 token 数，不拿今天的窗口去重算当时的占比。
+ */
+export function ensureCompactionContextWindow(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(conversation_compactions)').all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === 'context_window')) return
+  db.exec('ALTER TABLE conversation_compactions ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0')
+}
+
+/**
  * 摘要来源列。旧库里的摘要都是按回合切出来的，默认 'turns' 与既有语义一致；
  * Pi 会话内压出来的摘要写 'session'，不能当作重开 session 的提示词种子。
  */
-/** 会话级「压缩后目标占比」；旧库为空表示跟随策略默认值。 */
-export function ensureContextPolicyTargetRatio(db: Database.Database) {
-  const columns = db.prepare('PRAGMA table_info(conversation_context_policy)').all() as Array<{ name: string }>
-  if (columns.some((column) => column.name === 'target_ratio')) return
-  db.exec('ALTER TABLE conversation_context_policy ADD COLUMN target_ratio REAL')
-}
-
 export function ensureSummarySourceColumn(db: Database.Database) {
   const columns = db.prepare('PRAGMA table_info(conversation_summaries)').all() as Array<{ name: string }>
   if (columns.some((column) => column.name === 'source')) return
@@ -333,9 +353,32 @@ export function backfillArtifactsFromTurnEvents(db: Database.Database) {
 }
 
 /**
+ * 会话级模型绑定回填：model_id 列晚于会话本身出现，旧会话的绑定是空的，
+ * 刷新后底栏就回落成「模型服务里的默认模型」，而该会话的回合其实都带着自己跑过的模型。
+ * 只在绑定为空时按最近一轮的 runtimeConfig.modelId 补上，不覆盖用户显式选过的绑定。
+ * 单条 UPDATE 带子查询，靠 user_version 门控只跑一次。
+ */
+export function backfillConversationModelId(db: Database.Database) {
+  db.prepare(`
+    UPDATE conversations SET model_id = (
+      SELECT json_extract(t.runtime_config, '$.modelId') FROM conversation_turns t
+      WHERE t.namespace = conversations.namespace AND t.conversation_id = conversations.conversation_id
+        AND json_extract(t.runtime_config, '$.modelId') IS NOT NULL
+      ORDER BY t.created_at DESC, t.turn_id ASC
+      LIMIT 1
+    )
+    WHERE model_id IS NULL AND EXISTS (
+      SELECT 1 FROM conversation_turns t
+      WHERE t.namespace = conversations.namespace AND t.conversation_id = conversations.conversation_id
+        AND json_extract(t.runtime_config, '$.modelId') IS NOT NULL
+    )
+  `).run()
+}
+
+/**
  * 当前 schema 版本。迁移全部是幂等的，但 migrateLegacyMessages、
  * migrateModelSessionToConversation 与 backfillArtifactsFromTurnEvents 每次都要全表扫，
  * 库大了就是白付的启动开销。跑完记在 user_version 上，之后启动直接跳过；
  * 旧库 user_version 为 0，仍会补跑一次。
  */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6

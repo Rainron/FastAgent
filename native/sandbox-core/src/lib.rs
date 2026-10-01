@@ -38,7 +38,9 @@ impl std::error::Error for SandboxCoreError {}
 pub type Result<T> = std::result::Result<T, SandboxCoreError>;
 
 /// setup.exe 与 runner 共同认可的版本；低于应用要求时 Host 判为 outdated。
-pub const SANDBOX_VERSION: &str = "0.1.0";
+/// 取自 Cargo 包版本，避免手写常量和 Cargo.toml 各说各话——版本对不上时
+/// Host 会一直判 outdated 或者反过来放行旧组件，两种都不会报错，只会诡异地不工作。
+pub const SANDBOX_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Windows 本地用户名上限 20 字符，超出时 NetUserAdd 直接返回 2202（NERR_BadUsername）。
 pub const OFFLINE_ACCOUNT: &str = "FastAgentSandboxOff";

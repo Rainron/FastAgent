@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import type { AppSettings } from '../../shared/types'
 
-const DEFAULT_AGENT = { id: '', name: '', description: '', systemPrompt: '', thinkingLevel: 'low' as const, maxTurns: 8 }
+// 不再写 maxTurns：轮次从来没有传给子运行，那个字段填多少都不生效。
+// 真正的边界由主进程的 normalizeCustomSubAgents 按 maxToolCalls 补默认值。
+const DEFAULT_AGENT = { id: '', name: '', description: '', systemPrompt: '', thinkingLevel: 'low' as const }
 
 /** 总开关在 PermissionSettings 里，这里只管自定义角色本身。 */
 export function SubAgentSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {

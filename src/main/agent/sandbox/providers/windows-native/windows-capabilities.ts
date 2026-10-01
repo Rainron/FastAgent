@@ -21,7 +21,7 @@ export interface CapabilityInput {
 }
 
 /** 应用要求的最低 setup / runner 版本；原生程序升级时同步抬高。 */
-export const REQUIRED_SANDBOX_VERSION = '0.1.0'
+export const REQUIRED_SANDBOX_VERSION = '0.2.0'
 
 export function evaluateCapabilities(input: CapabilityInput): SandboxCapabilities {
   const base = {

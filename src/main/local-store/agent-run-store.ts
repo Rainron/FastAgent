@@ -142,6 +142,15 @@ export class AgentRunStore {
     return reconcile()
   }
 
+  /** 清空一个会话的运行台账与委派记录；返回删掉的运行条数。 */
+  deleteConversationRuns(namespace: string, conversationId: string): number {
+    const purge = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM agent_tasks WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+      return this.db.prepare('DELETE FROM agent_runs WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId).changes
+    })
+    return purge()
+  }
+
   getAgentRun(namespace: string, runId: string): AgentRunRecord | null {
     const row = this.db.prepare(`
       SELECT run_id, conversation_id, turn_id, mode, status, started_at, finished_at, error, error_kind, retry_count

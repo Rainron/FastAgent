@@ -5,7 +5,7 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
 import type { DiscoveredConnectionModel, ModelConnectionDraft, ModelConnectionInput, ModelConnectionsApi, ModelLoginState } from '../shared/types'
 import { MODEL_PROVIDERS, modelProvider } from '../shared/model-providers'
 import type { ModelConnectionStore } from './local-store/model-connections'
-import { modelLoginError } from './model-login-error'
+import { modelLoginError, modelLoginErrorDetail } from './model-login-error'
 
 type LoginSession = { providerId: string; state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; openedUrl?: string; answer?: (value: string) => void; reject?: (error: Error) => void }
 
@@ -13,27 +13,32 @@ type LoginSession = { providerId: string; state: ModelLoginState; abort: AbortCo
 const LOGIN_DEFAULT_TIMEOUT_MS = 10 * 60_000
 const LOGIN_VENDOR_MAX_TIMEOUT_MS = 15 * 60_000
 const LOGIN_VENDOR_GRACE_MS = 30_000
-type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void }
+type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void; /** 登录失败的上游原文出口：界面只拿分类文案，排查要靠日志 */ onLoginFailed?: (input: { providerId: string; message: string; status?: number }) => void }
 type RuntimeModelCapabilities = Model<Api> & { thinkingDefault?: string; thinkingProfiles?: Record<string, unknown> | null }
+/** pi 静态目录里一个模型的规格，只取自动压缩与输出预算要用的两项。 */
+type ModelSpec = { contextWindow?: number; maxTokens?: number }
 
 export class ModelConnectionService implements ModelConnectionsApi {
   private readonly sessions = new Map<string, LoginSession>()
   private readonly runtimes = new Map<string, Promise<ModelRuntime>>()
   private catalogRuntime?: Promise<ModelRuntime>
+  private catalogSpecIndex?: Promise<{ byId: Map<string, ModelSpec>; bySuffix: Map<string, ModelSpec> }>
   private readonly fetch: typeof fetch
   private readonly buildRuntime: (credentials: CredentialStore) => Promise<ModelRuntime>
   private readonly openExternal: (url: string) => unknown
   private readonly onChanged: () => void
+  private readonly onLoginFailed: (input: { providerId: string; message: string; status?: number }) => void
 
   constructor(private readonly store: ModelConnectionStore, dependencies: Dependencies = {}) {
     this.fetch = dependencies.fetch ?? globalThis.fetch
     this.openExternal = dependencies.openExternal ?? (() => {})
     this.onChanged = dependencies.onChanged ?? (() => {})
+    this.onLoginFailed = dependencies.onLoginFailed ?? (() => {})
     this.buildRuntime = dependencies.createRuntime ?? ((credentials) => ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false }))
   }
 
   async providers() { return structuredClone(MODEL_PROVIDERS) }
-  async list() { return this.healVisionFlags(this.store.list()) }
+  async list() { return this.healModelMetadata(this.store.list()) }
   async save(input: ModelConnectionInput) { const result = this.store.save({ ...input, models: await this.enrichModels(input, input.models) }); this.runtimes.delete(result.id); this.onChanged(); return result }
   async remove(id: string) {
     for (const session of this.sessions.values()) if (session.state.connectionId === id) await this.cancelLogin(session.state.sessionId)
@@ -106,33 +111,102 @@ export class ModelConnectionService implements ModelConnectionsApi {
   }
 
   /**
-   * 这次改动之前所有连接内模型都被硬编码成 model_kind='chat'，图片会被运行时换成占位文本。
-   * 读取连接列表时按 pi 静态目录补齐一次，用户不必重新「获取模型」再保存。
-   * 只升不降：目录不认识的模型保留用户手动勾选的结果。
+   * 按模型标识跨全部厂商目录建索引，只取窗口与单次输出上限。
+   *
+   * 自建网关（providerId='custom'）不对应任何 pi 目录厂商，走不到 catalogModels，
+   * 网关的 /v1/models 又基本不返回 context_window——窗口于是一路掉到按模型名推断，
+   * 像 deepseek→64K、glm→128K 这种规则对 100 万窗口的网关模型偏小十几倍，
+   * 自动压缩会在真实用量百分之几的时候就触发。
+   *
+   * 同名模型在不同厂商目录里窗口不一致时取最大值：估大了撞上下文溢出有 Pi 的溢出压缩兜底，
+   * 估小了则是每轮都白压一次，后者更难被发现。任何显式配置仍然优先于这里的值。
    */
-  private async healVisionFlags<T extends Awaited<ReturnType<ModelConnectionStore['list']>>>(connections: T): Promise<T> {
+  private async catalogSpecs(): Promise<{ byId: Map<string, ModelSpec>; bySuffix: Map<string, ModelSpec> }> {
+    this.catalogSpecIndex ??= (async () => {
+      const byId = new Map<string, ModelSpec>()
+      const bySuffix = new Map<string, ModelSpec>()
+      const merge = (target: Map<string, ModelSpec>, key: string, model: Model<Api>) => {
+        const previous = target.get(key)
+        target.set(key, {
+          contextWindow: Math.max(previous?.contextWindow ?? 0, model.contextWindow > 0 ? model.contextWindow : 0) || undefined,
+          maxTokens: Math.max(previous?.maxTokens ?? 0, model.maxTokens > 0 ? model.maxTokens : 0) || undefined
+        })
+      }
+      try {
+        this.catalogRuntime ??= this.buildRuntime(new InMemoryCredentialStore())
+        const runtime = await this.catalogRuntime
+        for (const model of runtime.getModels()) {
+          const id = model.id.toLowerCase()
+          merge(byId, id, model)
+          // 网关常给模型加厂商前缀（deepseek/…、zai-org/…），按尾段再存一份作为回退匹配。
+          const suffix = id.slice(id.lastIndexOf('/') + 1)
+          if (suffix !== id) merge(bySuffix, suffix, model)
+        }
+      } catch {
+        // 目录不可用时退回原有行为（按模型名推断），不能让取不到目录把保存连接也一起拖失败。
+      }
+      return { byId, bySuffix }
+    })()
+    return this.catalogSpecIndex
+  }
+
+  /**
+   * 精确标识优先，其次忽略厂商前缀匹配——前缀可能出现在任何一边：
+   * 网关给 `zai-org/GLM-5.3` 而目录收录的是 `glm-5.3`，反过来也有。
+   */
+  private async catalogSpec(modelId: string): Promise<ModelSpec | undefined> {
+    const id = modelId.trim().toLowerCase()
+    if (!id) return undefined
+    const { byId, bySuffix } = await this.catalogSpecs()
+    const exact = byId.get(id)
+    if (exact) return exact
+    const suffix = id.slice(id.lastIndexOf('/') + 1)
+    return byId.get(suffix) ?? bySuffix.get(suffix)
+  }
+
+  /**
+   * 读取连接列表时按 pi 静态目录补齐两类元数据，用户不必重新「获取模型」再保存。
+   *
+   * - 能力标记：这次改动之前所有连接内模型都被硬编码成 model_kind='chat'，图片会被运行时换成占位文本。
+   *   只升不降，目录不认识的模型保留用户手动勾选的结果。
+   * - 上下文窗口：存量模型大多没有 context_window（网关的 /v1/models 不给），
+   *   运行时只能按模型名推断，压缩阈值因此算在一个偏小十几倍的分母上。
+   *   只在缺值时补，用户显式填过的值永远优先，补完写回 payload 且在设置页可改。
+   */
+  private async healModelMetadata<T extends Awaited<ReturnType<ModelConnectionStore['list']>>>(connections: T): Promise<T> {
     try {
       for (const connection of connections) {
         const catalog = await this.catalogModels(this.catalogProviders(connection.providerId, connection.authMode))
-        if (!catalog.length) continue
         for (const model of connection.models) {
-          if (model.model_kind === 'multimodal') continue
           const known = catalog.find((entry) => entry.id === model.model_name)
+          if (!(Number(model.context_window) > 0)) {
+            const window = known?.contextWindow && known.contextWindow > 0 ? known.contextWindow : (await this.catalogSpec(model.model_name))?.contextWindow
+            if (window && window > 0) {
+              model.context_window = window
+              this.store.setModelContextWindow(-model.id, window)
+            }
+          }
+          if (model.model_kind === 'multimodal') continue
           if (!known?.input.includes('image')) continue
           model.model_kind = 'multimodal'
           this.store.setModelKind(-model.id, 'multimodal')
         }
       }
-    } catch { /* 目录不可用时保持原样，能力标记退回用户手动勾选 */ }
+    } catch { /* 目录不可用时保持原样：能力标记退回用户手动勾选，窗口退回按模型名推断 */ }
     return connections
   }
 
   private async enrichModels(input: ModelConnectionDraft, models: DiscoveredConnectionModel[]): Promise<DiscoveredConnectionModel[]> {
-    if (input.authMode !== 'api-key' || !models.length || input.providerId === 'custom') return models
-    const catalog = await this.catalogModels(this.catalogProviders(input.providerId, 'api-key'))
-    return models.map((model) => {
+    if (input.authMode !== 'api-key' || !models.length) return models
+    // 自建网关没有对应的目录厂商，能力标记只能靠用户勾选；窗口仍然按模型标识全局找一次。
+    const catalog = input.providerId === 'custom' ? [] : await this.catalogModels(this.catalogProviders(input.providerId, 'api-key'))
+    const specs = await Promise.all(models.map((model) => this.catalogSpec(model.modelId)))
+    return models.map((model, index) => {
       const known = catalog.find((entry) => entry.id === model.modelId.trim())
-      return known ? { ...model, contextWindow: model.contextWindow ?? known.contextWindow, maxTokens: model.maxTokens ?? known.maxTokens, reasoning: known.reasoning, vision: known.input?.includes('image') ?? false, thinkingLevelMap: known.thinkingLevelMap, thinkingDefault: known.thinkingDefault, thinkingProfiles: known.thinkingProfiles } : model
+      const spec = specs[index]
+      // 优先级：用户/网关给的值 > 本厂商目录 > 全目录同名匹配。能力标记只认本厂商目录。
+      const sized = { ...model, contextWindow: model.contextWindow ?? known?.contextWindow ?? spec?.contextWindow, maxTokens: model.maxTokens ?? known?.maxTokens ?? spec?.maxTokens }
+      return known ? { ...sized, reasoning: known.reasoning, vision: known.input?.includes('image') ?? false, thinkingLevelMap: known.thinkingLevelMap, thinkingDefault: known.thinkingDefault, thinkingProfiles: known.thinkingProfiles } : sized
     })
   }
 
@@ -236,6 +310,7 @@ export class ModelConnectionService implements ModelConnectionsApi {
       if (!session.abort.signal.aborted) {
         session.state.status = 'error'
         session.state.error = modelLoginError(error)
+        try { this.onLoginFailed({ providerId, ...modelLoginErrorDetail(error) }) } catch { /* 记日志失败不该盖掉登录错误 */ }
         clearTimeout(session.timer)
         this.cleanupEphemeral(session)
       }

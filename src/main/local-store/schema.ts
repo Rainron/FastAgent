@@ -3,11 +3,11 @@ import { migrateSharedWorkspace } from './shared-workspace'
 import { migrateLegacyLocalModels } from './model-connections'
 import { ensureKbEntrySourceColumns } from '../kb-store'
 import {
-  backfillArtifactsFromTurnEvents, ensureAbilityMetaLatestColumns, ensureAbilityMetaSourceColumn,
-  ensureAccountLayoutColumns, ensureAgentRunDiagnosticColumns, ensureContextPolicyTargetRatio,
+  backfillArtifactsFromTurnEvents, backfillConversationModelId, ensureAbilityMetaLatestColumns, ensureAbilityMetaSourceColumn,
+  ensureAccountLayoutColumns, ensureAgentRunDiagnosticColumns, ensureContextPolicyForceCompaction,
   ensureConversationModelColumn, ensureConversationProjectColumn, ensureFileChangeBeforeText,
-  ensureSummarySourceColumn, ensureTodoPlanColumns, ensureTodoStatusExtended,
-  ensureToolCallSourceColumn, ensureToolCallSubAgentColumns, ensureTurnStatusInterrupted,
+  ensureCompactionContextWindow, ensureSummarySourceColumn, ensureTodoPlanColumns, ensureTodoStatusExtended,
+  ensureToolCallSourceColumn, ensureToolCallSubAgentColumns, ensureTurnSessionAnchorColumn, ensureTurnStatusInterrupted,
   migrateLegacyMessages, migrateModelSessionToConversation, stripEventExecutionSnapshots,
   SCHEMA_VERSION
 } from './migrations'
@@ -30,6 +30,7 @@ export function applyMigrations(db: Database.Database) {
   ensureAbilityMetaSourceColumn(db)
   ensureAbilityMetaLatestColumns(db)
   ensureTurnStatusInterrupted(db)
+  ensureTurnSessionAnchorColumn(db)
   // 补列必须在整表重建之前：重建时按列名搬数据，列不存在会直接报错。
   ensureTodoPlanColumns(db)
   ensureTodoStatusExtended(db)
@@ -37,7 +38,8 @@ export function applyMigrations(db: Database.Database) {
   ensureKbEntrySourceColumns(db)
   ensureFileChangeBeforeText(db)
   ensureSummarySourceColumn(db)
-  ensureContextPolicyTargetRatio(db)
+  ensureContextPolicyForceCompaction(db)
+  ensureCompactionContextWindow(db)
 
   const [{ user_version: current }] = db.pragma('user_version') as Array<{ user_version: number }>
   if (current >= SCHEMA_VERSION) return
@@ -50,5 +52,6 @@ export function applyMigrations(db: Database.Database) {
   if (current < 3) stripEventExecutionSnapshots(db)
   if (current < 4) migrateSharedWorkspace(db)
   if (current < 5) migrateLegacyLocalModels(db)
+  if (current < 6) backfillConversationModelId(db)
   db.pragma(`user_version = ${SCHEMA_VERSION}`)
 }

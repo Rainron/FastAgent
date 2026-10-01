@@ -16,6 +16,8 @@ function api() {
       getWithStatus(conversationId: string, signature: string, create: () => Promise<T>): Promise<{ value: T; cacheHit: boolean }>
       peek(conversationId: string): T | null
       invalidate(conversationId: string): Promise<void>
+      retain(conversationId: string): void
+      release(conversationId: string): Promise<void>
       prune(): Promise<void>
       disposeAll(): Promise<void>
     }
@@ -121,6 +123,23 @@ describe('ConversationRuntimeCache', () => {
     await cache.get('c1', 'sig', async () => value)
     await cache.invalidate('c1')
     expect(value.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('运行占用期间失效的实例，等 release 才销毁且不会泄漏', async () => {
+    const { ConversationRuntimeCache } = api()
+    const cache = new ConversationRuntimeCache<Runtime>()
+    const value = runtime('one')
+    await cache.get('c1', 'sig', async () => value)
+    cache.retain('c1')
+    await cache.invalidate('c1')
+    expect(value.dispose).not.toHaveBeenCalled()
+    await cache.release('c1')
+    expect(value.dispose).toHaveBeenCalledTimes(1)
+    // 失效后重建的新实例不受上一份租约影响
+    const next = runtime('next')
+    expect(await cache.get('c1', 'sig', async () => next)).toBe(next)
+    await cache.disposeAll()
+    expect(next.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('容量淘汰最久未使用的实例', async () => {

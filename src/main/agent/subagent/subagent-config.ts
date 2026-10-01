@@ -1,6 +1,24 @@
-import type { SubAgentConfig } from './subagent-types'
+import { SUBAGENT_LIMITS, type SubAgentConfig } from './subagent-types'
 
 const READONLY_TOOLS = ['read', 'grep', 'find', 'ls']
+
+/** 旧设置只有 maxTurns，且从未生效；迁移期按同一个数字当工具调用上限读。 */
+function legacyMaxTurns(item: unknown): number | undefined {
+  const value = (item as { maxTurns?: unknown }).maxTurns
+  return typeof value === 'number' ? value : undefined
+}
+
+/** 角色没声明就不写这个键：缺省语义是「跟随设置里的全局默认」，写死数字会让全局设置对它失效。 */
+function resolveDeclaredMaxToolCalls(value: unknown): { maxToolCalls?: number } {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return {}
+  return { maxToolCalls: clampSubAgentMaxToolCalls(value) }
+}
+
+export function clampSubAgentMaxToolCalls(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(Math.max(Math.round(value), 1), SUBAGENT_LIMITS.maxToolCallsCeiling)
+    : SUBAGENT_LIMITS.defaultMaxToolCalls
+}
 
 const BUILTIN: SubAgentConfig[] = [
   {
@@ -11,8 +29,7 @@ const BUILTIN: SubAgentConfig[] = [
     tools: READONLY_TOOLS,
     allowWrite: false,
     allowMcp: false,
-    thinkingLevel: 'low',
-    maxTurns: 8
+    thinkingLevel: 'low'
   },
   {
     id: 'reviewer',
@@ -22,17 +39,18 @@ const BUILTIN: SubAgentConfig[] = [
     tools: READONLY_TOOLS,
     allowWrite: false,
     allowMcp: false,
-    thinkingLevel: 'low',
-    maxTurns: 8
+    thinkingLevel: 'low'
   }
 ]
 
+/** 小节必须与 subagent-handoff.ts 的 HEADINGS 一一对应：少一节，那个字段就恒为空。 */
 export const SUBAGENT_HANDOFF_PROMPT = `请严格按以下格式交接，区分事实、推断和建议：
 ## 目标
 ## 已验证项
 ## 未验证项
 ## 关键发现
 ## 关键决定
+## 建议
 ## 剩余步骤`
 
 export function builtInSubAgents(): SubAgentConfig[] {
@@ -69,7 +87,9 @@ export function normalizeCustomSubAgents(value: unknown): SubAgentConfig[] {
       allowWrite: false,
       allowMcp: false,
       thinkingLevel: candidate.thinkingLevel === 'high' || candidate.thinkingLevel === 'medium' ? candidate.thinkingLevel : 'low',
-      maxTurns: Math.min(12, Math.max(1, Number(candidate.maxTurns) || 8))
+      // 只在角色自己声明过时才带上：没声明的走设置里的 subAgentMaxToolCalls。
+      // 旧设置里的 maxTurns 从来没生效过，迁移期按同一个数字当工具调用上限读。
+      ...resolveDeclaredMaxToolCalls(candidate.maxToolCalls ?? legacyMaxTurns(item))
     }]
   })
 }

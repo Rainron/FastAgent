@@ -7,6 +7,7 @@ import { listPendingApprovals, respondPendingApproval } from '../approval-bridge
 import { archiveAttachments } from '../attachment-store'
 import { breadcrumb } from '../logging/logger'
 import { staleRunStates } from '../run-state-reconcile'
+import { rewindSessionForRerun } from '../run/rerun-rewind'
 import { randomUUID } from 'node:crypto'
 import type { IpcRegistrar, MainContext } from '../app-context'
 
@@ -65,8 +66,12 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: input.mode, permission: input.permission || null, project: ctx.store.getConversationRoot(namespace, input.conversationId) }
     const attachments = archiveAttachments(ctx.appPaths.attachmentsDir, input.conversationId, input.attachments || [], ctx.settings)
-    const turn = input.turnId
-      ? ctx.store.updateTurn(namespace, input.turnId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, assistantMessage: null, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working' })
+    const rerunTurnId = input.turnId && ctx.store.getTurn(namespace, input.turnId)?.conversationId === input.conversationId ? input.turnId : null
+    if (input.turnId && !rerunTurnId) throw new Error('会话轮记录不存在')
+    // 重跑 / 编辑重发：这一轮之后的对话都建立在旧回答上，一并删掉；模型上下文在下面排队执行前回退。
+    if (rerunTurnId) ctx.store.deleteTurnsAfter(namespace, input.conversationId, rerunTurnId)
+    const turn = rerunTurnId
+      ? ctx.store.updateTurn(namespace, rerunTurnId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, assistantMessage: null, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working' })
       : ctx.store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
     if (!turn) throw new Error('会话轮记录不存在')
     // 绑定以实际发出的模型为准：新会话首轮在这里落库，之后重开会话才能还原成同一个模型。
@@ -85,7 +90,11 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
         conversationId: ctx.conversationRuntimeKey(namespace, input.conversationId),
         provider: credentials?.provider ?? 'unknown',
         modelId: input.modelId ?? -1
-      }, () => ctx.conversationRuns.run(ctx.conversationRuntimeKey(namespace, input.conversationId), () => ctx.runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, input.mode, input.modelId, input.thinkingLevel || 'auto', input.permission || null, input.modePrompt || '', Boolean(input.planMode), attachments, controller.signal, acceptedAt)))
+      }, () => ctx.conversationRuns.run(ctx.conversationRuntimeKey(namespace, input.conversationId), async () => {
+        // 回退要销毁缓存的运行时，只能排在该会话的串行队列里做；失败时照常跑，退化成回退前的行为。
+        if (rerunTurnId) await rewindSessionForRerun(ctx, namespace, input.conversationId, rerunTurnId).catch((error) => console.warn('[rerun] 回退会话上下文失败:', error))
+        return ctx.runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, input.mode, input.modelId, input.thinkingLevel || 'auto', input.permission || null, input.modePrompt || '', Boolean(input.planMode), attachments, controller.signal, acceptedAt)
+      }))
       ctx.activeRunCancels.set(runId, scheduled.cancel)
       void scheduled.promise.catch((error) => console.error('[chat:run]', error)).finally(() => ctx.activeRunCancels.delete(runId))
     })

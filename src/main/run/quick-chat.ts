@@ -68,7 +68,8 @@ export async function runQuickChat(ctx: RunContext, runId: string, turnId: strin
       const finalText = projection.terminal ? (fullEvent.text || '') : ''
       ctx.store.updateTurn(namespace, turnId, {
         // 事件副本不带 execution：顶层已存一份最新快照，逐条再存一份会让 activity 体积随事件数平方增长。
-        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: fullEvent.transcriptText || activity.transcript, execution },
+        // 与主运行同一口径：轨迹正文递增落库，刷新/闪退后说明文本不会整段消失。
+        activity: { ...activity, status: write.activityStatus, finishedAt: projection.terminal ? new Date().toISOString() : activity.finishedAt, events: [...activity.events, persistableEvent(fullEvent)], thinking: thinkingText || activity.thinking, thinkingSegments: thinkingSegments.length ? [...thinkingSegments] : activity.thinkingSegments, transcript: streamedText || activity.transcript, execution },
         status: write.turnStatus,
         assistantMessage: finalText ? { text: finalText, createdAt: new Date().toISOString() } : undefined
       }, turn)

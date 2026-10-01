@@ -137,10 +137,16 @@ export interface AppSettings {
   autoSummary: boolean
   contextStrategy: ContextStrategy
   triggerRatio: number | null
-  /** 压缩后期望回落到的上下文占比；留空跟随策略默认值。 */
-  targetRatio: number | null
   /** 仅作用于跨 provider 换模型时的回合摘要；常规压缩由 Pi 在会话内按 token 保留。 */
   keepRecentTurns: number | null
+  /**
+   * 越过触发点但常规压缩压不动时，是否降级强压。
+   *
+   * Pi 的会话内压缩只摘要「保留区之外」的消息，保留区之外没东西可摘时它静默什么都不做，
+   * 会话会一直贴在红线上直到溢出。打开后按两级降级：先收缩保留区重压，仍不行就按应用回合
+   * 切摘要并重开 session。代价是丢掉更多近期原文，所以默认关闭。
+   */
+  forceCompaction: boolean
   /** agent 模式使用的 shell 工具；Windows 默认 Git Bash，探测不到可用 bash 时自动改用 PowerShell */
   shellPreference: 'bash' | 'powershell'
   /** 显式指定的 bash 路径（如 Git Bash / MSYS2 的 bash.exe）；空串表示自动探测 */
@@ -151,8 +157,20 @@ export interface AppSettings {
   agentAbilityPolicy: AgentAbilityPolicy
   /** 是否启用只读 Sub-agent；关闭后主 Agent 不会获得委派工具。 */
   subAgentEnabled: boolean
-  /** 用户定义的只读 Sub-agent 角色，写入能力由后续阶段单独开放。 */
-  subAgents?: Array<{ id: string; name: string; description: string; systemPrompt: string; thinkingLevel?: ThinkingLevel; maxTurns?: number }>
+  /**
+   * 单个子任务允许的工具调用次数上限。
+   *
+   * pi 的轮次循环在 `session.prompt()` 内部，SDK 不提供轮次上限，工具调用次数是唯一能观测到的边界。
+   * 角色自己声明了 `maxToolCalls` 时以角色的为准，这里是其余角色共用的默认值。
+   */
+  subAgentMaxToolCalls: number
+  /**
+   * 用户定义的只读 Sub-agent 角色，写入能力由后续阶段单独开放。
+   *
+   * `maxTurns` 是历史字段：轮次从来没有传给子运行，填多少都不生效，已由 `maxToolCalls` 取代。
+   * 保留声明只为读旧配置，不再写入。
+   */
+  subAgents?: Array<{ id: string; name: string; description: string; systemPrompt: string; thinkingLevel?: ThinkingLevel; maxToolCalls?: number; maxTurns?: number }>
   /** 跨会话长期记忆；关闭后既不召回也不抽取 */
   memory: MemorySettings
   /** Agent 命令执行的 OS 级沙箱设置 */

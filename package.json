@@ -1,6 +1,6 @@
 {
   "name": "fastagent-desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "FastAgent AI Workspace",
   "main": "out/main/index.js",
@@ -31,7 +31,8 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "shiki": "^4.4.3",
-    "uiohook-napi": "^1.5.5"
+    "uiohook-napi": "^1.5.5",
+    "undici": "^7.29.0"
   },
   "devDependencies": {
     "@electron-toolkit/tsconfig": "^1.0.1",

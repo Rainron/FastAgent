@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type { ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WindowsSandboxProvider, type WindowsSandboxPaths } from '../providers/windows-native/windows-sandbox-provider'
+import { REQUIRED_SANDBOX_VERSION } from '../providers/windows-native/windows-capabilities'
 import { defaultSandboxSettings, resolveSandboxPolicy } from '../../../../shared/sandbox'
 
 const roots: string[] = []
@@ -16,7 +17,7 @@ async function createPaths(): Promise<WindowsSandboxPaths> {
   const stateDir = join(root, 'state')
   mkdirSync(stateDir)
   writeFileSync(join(root, 'runner.exe'), '')
-  writeFileSync(join(stateDir, 'setup.json'), JSON.stringify({ version: '0.1.0', offlineSid: 'offline', onlineSid: 'online' }))
+  writeFileSync(join(stateDir, 'setup.json'), JSON.stringify({ version: REQUIRED_SANDBOX_VERSION, offlineSid: 'offline', onlineSid: 'online' }))
   writeFileSync(join(stateDir, 'credentials.bin'), '')
   return { runnerPath: join(root, 'runner.exe'), setupPath: join(root, 'setup.exe'), stateDir, runtimePath: join(root, 'runtime') }
 }
@@ -45,10 +46,10 @@ describe('WindowsSandboxProvider', () => {
     await Promise.resolve()
     expect(settled).toBe(false)
 
-    child.stdout?.emit('data', '0.1.0\n')
+    child.stdout?.emit('data', `${REQUIRED_SANDBOX_VERSION}\n`)
     child.emit('close', 0)
 
-    await expect(probing).resolves.toMatchObject({ status: 'ready', runnerVersion: '0.1.0' })
+    await expect(probing).resolves.toMatchObject({ status: 'ready', runnerVersion: REQUIRED_SANDBOX_VERSION })
     expect(spawnVersionProbe).toHaveBeenCalledTimes(1)
   })
 

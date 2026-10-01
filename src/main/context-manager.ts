@@ -1,4 +1,5 @@
-import type { AppSettings, ContextPolicy, ContextState, ContextStrategy, ConversationTurn } from '../shared/types'
+import { compactionBudget, forcedCompactionBudget } from '../shared/context-policy'
+import type { AppSettings, ContextPolicy, ContextState, ConversationTurn } from '../shared/types'
 
 /** 保底保留的最近回合数，避免压缩把当前任务上下文清空。 */
 const MIN_KEEP_RECENT_TURNS = 2
@@ -8,77 +9,52 @@ export function estimateTokens(text: string) {
   return Math.max(1, Math.ceil(text.length / 4))
 }
 
-/** 压缩后期望达到的上下文占比，对应文档四档策略的「压缩后目标」。 */
-export function contextTargetRatio(strategy: ContextStrategy) {
-  if (strategy === 'aggressive') return 0.45
-  if (strategy === 'conservative') return 0.68
-  if (strategy === 'disabled') return 1
-  return 0.55
-}
-
-/** 压缩后目标占比，会话级 targetRatio 优先于策略默认值。与 triggerRatioFor 同形。 */
-export function targetRatioFor(policy: ContextPolicy) {
-  if (typeof policy.targetRatio === 'number') return policy.targetRatio
-  return contextTargetRatio(policy.strategy)
-}
-
-/** 自动压缩的触发占比，会话级 triggerRatio 优先于策略默认值。 */
-export function triggerRatioFor(policy: ContextPolicy) {
-  if (typeof policy.triggerRatio === 'number') return policy.triggerRatio
-  if (policy.strategy === 'aggressive') return 0.68
-  if (policy.strategy === 'conservative') return 0.85
-  return 0.78
+/** 全局设置投影成会话策略；会话没有自己的行、或声明跟随全局时都走这里。 */
+function policyFromSettings(settings: AppSettings, conversationId: string): ContextPolicy {
+  return {
+    conversationId,
+    strategy: settings.contextStrategy,
+    autoSummary: settings.autoSummary,
+    triggerRatio: settings.triggerRatio,
+    keepRecentTurns: settings.keepRecentTurns,
+    forceCompaction: settings.forceCompaction,
+    inheritGlobal: true
+  }
 }
 
 /**
  * 会话没有独立策略时回退到全局设置。
  * AppSettings 用 contextStrategy 命名，ContextPolicy 用 strategy，必须显式映射，
  * 直接展开 AppSettings 会让 strategy 变成 undefined 并使「关闭」失效。
+ *
+ * `inheritGlobal` 必须在这里生效：策略行一旦写过就永远存在（会话详情面板每次保存都会写），
+ * 只看「有没有行」会让这条会话此后对全局设置完全免疫。keepRecentTurns 跟随所属层级，
+ * 不做逐字段混合——混合出来的组合用户在任何一个界面上都看不到。
  */
 export function resolvePolicy(settings: AppSettings, stored: ContextPolicy | null, conversationId: string): ContextPolicy {
-  if (stored) return stored
-  return {
-    conversationId,
-    strategy: settings.contextStrategy,
-    autoSummary: settings.autoSummary,
-    triggerRatio: settings.triggerRatio,
-    targetRatio: settings.targetRatio,
-    keepRecentTurns: settings.keepRecentTurns,
-    inheritGlobal: true
-  }
-}
-
-/** Pi 自带的压缩参数默认值，窗口未知时原样沿用，不做猜测。 */
-const PI_DEFAULT_RESERVE_TOKENS = 16_384
-const PI_DEFAULT_KEEP_RECENT_TOKENS = 20_000
-/** 触发点与保留区的下限：再小就会压完立刻又触发。窗口很小时按占比退让，避免两者之和顶穿窗口。 */
-const MIN_RESERVE_TOKENS = 8_192
-const MIN_KEEP_RECENT_TOKENS = 4_096
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), Math.max(min, max))
+  if (!stored || stored.inheritGlobal) return policyFromSettings(settings, conversationId)
+  return stored
 }
 
 /**
  * 把桌面侧的策略/阈值翻译成 Pi 的会话内压缩参数。
  * Pi 的判定是 `tokens > contextWindow - reserveTokens`，只认绝对量；
  * 不做这层换算的话，设置里的触发占比对单个长回合完全不起作用。
+ *
+ * 换算本身在 shared/context-policy：设置页要按同一份算出「实际生效」的数字，
+ * 两边各写一份就会回到「界面写一个阈值、引擎按另一个跑」。
  */
-export function piCompactionSettings(policy: ContextPolicy, contextWindow: number) {
-  const enabled = policy.autoSummary && policy.strategy !== 'disabled'
-  if (!(contextWindow > 0)) {
-    return { enabled, reserveTokens: PI_DEFAULT_RESERVE_TOKENS, keepRecentTokens: PI_DEFAULT_KEEP_RECENT_TOKENS }
-  }
-  const reserveTokens = clamp(
-    Math.round(contextWindow * (1 - triggerRatioFor(policy))),
-    Math.min(MIN_RESERVE_TOKENS, Math.round(contextWindow * 0.1)),
-    Math.round(contextWindow * 0.5)
-  )
-  const keepRecentTokens = clamp(
-    Math.round(contextWindow * targetRatioFor(policy)) - reserveTokens,
-    Math.min(MIN_KEEP_RECENT_TOKENS, Math.round(contextWindow * 0.05)),
-    contextWindow - reserveTokens - Math.round(contextWindow * 0.05)
-  )
+export function piCompactionSettings(policy: ContextPolicy, contextWindow: number, maxTokens?: number | null) {
+  const { enabled, reserveTokens, keepRecentTokens } = compactionBudget(policy, contextWindow, maxTokens)
+  return { enabled, reserveTokens, keepRecentTokens }
+}
+
+/**
+ * 强压时下发给 Pi 的参数：触发点不动，保留区收到最小，保证切点一定能往后挪。
+ * 只在常规压缩已经压不动、且会话开了 forceCompaction 时才用。
+ */
+export function piForcedCompactionSettings(policy: ContextPolicy, contextWindow: number, maxTokens?: number | null) {
+  const { enabled, reserveTokens, keepRecentTokens } = forcedCompactionBudget(policy, contextWindow, maxTokens)
   return { enabled, reserveTokens, keepRecentTokens }
 }
 
@@ -163,14 +139,19 @@ export function buildSummarySourceText(turns: ConversationTurn[], previousSummar
   return previousSummary ? `# 已有摘要\n${previousSummary}\n\n# 待压缩回合\n${trimmed}` : `# 待压缩回合\n${trimmed}`
 }
 
-/** 压缩后写回的上下文估算：摘要本身的开销与策略目标取较大值。 */
-export function projectCompactedState(before: ContextState, strategy: ContextStrategy, summaryText: string): ContextState {
+/**
+ * 压缩后写回的上下文估算：摘要本身的开销与策略落点取较大值。
+ * 落点取换算后真正生效的那个（compactionBudget 已经夹过），
+ * 不再有单独的「目标占比」设置——它曾经和保留区互相反推，谁都算不准。
+ */
+export function projectCompactedState(before: ContextState, policy: ContextPolicy, summaryText: string): ContextState {
   const summaryTokens = estimateTokens(summaryText)
-  const target = Math.round(before.contextWindow * contextTargetRatio(strategy))
+  const targetRatio = compactionBudget(policy, before.contextWindow).effectiveTargetRatio
+  const target = Math.round(before.contextWindow * targetRatio)
   return {
     ...before,
     estimatedTokens: Math.max(summaryTokens, Math.min(before.estimatedTokens, target)),
-    messageTokens: Math.max(summaryTokens, Math.round(before.messageTokens * contextTargetRatio(strategy))),
+    messageTokens: Math.max(summaryTokens, Math.round(before.messageTokens * targetRatio)),
     toolTokens: Math.round(before.toolTokens * 0.2),
     // 摘要后的数字是策略投影，不再是压缩前那次 provider usage 的真实值。
     countingMethod: 'fallback-estimate'

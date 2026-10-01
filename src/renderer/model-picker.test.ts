@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LocalModelSummary, ModelOption } from '../shared/types'
-import { allSectionGroupIds, conversationModelId, expandedModels, expandedSectionModels, filterModelOptions, groupModelsByChannel, initialExpandedChannels, initialExpandedGroups, initialSelectedModelId, localModelToOption, mergeModelOptions, modelMetaLabel, modelSections, modelTabs, modelsForTab, providerOptions, stepModelIndex, thinkingLevelDescription, thinkingLevelShortLabel, thinkingLevelsForModel, triggerModelLabel, visibleModelOptions } from './model-picker'
+import { allSectionGroupIds, conversationModelId, expandedModels, expandedSectionModels, filterModelOptions, groupModelsByChannel, initialExpandedChannels, initialExpandedGroups, initialSelectedModelId, localModelToOption, mergeModelOptions, modelMetaLabel, modelSections, modelTabs, modelsForTab, pendingBoundModelId, providerOptions, stepModelIndex, thinkingLevelDescription, thinkingLevelShortLabel, thinkingLevelsForModel, triggerModelLabel, visibleModelOptions } from './model-picker'
 
 // 字段含义按后端实际返回：provider 是提供商，protocol 是调用协议。
 const models: ModelOption[] = [
@@ -23,6 +23,16 @@ describe('model picker helpers', () => {
     expect(conversationModelId([{ id: 1 }, { id: 3 }], 999, 1)).toBe(1)
     expect(conversationModelId([{ id: 1 }, { id: 3 }], null, 1)).toBe(1)
     expect(conversationModelId([], 3, null)).toBeNull()
+  })
+
+  it('绑定的模型还没进目录时挂起，等目录补齐再落位', () => {
+    // 目录还没到（重载后恢复会话常见）：挂起绑定，不能当成绑定失效
+    expect(pendingBoundModelId([], 3)).toBe(3)
+    expect(pendingBoundModelId([{ id: 1 }], 3)).toBe(3)
+    // 已经能解析，或本来就没绑定：不挂起
+    expect(pendingBoundModelId([{ id: 1 }, { id: 3 }], 3)).toBeNull()
+    expect(pendingBoundModelId([{ id: 1 }], null)).toBeNull()
+    expect(pendingBoundModelId([{ id: 1 }], undefined)).toBeNull()
   })
 
   it('收藏与最近为空时不生成对应分页签', () => {

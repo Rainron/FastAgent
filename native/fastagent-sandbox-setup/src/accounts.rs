@@ -1,8 +1,9 @@
 use sandbox_core::wide::{pcwstr, to_wide};
 use sandbox_core::{sid, Result, SandboxCoreError};
 use windows::Win32::NetworkManagement::NetManagement::{
-    NetUserAdd, NetUserSetInfo, UF_DONT_EXPIRE_PASSWD, UF_PASSWD_CANT_CHANGE, UF_SCRIPT,
-    USER_INFO_1, USER_INFO_1003, USER_PRIV_USER,
+    NetLocalGroupAddMembers, NetUserAdd, NetUserSetInfo, LOCALGROUP_MEMBERS_INFO_3,
+    UF_DONT_EXPIRE_PASSWD, UF_PASSWD_CANT_CHANGE, UF_SCRIPT, USER_INFO_1, USER_INFO_1003,
+    USER_PRIV_USER,
 };
 use windows::Win32::Security::Cryptography::{BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG};
 
@@ -23,15 +24,41 @@ pub fn random_password(length: usize) -> Result<String> {
         .collect())
 }
 
-/// 创建或重置沙箱账户。只给 USER_PRIV_USER（自动进 Users 组），
-/// 不加入 Administrators / Power Users / Remote Desktop Users。
+/// 已是成员时 NetLocalGroupAddMembers 返回 ERROR_MEMBER_IN_ALIAS，属于幂等成功。
+const ERROR_MEMBER_IN_ALIAS: u32 = 1378;
+
+/// 创建或重置沙箱账户，并确保它在 BUILTIN\Users 组里。
+/// 只给 USER_PRIV_USER，不加入 Administrators / Power Users / Remote Desktop Users。
+///
+/// 入组必须显式做：NetUserAdd 的 priv 只决定账户类别，不会真的把账户加进 Users 组
+/// （实测建出来的账户本地组成员为空）。而开发工具链所在目录（Python、Node、SDK）
+/// 的 ACL 大多只授到 BUILTIN\Users，不入组就等于沙箱内什么都跑不了。
 pub fn ensure_account(account: &str, password: &str, comment: &str) -> Result<String> {
     if sid::account_exists(account) {
         reset_password(account, password)?;
     } else {
         create_account(account, password, comment)?;
     }
+    join_builtin_users(account)?;
     sid::lookup_account_sid(account)
+}
+
+fn join_builtin_users(account: &str) -> Result<()> {
+    let group = sid::builtin_users_group_name()?;
+    let group_name = to_wide(&group);
+    let mut member = to_wide(account);
+    let info = LOCALGROUP_MEMBERS_INFO_3 {
+        lgrmi3_domainandname: windows::core::PWSTR(member.as_mut_ptr()),
+    };
+    let status = unsafe {
+        NetLocalGroupAddMembers(None, pcwstr(&group_name), 3, &info as *const _ as *const u8, 1)
+    };
+    if status != 0 && status != ERROR_MEMBER_IN_ALIAS {
+        return Err(SandboxCoreError::new(format!(
+            "把账户 {account} 加入 {group} 组失败（NetLocalGroupAddMembers 返回 {status}）"
+        )));
+    }
+    Ok(())
 }
 
 fn create_account(account: &str, password: &str, comment: &str) -> Result<()> {

@@ -1,8 +1,10 @@
 import type Database from 'better-sqlite3'
 import type { AppSettings, ClientPreferences } from '../../shared/types'
 import { normalizeAttachmentPolicy } from '../../shared/attachment-policy'
+import { migrateLegacyContextSettings, normalizeContextSettings } from '../../shared/context-policy'
 import { normalizeSandboxSettings } from '../../shared/sandbox'
 import { normalizePageSize } from '../../shared/pagination'
+import { clampSubAgentMaxToolCalls } from '../agent/subagent/subagent-config'
 import { defaultClientPreferences, defaultSettings, normalizeMemorySettings, normalizeRunLimits, parseJson } from './row-mappers'
 
 /** 应用设置与客户端偏好：两者都是 key/scope 单行 JSON，读写规则同源。 */
@@ -13,12 +15,16 @@ export class SettingsStore {
     const row = this.db.prepare('SELECT payload FROM app_settings WHERE key = ?').get('global') as { payload: string } | undefined
     const stored = parseJson<Partial<AppSettings>>(row?.payload, {})
     // sandbox 为嵌套对象，浅合并救不了缺字段的旧记录，单独归一化。
-    return { ...defaultSettings, ...stored, ...normalizeAttachmentPolicy(stored), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), limits: normalizeRunLimits(stored.limits) }
+    // 上下文档位读一次收敛一次：旧库里「关了自动摘要但档位还在 auto」的组合会让整组阈值静默失效。
+    const merged = { ...defaultSettings, ...stored }
+    return { ...merged, ...normalizeAttachmentPolicy(stored), ...normalizeContextSettings(migrateLegacyContextSettings(merged)), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), limits: normalizeRunLimits(stored.limits), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(stored.subAgentMaxToolCalls) }
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const merged = { ...this.getSettings(), ...patch }
-    const next = { ...merged, ...normalizeAttachmentPolicy(merged) }
+    // 写入侧只做归一（档位为准回填 autoSummary、阈值裁进区间），不再做旧记录迁移：
+    // getSettings 已经迁过一次，这里再迁会把用户刚打开的开关又按回去。
+    const next = { ...merged, ...normalizeAttachmentPolicy(merged), ...normalizeContextSettings(merged), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(merged.subAgentMaxToolCalls) }
     this.db.prepare(`
       INSERT INTO app_settings(key, payload, updated_at) VALUES ('global', ?, ?)
       ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at

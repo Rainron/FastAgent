@@ -28,7 +28,7 @@ import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidat
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
-export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, compaction, onCompact, onCancelCompaction, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
+export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
@@ -211,8 +211,14 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     window.addEventListener('pointerup', stop)
   }
 
+  // 压缩期间消息树正在被重写，发送与插队都必须挡住。
+  const compacting = compaction?.status === 'running'
+  // 但自动压缩是在一轮运行中间发生的：把停止/暂停也锁掉等于让用户没法终止任务。
+  // 手动压缩没有正在跑的 run，那两个按钮本来就没有意义，维持原样全禁。
+  const compactingManually = compacting && !compaction?.auto
+
   async function submit() {
-    if (compaction?.status === 'running') { onNotice('当前会话正在压缩，暂时无法发送；可切换到其它会话继续问答'); return }
+    if (compacting) { onNotice(compaction?.auto ? '正在自动压缩上下文，稍后可继续发送' : '当前会话正在压缩，暂时无法发送；可切换到其它会话继续问答'); return }
     if (!text.trim()) return
     const value = text.trim()
     // 斜杠命令即时执行：不进聊天记录、不进输入历史，命令名精确匹配（不带参数）。
@@ -635,8 +641,8 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       onBlur={() => setMention(null)}
       onKeyDown={handleComposerKeyDown}
       onPaste={handleComposerPaste}
-      disabled={compaction?.status === 'running'}
-      placeholder={compaction?.status === 'running' ? '正在压缩上下文，暂时无法发送；可切换其它会话' : runId ? '生成中，发送将加入排队...' : planMode ? '计划模式：描述要规划的任务...' : mode === 'agent' ? '描述任务目标与期望结果...' : '输入你的问题或想法...'}
+      disabled={compactingManually}
+      placeholder={compacting ? (compaction?.auto ? '正在自动压缩上下文，压完继续这一轮…' : '正在压缩上下文，暂时无法发送；可切换其它会话') : runId ? '生成中，发送将加入排队...' : planMode ? '计划模式：描述要规划的任务...' : mode === 'agent' ? '描述任务目标与期望结果...' : '输入你的问题或想法...'}
       aria-label="消息输入"
       rows={2}
     />
@@ -646,19 +652,19 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       {gitState && <GitBranchTrigger state={gitState} compact={density === 'compact'} anyRunActive={gitAnyRunActive} onCheckout={onGitCheckout} onCreate={onGitCreate} onStopAndCheckout={onGitStopAndCheckout} />}
       <div className="toolbar-spacer" />
       {planMode && <button className="composer-chip plan-chip" onClick={onTogglePlanMode} title="计划模式已开启：只产出实施计划，Shift+Tab 或点击退出">Plan</button>}
-      <ContextHealth data={contextHealth} onCompact={onCompact} onCancelCompaction={onCancelCompaction} compaction={compaction} />
+      <ContextHealth data={contextHealth} policy={contextPolicy} onCompact={onCompact} onCancelCompaction={onCancelCompaction} onOpenHistory={onOpenCompactionHistory} compaction={compaction} />
       <button className="composer-chip mode-chip" onClick={() => agentAvailable && setMode(nextConversationMode(mode))} disabled={!agentAvailable} title={agentAvailable ? `当前模式：${modeLabel}` : '快速对话仅支持 Chat，项目会话可用 Agent'}><span className={`mode-mark ${mode}`} />{modeLabel}<ChevronDown size={13} /></button>
       {permission && !overflowed && <PermissionSelector value={permission} profiles={permissionProfiles} onChange={choosePermission} density={density} onOpenAdvanced={onOpenPermissionSettings} />}
       <ModelSelector model={model} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} open={pickerOpen} onOpenChange={setPickerOpen} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavorite} onManageModels={onManageModels} />
       {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} model={model} />}
       {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} model={model} />}
       {runId ? <>
-        {Boolean(text.trim()) && <button className="send-button queue" disabled={compaction?.status === 'running'} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={16} /></button>}
+        {Boolean(text.trim()) && <button className="send-button queue" disabled={compacting} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={16} /></button>}
         {paused
           ? <button className="send-button" onClick={onResume} aria-label="继续执行" title="继续执行"><Play size={15} /></button>
-          : <button className="send-button pause" onClick={onPause} disabled={compaction?.status === 'running'} aria-label="暂停" title="暂停：当前这一步跑完后停在下一次工具调用前"><Pause size={15} /></button>}
-        <button className="send-button stop" onClick={onCancel} disabled={compaction?.status === 'running'} aria-label="停止生成" title="停止生成"><SquareIcon /></button>
-      </> : <button className="send-button" onClick={() => void submit()} disabled={!text.trim() || compaction?.status === 'running'} aria-label="发送" title="发送"><ArrowUp size={16} /></button>}
+          : <button className="send-button pause" onClick={onPause} disabled={compactingManually} aria-label="暂停" title="暂停：当前这一步跑完后停在下一次工具调用前"><Pause size={15} /></button>}
+        <button className="send-button stop" onClick={onCancel} disabled={compactingManually} aria-label="停止生成" title="停止生成"><SquareIcon /></button>
+      </> : <button className="send-button" onClick={() => void submit()} disabled={!text.trim() || compacting} aria-label="发送" title="发送"><ArrowUp size={16} /></button>}
     </div>
   </div>
   <div className="composer-hints">

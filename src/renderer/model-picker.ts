@@ -28,6 +28,18 @@ export function conversationModelId(models: Array<Pick<ModelOption, 'id'>>, boun
   return models.find((model) => model.id === boundModelId)?.id ?? fallbackModelId
 }
 
+/**
+ * 会话绑定的模型暂时不在目录里时返回它，表示「等目录补齐再落位」。
+ *
+ * 模型目录不是一次到齐：账号连接下的模型要等连接服务把清单拉回来，重载后恢复会话往往早于它。
+ * 这时按 conversationModelId 直接回退到默认模型，绑定就被永久丢掉了——界面上表现为刷新后底栏
+ * 变成默认模型，得手动再点一次该会话才回来。返回 null 表示不用挂起（没有绑定，或已经能解析）。
+ */
+export function pendingBoundModelId(models: Array<Pick<ModelOption, 'id'>>, boundModelId: number | null | undefined): number | null {
+  if (boundModelId === null || boundModelId === undefined) return null
+  return models.some((model) => model.id === boundModelId) ? null : boundModelId
+}
+
 const levelLabels: Record<string, string> = { auto: '默认', off: '关闭', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', max: 'Max', xhigh: 'XHigh' }
 
 const levelShortLabels: Record<string, string> = { auto: '默认', off: '关闭', minimal: 'Min', low: 'Low', medium: 'Med', high: 'High', max: 'Max', xhigh: 'XHi' }

@@ -3,7 +3,9 @@ resolver = "2"
 members = ["sandbox-core", "fastagent-sandbox-setup", "fastagent-command-runner"]
 
 [workspace.package]
-version = "0.1.0"
+# 0.2.0：沙箱账户改为显式加入 BUILTIN\Users。已初始化的机器要靠版本抬升触发重新 setup，
+# 否则旧账户仍然不在组里，工具链照样不可用。
+version = "0.2.0"
 edition = "2021"
 publish = false
 

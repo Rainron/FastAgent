@@ -123,6 +123,18 @@ export class ArtifactStore {
   }
 
   /**
+   * 清空一个会话登记的成果与文件改动记录。
+   * 只删登记，不动磁盘上的文件：那些是用户工作区里的真实产出，不该被「清空会话」带走。
+   */
+  deleteConversationArtifacts(namespace: string, conversationId: string): number {
+    const purge = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM agent_file_changes WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
+      return this.db.prepare('DELETE FROM artifacts WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId).changes
+    })
+    return purge()
+  }
+
+  /**
    * 记录 Agent 对某个文件的最终变更状态。一轮内同一路径只有一条，重复写入直接覆盖：
    * 调用方每次都拿「本轮基线 vs 当前」重算，写进来的就是整轮累计结果，不能再叠加。
    * diff 文本单独存这张表，不进 conversation_turns.activity——那份每次读会话都要整体反序列化。

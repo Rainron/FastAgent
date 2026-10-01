@@ -110,7 +110,7 @@ describe('createRuntimeSettingsManager', () => {
       prompt: 'hi', mode: 'agent', modePrompt: '', planMode: false,
       credentials: { id: -1, provider: 'x', protocol: 'openai', name: 'm', model_name: 'm', api_key: 'k' } as never,
       thinkingLevel: 'off' as never,
-      contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, targetRatio: null, keepRecentTurns: null, inheritGlobal: true },
+      contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, keepRecentTurns: null, forceCompaction: false, inheritGlobal: true },
       permission: null, attachments: [], workspaceRoot: cwd, signal: new AbortController().signal,
       agentDir, namespace: 'ns', conversationId: 'c1', turnId: 't1', runId: 'r1',
       store: { listPermissionRules: () => [] } as unknown as LocalStore,
@@ -119,8 +119,8 @@ describe('createRuntimeSettingsManager', () => {
       onEvent: () => undefined
     })
     try {
-      // 128k 窗口 + conservative：触发点 85%（reserve 19200），压缩后落到 53%（keep 67840）。
-      expect(runtime.settingsManager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+      // 128k 窗口 + conservative：触发点 85%（reserve 19200），压缩后落到 68%（keep 78848 + 摘要预算 8192）。
+      expect(runtime.settingsManager.getCompactionSettings()).toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 32_000 })
     } finally {
       await runtime.dispose()
     }
@@ -308,8 +308,8 @@ describe('Agent 结局分类（长任务异常停止修复）', () => {
 
   it('runtimeCompactionSettings：带策略按策略换算，不带策略退回布尔开关', () => {
     const credentials = { context_window: 128_000 } as never
-    expect(piRuntime.runtimeCompactionSettings({ credentials, contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, targetRatio: null, keepRecentTurns: null, inheritGlobal: true } }))
-      .toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 67_840 })
+    expect(piRuntime.runtimeCompactionSettings({ credentials, contextPolicy: { conversationId: 'c1', strategy: 'conservative', autoSummary: true, triggerRatio: null, keepRecentTurns: null, forceCompaction: false, inheritGlobal: true } }))
+      .toEqual({ enabled: true, reserveTokens: 19_200, keepRecentTokens: 32_000 })
     expect(piRuntime.runtimeCompactionSettings({ credentials, autoCompaction: false })).toEqual({ enabled: false })
     expect(piRuntime.runtimeCompactionSettings({ credentials })).toEqual({ enabled: true })
   })

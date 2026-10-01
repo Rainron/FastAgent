@@ -108,6 +108,8 @@ export interface MainContext {
   broadcastModelsChanged(): void
   cacheModelCredentials(credentials: ModelCredentials[]): void
   compactConversation(namespace: string, conversationId: string, reason?: string, credentials?: ModelCredentials | null): Promise<CompactionResult | null>
+  /** 常规压缩压不动时的两级降级：收缩保留区重压，仍不行转按回合摘要重开 session。 */
+  forceCompactConversation(namespace: string, conversationId: string, credentials: ModelCredentials): Promise<CompactionResult | null>
   confirmInterruptRuns(action: '重启' | '退出'): Promise<boolean>
   contextWindowFor(namespace: string, conversationId: string, modelIdOverride?: number | null): number
   /** 参数覆盖改动后作废凭证与窗口缓存，并广播 models:changed；不清就要重登才生效。 */

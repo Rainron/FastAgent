@@ -175,6 +175,51 @@ describe('连接模型发现', () => {
     expect(saved.mock.calls[0][0].models[0]).toMatchObject({ reasoning: true, thinkingLevelMap, thinkingDefault: 'high', thinkingProfiles: { high: {} } })
   })
 
+  it('自建网关的模型按标识从全目录补窗口，带厂商前缀也能匹配', async () => {
+    const saved = vi.fn((input) => ({ ...input, id: 'connection' }))
+    const store = { save: saved, resolve: () => ({ metadata: { providerId: 'custom', baseUrl: 'https://gateway.example.com/v1', protocol: 'openai' }, secrets: {} }) } as unknown as ModelConnectionStore
+    const service = new ModelConnectionService(store, {
+      createRuntime: async () => ({ getModels: () => [{ id: 'glm-5.3', provider: 'zai', contextWindow: 1_000_000, maxTokens: 98_304 }] }) as any
+    })
+    await service.save({ providerId: 'custom', authMode: 'api-key', models: [{ modelId: 'zai-org/GLM-5.3' }, { modelId: 'glm-5.3' }, { modelId: 'never-heard-of-it' }] })
+    const models = saved.mock.calls[0][0].models
+    expect(models[0]).toMatchObject({ contextWindow: 1_000_000, maxTokens: 98_304 })
+    expect(models[1]).toMatchObject({ contextWindow: 1_000_000 })
+    // 目录里没有的模型不猜窗口：交给运行时按模型名推断，别伪造一个来源
+    expect(models[2].contextWindow).toBeUndefined()
+  })
+
+  it('用户或网关已声明的窗口不被目录覆盖', async () => {
+    const saved = vi.fn((input) => ({ ...input, id: 'connection' }))
+    const store = { save: saved, resolve: () => ({ metadata: { providerId: 'custom', baseUrl: 'https://gateway.example.com/v1', protocol: 'openai' }, secrets: {} }) } as unknown as ModelConnectionStore
+    const service = new ModelConnectionService(store, {
+      createRuntime: async () => ({ getModels: () => [{ id: 'glm-5.3', provider: 'zai', contextWindow: 1_000_000, maxTokens: 98_304 }] }) as any
+    })
+    await service.save({ providerId: 'custom', authMode: 'api-key', models: [{ modelId: 'glm-5.3', contextWindow: 65_536 }] })
+    expect(saved.mock.calls[0][0].models[0]).toMatchObject({ contextWindow: 65_536 })
+  })
+
+  it('列连接时回填存量模型缺失的窗口，已有值不动', async () => {
+    const setModelContextWindow = vi.fn()
+    const store = {
+      list: () => [{
+        id: 'connection', providerId: 'custom', authMode: 'api-key' as const, models: [
+          { id: -7, model_name: 'zai-org/GLM-5.3', model_kind: 'chat' as const },
+          { id: -8, model_name: 'glm-5.3', model_kind: 'chat' as const, context_window: 65_536 }
+        ]
+      }],
+      setModelContextWindow,
+      setModelKind: vi.fn()
+    } as unknown as ModelConnectionStore
+    const service = new ModelConnectionService(store, {
+      createRuntime: async () => ({ getModels: () => [{ id: 'glm-5.3', provider: 'zai', contextWindow: 1_000_000, maxTokens: 98_304, input: ['text'] }] }) as any
+    })
+    const connections = await service.list()
+    expect(connections[0].models[0].context_window).toBe(1_000_000)
+    expect(connections[0].models[1].context_window).toBe(65_536)
+    expect(setModelContextWindow.mock.calls).toEqual([[7, 1_000_000]])
+  })
+
   it('发现失败不返回上游含密钥的错误，允许调用方手动填写模型', async () => {
     const store = { resolve: () => ({ metadata: { baseUrl: 'https://example.com/v1', protocol: 'openai' }, secrets: { api_key: 'private-key' } }) } as unknown as ModelConnectionStore
     const service = new ModelConnectionService(store, { fetch: vi.fn(async () => { throw new Error('private-key upstream') }) as typeof fetch })
