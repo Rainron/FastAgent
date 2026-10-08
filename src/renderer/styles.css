@@ -2787,3 +2787,14 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .terminal-surface .xterm { height: 100%; }
 .terminal-surface .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
 .terminal-empty { margin: 16px 4px; color: var(--text-tertiary); font-size: 12px; }
+
+/* 输入区项目菜单（私有 b77e2a9 引入，38fe131 加上信任入口） */
+.workspace-menu-selector { position: relative; min-width: 0; }
+/* 项目名给一个上限：长目录名不该把右侧运行配置挤进溢出菜单 */
+.workspace-menu-trigger { max-width: 180px; }
+.workspace-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-menu { left: 0; right: auto; width: 200px; padding: 6px; }
+.workspace-menu-item { width: 100%; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 7px; background: transparent; color: var(--text-primary); font-size: 12.5px; text-align: left; }
+.workspace-menu-item:hover, .workspace-menu-item:focus-visible { background: var(--hover); }
+.workspace-menu-item > svg { flex: 0 0 auto; color: var(--text-secondary); }
+.workspace-menu-divider { height: 1px; margin: 4px 6px; background: var(--border); }

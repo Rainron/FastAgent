@@ -19,11 +19,15 @@ export interface AgentContextFile extends AgentContextPath {
 export interface AgentContextReadResult {
   files: AgentContextFile[]
   errors: Array<{ path: string; error: string }>
+  /** 未信任被扣下的项目指令文件（只记路径，内容不读进内存）；全局文件与已信任项目不会出现在这里。 */
+  withheld?: Array<{ name: AgentContextPath['name']; path: string }>
 }
 
 export interface AgentContextReadOptions {
   home?: string
   projectRoot?: string | null
+  /** 项目指令文件信任门控：false 时项目文件只探测存在性进 withheld，内容一律不读。默认 true（兼容既有调用）。 */
+  projectTrusted?: boolean
   maxFileCharacters?: number
   maxTotalCharacters?: number
   exists?: (path: string) => boolean
@@ -50,11 +54,18 @@ export function readAgentContextFiles(options: AgentContextReadOptions = {}): Ag
   const maxTotalCharacters = options.maxTotalCharacters ?? 100_000
   const exists = options.exists ?? existsSync
   const read = options.read ?? ((path: string) => readFileSync(path, 'utf8'))
+  // 未信任的项目不读内容只记存在性：Project Trust 门控在读取层而非调用层，未信任指令不进内存、更不进系统提示。
+  const projectTrusted = options.projectTrusted ?? true
   let total = 0
   const files: AgentContextFile[] = []
   const errors: Array<{ path: string; error: string }> = []
+  const withheld: Array<{ name: AgentContextPath['name']; path: string }> = []
   for (const item of resolveAgentContextPaths(options.home, options.projectRoot ?? null)) {
     if (!exists(item.path)) continue
+    if (item.source === 'project' && !projectTrusted) {
+      withheld.push({ name: item.name, path: item.path })
+      continue
+    }
     try {
       const remaining = Math.max(0, maxTotalCharacters - total)
       const limit = Math.min(maxFileCharacters, remaining)
@@ -66,7 +77,7 @@ export function readAgentContextFiles(options: AgentContextReadOptions = {}): Ag
       errors.push({ path: item.path, error: error instanceof Error ? error.message : '读取失败' })
     }
   }
-  return { files, errors }
+  return withheld.length ? { files, errors, withheld } : { files, errors }
 }
 
 /** 将已读取的指令文件转换为 system prompt 片段；文件内容不进入普通日志。 */

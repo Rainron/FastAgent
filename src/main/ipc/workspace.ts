@@ -1,6 +1,6 @@
 import { isExternalHttpUrl } from '../../renderer/ai-response/sanitize-url'
 import type { GitStatusEntry, GitWorkspaceState, PageQuery, WorkspaceSnapshot } from '../../shared/types'
-import { readAgentContextFiles } from '../agent-context'
+import { readAgentContextFiles, resolveAgentContextPaths } from '../agent-context'
 import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from '../agent-init'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
 import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState } from '../git'
@@ -10,7 +10,7 @@ import { openTerminalAt } from '../open-terminal'
 import { shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { IpcRegistrar, MainContext } from '../app-context'
 
@@ -38,10 +38,22 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
     const existing = ctx.store.getProjectByPath(namespace, input.path)
     const color = existing?.color ?? (ctx.store.listProjects(namespace).length % 2 === 0 ? 'calm' : 'tech')
     const project = ctx.store.upsertProject(namespace, { id: existing?.id ?? `project-${randomUUID()}`, name: input.name || basename(input.path) || input.path, path: input.path, color })
+    // 用户主动把目录添加为项目 = 显式信任其指令文件；不 seed 的话每个新项目都要再点一次信任。
+    if (!ctx.store.getProjectTrust(namespace, input.path)) ctx.store.setProjectTrust(namespace, input.path, true)
     const contextFiles = readAgentContextFiles({ projectRoot: input.path }).files
       .filter((file) => file.source === 'project')
       .map((file) => file.name)
     return { ...project, agentContextFiles: contextFiles }
+  })
+  handle('projects:trust-status', (_event, path: string) => {
+    const namespace = ctx.requireNamespace()
+    // 顺带探没指令文件：没文件的项目不值得占一个菜单项；两种读法各探一次太浪费，直接看文件存在性。
+    const hasAgentContextFiles = resolveAgentContextPaths(undefined, path).some((item) => item.source === 'project' && existsSync(item.path))
+    return { trusted: ctx.store.isProjectTrusted(namespace, path), hasAgentContextFiles }
+  })
+  handle('projects:set-trust', (_event, path: string, trusted: boolean) => {
+    ctx.store.setProjectTrust(ctx.requireNamespace(), path, trusted)
+    return ctx.store.getProjectTrust(ctx.requireNamespace(), path)
   })
   handle('projects:touch', (_event, id: string) => ctx.store.touchProject(ctx.requireNamespace(), id))
   handle('projects:archive', (_event, id: string) => ctx.store.archiveProject(ctx.requireNamespace(), id))

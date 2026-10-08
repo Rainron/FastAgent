@@ -22,13 +22,14 @@ import { MOTION_DURATIONS, motionEnabled } from '../motion'
 import { ComposerOverflow, ModelSelector, PermissionSelector, ReasoningSelector } from './ComposerSelectors'
 import { FullAccessDialog } from './FullAccessDialog'
 import { ResumeMenu } from './ResumeMenu'
+import { WorkspaceMenu } from './WorkspaceMenu'
 import { lineBoundary } from './composer-shortcuts'
 import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidationError, type AttachmentPolicy } from '../../shared/attachment-policy'
 
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
-export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
+export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
@@ -649,6 +650,8 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     <div className="composer-toolbar">
       <button className="toolbar-icon" onClick={() => fileInputRef.current?.click()} aria-label="添加附件" title="添加附件"><Paperclip size={16} /></button>
       <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.pdf" hidden onChange={(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+      {/* 这一轮落在哪个项目、哪个分支：和右侧的运行配置对称，左边是「在哪做」，右边是「怎么做」 */}
+      {workspace && <WorkspaceMenu name={workspace.name} path={workspace.path} compact={density === 'compact'} onReveal={onRevealWorkspace} onCopyPath={onCopyWorkspacePath} onChangeFolder={onChangeWorkspace} onOpenTerminal={onOpenWorkspaceTerminal} trust={workspaceTrust} onToggleTrust={onToggleWorkspaceTrust} />}
       {gitState && <GitBranchTrigger state={gitState} compact={density === 'compact'} anyRunActive={gitAnyRunActive} onCheckout={onGitCheckout} onCreate={onGitCreate} onStopAndCheckout={onGitStopAndCheckout} />}
       <div className="toolbar-spacer" />
       {planMode && <button className="composer-chip plan-chip" onClick={onTogglePlanMode} title="计划模式已开启：只产出实施计划，Shift+Tab 或点击退出">Plan</button>}

@@ -287,6 +287,8 @@ const api: FastAgentApi = {
     touch: (id: string): Promise<ProjectRecord | null> => ipcRenderer.invoke('projects:touch', id),
     archive: (id: string): Promise<void> => ipcRenderer.invoke('projects:archive', id),
     remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id),
+    trustStatus: (path: string): Promise<{ trusted: boolean; hasAgentContextFiles: boolean }> => ipcRenderer.invoke('projects:trust-status', path),
+    setTrust: (path: string, trusted: boolean): Promise<{ trusted: boolean }> => ipcRenderer.invoke('projects:set-trust', path, trusted)
   },
   search: {
     query: (input: SearchQuery): Promise<SearchResponse> => ipcRenderer.invoke('search:query', input)

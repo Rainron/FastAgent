@@ -8,6 +8,7 @@ import { AgentRunBar } from '../composer/AgentRunBar'
 import { ResumeBar } from '../composer/ResumeBar'
 import { Composer } from '../composer/Composer'
 import { MIN_COMPOSER_HEIGHT } from '../composer/composer-height'
+import type { ProjectTrustState } from '../composer/WorkspaceMenu'
 import { ApprovalDialog } from '../conversation/ApprovalDialog'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { truncateTurnsForRerun } from './rerun-turns'
@@ -1171,6 +1172,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   }), [])
 
   const selectedModel = allModels.find((item) => item.id === selectedModelId) ?? allModels[0] ?? null
+  const selectedProject = selectedProjectId ? projectItems.find((item) => item.id === selectedProjectId) ?? null : null
+  // 输入框是 memo 组件，项目对象按名称与路径缓存，列表刷新不该让它重渲染
+  const composerWorkspace = useMemo(() => (selectedProject ? { name: selectedProject.name, path: selectedProject.path } : null), [selectedProject?.name, selectedProject?.path])
   const selectedConversationCompaction = selectedConversationId ? compactionStates[selectedConversationId] ?? null : null
   /**
    * 这条会话实际生效的压缩策略，判定规则与主进程 resolvePolicy 同源。
@@ -1321,6 +1325,29 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     if (nextPermission) applyDefaultPermission(nextPermission)
   })
   const handleTogglePlanMode = useEventCallback(() => setPlanMode((current) => !current))
+  const handleOpenWorkspaceTerminal = useEventCallback(() => {
+    if (!workspaceRoot) { setNotice('先打开一个项目再开终端'); return }
+    setTerminalOpen(true)
+  })
+  const handleRevealWorkspace = useEventCallback(() => { if (composerWorkspace) void openProjectFolder(composerWorkspace.path) })
+  const handleCopyWorkspacePath = useEventCallback(() => { if (composerWorkspace) void copyText(composerWorkspace.path) })
+  // Project Trust：跟随当前项目加载信任状态；切换项目或手动 toggle 后重查。查询失败静默，入口不展示。
+  const [workspaceTrust, setWorkspaceTrust] = useState<ProjectTrustState | null>(null)
+  useEffect(() => {
+    if (!composerWorkspace) { setWorkspaceTrust(null); return }
+    let cancelled = false
+    void window.fastAgent.projects.trustStatus(composerWorkspace.path)
+      .then((status) => { if (!cancelled) setWorkspaceTrust(status) })
+      .catch(() => { if (!cancelled) setWorkspaceTrust(null) })
+    return () => { cancelled = true }
+  }, [composerWorkspace?.path])
+  const handleToggleWorkspaceTrust = useEventCallback((trusted: boolean) => {
+    if (!composerWorkspace) return
+    void window.fastAgent.projects.setTrust(composerWorkspace.path, trusted)
+      .then(() => setWorkspaceTrust((current) => current ? { ...current, trusted } : current))
+      .then(() => setNotice(trusted ? '已信任该项目，下一轮起 AGENTS/CLAUDE 注入系统提示' : '已撤销信任，下一轮起 AGENTS/CLAUDE 不再注入'))
+      .catch(() => setNotice('信任状态更新失败'))
+  })
   const handleThinkingLevelChange = useEventCallback((level: import('../../shared/types').ThinkingLevel) => setThinkingLevel(level))
   const handleManageModels = useEventCallback(() => openSettings('models'))
   /** 统一搜索结果的跳转：四类各自落到已有入口，不新造展示页。 */
@@ -1479,7 +1506,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             {pressure && <ContextPressureBar pressure={pressure} onCompact={handleCompact} onOpenSettings={handleOpenContextSettings} />}
-            <Composer shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
+            <Composer workspace={composerWorkspace} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
           </> : <SectionView key={section} onInsertComposer={handleInsertMcpPrompt} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}

@@ -341,6 +341,10 @@ export interface FastAgentApi {
     touch(id: string): Promise<ProjectRecord | null>
     archive(id: string): Promise<void>
     remove(id: string): Promise<void>
+    /** 项目指令文件（AGENTS/CLAUDE）信任状态；没探到指令文件时不值得展示信任入口。 */
+    trustStatus(path: string): Promise<{ trusted: boolean; hasAgentContextFiles: boolean }>
+    /** 信任/撤销信任；信任变更后下一轮 Agent 运行重建运行时并重新注入指令。 */
+    setTrust(path: string, trusted: boolean): Promise<{ trusted: boolean }>
   }
   search: {
     /** 统一搜索：会话标题、项目知识、Skill、成果。Skill 是全局能力，按项目过滤时不参与。 */

@@ -8,7 +8,7 @@ import {
   ensureConversationModelColumn, ensureConversationProjectColumn, ensureFileChangeBeforeText,
   ensureCompactionContextWindow, ensureSummarySourceColumn, ensureTodoPlanColumns, ensureTodoStatusExtended,
   ensureToolCallSourceColumn, ensureToolCallSubAgentColumns, ensureTurnSessionAnchorColumn, ensureTurnStatusInterrupted,
-  migrateLegacyMessages, migrateModelSessionToConversation, stripEventExecutionSnapshots,
+  migrateLegacyMessages, migrateModelSessionToConversation, seedProjectTrustFromProjects, stripEventExecutionSnapshots,
   SCHEMA_VERSION
 } from './migrations'
 
@@ -53,5 +53,6 @@ export function applyMigrations(db: Database.Database) {
   if (current < 4) migrateSharedWorkspace(db)
   if (current < 5) migrateLegacyLocalModels(db)
   if (current < 6) backfillConversationModelId(db)
+  if (current < 7) seedProjectTrustFromProjects(db)
   db.pragma(`user_version = ${SCHEMA_VERSION}`)
 }

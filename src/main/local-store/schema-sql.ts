@@ -269,6 +269,14 @@ export const SCHEMA_SQL = `
         PRIMARY KEY(namespace, project_id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS projects_path ON projects(namespace, path);
+      CREATE TABLE IF NOT EXISTS project_trust (
+        namespace TEXT NOT NULL,
+        trust_key TEXT NOT NULL,
+        trusted INTEGER NOT NULL,
+        display_path TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(namespace, trust_key)
+      );
       CREATE TABLE IF NOT EXISTS tool_calls (
         namespace TEXT NOT NULL,
         id TEXT NOT NULL,

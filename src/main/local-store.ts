@@ -24,6 +24,7 @@ import { LocalModelStore } from './local-store/local-model-store'
 import { McpStore } from './local-store/mcp-store'
 import { MemoryStore } from './local-store/memory-store'
 import { PermissionStore } from './local-store/permission-store'
+import { ProjectTrustStore } from './local-store/project-trust-store'
 import { SettingsStore } from './local-store/settings-store'
 import { SkillVersionStore } from './local-store/skill-version-store'
 import type { ConversationRecord } from './local-store/row-mappers'
@@ -61,6 +62,7 @@ export class LocalStore {
   private readonly mcpRepository: McpStore
   private readonly memoryRepository: MemoryStore
   private readonly permissionRepository: PermissionStore
+  private readonly projectTrustRepository: ProjectTrustStore
   private readonly settingsRepository: SettingsStore
   private readonly skillVersionRepository: SkillVersionStore
 
@@ -90,6 +92,7 @@ export class LocalStore {
     this.mcpRepository = new McpStore(this.db)
     this.memoryRepository = new MemoryStore(this.db)
     this.permissionRepository = new PermissionStore(this.db)
+    this.projectTrustRepository = new ProjectTrustStore(this.db)
     this.skillVersionRepository = new SkillVersionStore(this.db)
   }
 
@@ -315,6 +318,9 @@ export class LocalStore {
   listPermissionRules(namespace: string): StoredPermissionRule[] { return this.permissionRepository.listPermissionRules(namespace) }
   upsertPermissionRule(namespace: string, input: { toolKey: string; pattern: string; action: PermissionAction }) { this.permissionRepository.upsertPermissionRule(namespace, input) }
   removePermissionRule(namespace: string, toolKey: string, pattern: string) { this.permissionRepository.removePermissionRule(namespace, toolKey, pattern) }
+  isProjectTrusted(namespace: string, projectPath: string): boolean { return this.projectTrustRepository.isTrusted(namespace, projectPath) }
+  getProjectTrust(namespace: string, projectPath: string) { return this.projectTrustRepository.get(namespace, projectPath) }
+  setProjectTrust(namespace: string, projectPath: string, trusted: boolean) { this.projectTrustRepository.set(namespace, projectPath, trusted) }
   listPermissionProfiles(namespace: string): StoredPermissionProfile[] { return this.permissionRepository.listPermissionProfiles(namespace) }
   savePermissionProfile(namespace: string, profile: StoredPermissionProfile) { this.permissionRepository.savePermissionProfile(namespace, profile) }
   removePermissionProfile(namespace: string, profileId: string) { this.permissionRepository.removePermissionProfile(namespace, profileId) }

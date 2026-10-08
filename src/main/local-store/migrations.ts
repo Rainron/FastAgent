@@ -1,7 +1,9 @@
 import type Database from 'better-sqlite3'
+import { resolve } from 'node:path'
 import { createArtifactId, inferArtifactType } from '../../shared/artifact'
 import { stripEventExecutions } from '../turn-activity'
 import { defaultRuntimeConfig } from './row-mappers'
+import { normalizeTrustKey } from './project-trust-store'
 
 /**
  * 成果版本恢复要的是「本轮第一次写之前的原文」。旧库没有这一列，补上即可，
@@ -376,9 +378,29 @@ export function backfillConversationModelId(db: Database.Database) {
 }
 
 /**
+ * 把存量 projects 表里的路径一次性 seed 成已信任（v7 随 Project Trust 引入）。
+ * 升级前用户已主动使用这些项目，不 seed 会让既有项目的指令文件静默失效。
+ * 幂等：INSERT OR IGNORE 只补缺失行，不覆盖用户主动撤销的信任。
+ */
+export function seedProjectTrustFromProjects(db: Database.Database) {
+  const namespaces = db.prepare('SELECT DISTINCT namespace FROM projects').all() as Array<{ namespace: string }>
+  const selectPaths = db.prepare('SELECT path FROM projects WHERE namespace = ?')
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO project_trust (namespace, trust_key, trusted, display_path, updated_at) VALUES (?, ?, 1, ?, ?)'
+  )
+  const now = new Date().toISOString()
+  for (const { namespace } of namespaces) {
+    const rows = selectPaths.all(namespace) as Array<{ path: string }>
+    for (const row of rows) {
+      insert.run(namespace, normalizeTrustKey(row.path), resolve(row.path), now)
+    }
+  }
+}
+
+/**
  * 当前 schema 版本。迁移全部是幂等的，但 migrateLegacyMessages、
  * migrateModelSessionToConversation 与 backfillArtifactsFromTurnEvents 每次都要全表扫，
  * 库大了就是白付的启动开销。跑完记在 user_version 上，之后启动直接跳过；
  * 旧库 user_version 为 0，仍会补跑一次。
  */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7

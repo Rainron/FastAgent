@@ -208,8 +208,15 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     // cwd 只由会话归属决定：未归属会话不得继承界面上「当前打开的工作区」。
     // 未归属时落到固定的快速工作区，而不是 pi 默认的 process.cwd()——那是应用安装目录。
     const conversationRoot = ctx.store.getConversationRoot(namespace, conversationId) ?? ctx.appPaths.quickWorkspaceDir
-    const agentContext = mode === 'agent' ? readAgentContextFiles({ projectRoot: conversationRoot }) : { files: [], errors: [] }
+    // Project Trust 门控：未信任项目的 AGENTS/CLAUDE 不读内容、不进系统提示，
+    // 防克隆仓库借指令文件注入系统级指令。门控在读取层，未信任内容不进内存。
+    const projectTrusted = !conversationRoot || ctx.store.isProjectTrusted(namespace, conversationRoot)
+    const agentContext = mode === 'agent' ? readAgentContextFiles({ projectRoot: conversationRoot, projectTrusted }) : { files: [], errors: [] }
     if (agentContext.errors.length) console.warn(`[agent-context] ${agentContext.errors.length} 个指令文件读取失败`)
+    if (agentContext.withheld?.length) {
+      const names = agentContext.withheld.map((item) => item.name).join('、')
+      emit({ type: 'run_phase', phase: 'initializing', detail: `项目指令文件（${names}）未加载：该项目尚未信任，可在项目菜单中信任后生效`, status: 'completed' })
+    }
     const agentContextPrompt = mode === 'agent'
       ? mergeAgentContextFiles(agentContext.files, buildFaDirectoryContext(ctx.appPaths))
       : ''
@@ -272,6 +279,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       subAgents: ctx.settings.subAgentEnabled ? normalizeCustomSubAgents(ctx.settings.subAgents) : [],
       contextPolicy: policy,
       sandbox: mode === 'agent' ? ctx.settings.sandbox : null,
+      // 信任变更必须重建运行时：未信任时系统提示里没有项目指令，信任后要重新注入。
+      projectTrusted,
       agentContext: agentContext.files.map((file) => ({ path: file.path, content: file.content, truncated: file.truncated }))
     })).digest('hex')
     const bridge = createApprovalBridge(runId, emit, conversationRoot)

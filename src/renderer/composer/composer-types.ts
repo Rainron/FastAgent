@@ -4,6 +4,7 @@ import type { CompactionState } from '../conversation/compaction-state'
 import type { ContextHealthData } from '../conversation/ContextHealth'
 import type { QueuedPrompt } from '../conversation/prompt-queue'
 import type { WorkspaceConversation } from '../workspace/workspace-types'
+import type { ProjectTrustState } from './WorkspaceMenu'
 
 export interface ComposerModeProps {
   mode: ConversationMode
@@ -70,6 +71,18 @@ export interface ComposerCommandProps {
   currentProjectId: string | null
 }
 
+export interface ComposerWorkspaceProps {
+  /** 输入框上方上下文条里的项目；null（快速对话）时没有项目入口，再没有 Git 状态整条就不渲染。 */
+  workspace: { name: string; path: string } | null
+  onRevealWorkspace: () => void
+  onCopyWorkspacePath: () => void
+  onChangeWorkspace: () => void
+  onOpenWorkspaceTerminal: () => void
+  /** Project Trust：项目指令文件信任状态与切换；null 时不展示入口。 */
+  workspaceTrust?: ProjectTrustState | null
+  onToggleWorkspaceTrust?: (trusted: boolean) => void
+}
+
 export interface ComposerGitProps {
   /** Git 分支展示与切换；null 时不渲染入口。 */
   gitState: GitWorkspaceState | null
@@ -102,6 +115,7 @@ export type ComposerProps =
   & ComposerRunProps
   & ComposerContextProps
   & ComposerCommandProps
+  & ComposerWorkspaceProps
   & ComposerGitProps
   & ComposerLayoutProps
   & ComposerRequestProps
