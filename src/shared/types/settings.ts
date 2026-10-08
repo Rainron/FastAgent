@@ -3,6 +3,7 @@ import type { SandboxSettings } from '../sandbox'
 import type { AgentAbilityPolicy } from './abilities'
 import type { AppTheme, ContextStrategy, ConversationMode, ThinkingLevel } from './common'
 import type { MemorySettings } from './memory'
+import type { ShellCommandSettings } from './shell-command'
 import type { ShortcutSettings } from './shortcuts'
 
 export interface StoredPermissionRule {
@@ -151,6 +152,8 @@ export interface AppSettings {
   shellPreference: 'bash' | 'powershell'
   /** 显式指定的 bash 路径（如 Git Bash / MSYS2 的 bash.exe）；空串表示自动探测 */
   bashPath: string
+  /** 输入框 `!命令` 直接执行 shell；缺省视为默认值（开启 + 只本地显示） */
+  shellCommand?: ShellCommandSettings
   /** Ctrl+G 外部编辑使用的编辑器可执行文件路径；空串表示用系统默认应用打开草稿 */
   externalEditorPath: string
   /** Agent 可发现的能力范围；当前只实现 all_enabled 分支 */

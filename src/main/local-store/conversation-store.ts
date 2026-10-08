@@ -175,6 +175,12 @@ export class ConversationStore {
     return rows.map((row) => this.mapTurn(row))
   }
 
+  /** 只读命令上下文需要的两列，避免把整段 activity/events 反序列化。 */
+  listShellCommandTurns(namespace: string, conversationId: string): Array<Pick<ConversationTurn, 'userMessage' | 'assistantMessage'>> {
+    const rows = this.db.prepare("SELECT user_message, assistant_message FROM conversation_turns WHERE namespace = ? AND conversation_id = ? AND status = 'completed' AND user_message LIKE '!%' AND assistant_message IS NOT NULL ORDER BY created_at ASC, turn_id ASC").all(namespace, conversationId) as Array<{ user_message: string; assistant_message: string }>
+    return rows.map((row) => ({ userMessage: JSON.parse(row.user_message) as ConversationTurn['userMessage'], assistantMessage: JSON.parse(row.assistant_message) as ConversationTurn['assistantMessage'] }))
+  }
+
   /**
    * 末轮的运行配置与状态。会话概览只需要这两项，走 listTurns 会把整段历史
    * 连同 activity/events 一起反序列化，列表页上是按会话数放大的浪费。

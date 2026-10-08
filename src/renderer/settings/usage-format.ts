@@ -1,4 +1,4 @@
-import type { ModelUsageDayRow, ModelUsageOverview } from '../../shared/types'
+import type { ModelUsageDayRow, ModelUsageOverview, ModelUsageWindow } from '../../shared/types'
 
 /** 中文环境统一用「万」做单位；千位以内直接给原值，便于精确核对。 */
 export function formatTokenCount(value: number): string {
@@ -73,4 +73,34 @@ export function windowLabel(days: number, now: Date = new Date()): string {
   const start = new Date(end.getTime() - (days - 1) * 86_400_000)
   const fmt = (date: Date) => `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
   return `${fmt(start)} ~ ${fmt(end)}`
+}
+
+/** 本地日期串（YYYY-MM-DD）。用本地字段拼而不是 toISOString：后者按 UTC 切天，东八区傍晚会差一天。 */
+export function dayKey(date: Date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 在日期串上加减天数，用于给自定义区间算默认起点。 */
+export function shiftDay(key: string, days: number): string {
+  const [year, month, day] = key.split('-').map(Number)
+  return dayKey(new Date(year, month - 1, day + days))
+}
+
+/** 起止顺序颠倒时交换；两端都算在窗口内，与主进程的 BETWEEN 一致。 */
+export function normalizeUsageRange(start: string, end: string): { start: string; end: string } {
+  return start <= end ? { start, end } : { start: end, end: start }
+}
+
+/** 闭区间天数，用于自定义窗口的「共 N 天」。 */
+export function countRangeDays(start: string, end: string): number {
+  const range = normalizeUsageRange(start, end)
+  const toDate = (key: string) => { const [y, m, d] = key.split('-').map(Number); return new Date(y, m - 1, d) }
+  return Math.round((toDate(range.end).getTime() - toDate(range.start).getTime()) / 86_400_000) + 1
+}
+
+/** 顶卡上的窗口说明。自定义区间直接报起止，不再说「近 N 天」，否则两种口径混在一起。 */
+export function usageWindowSummary(window: ModelUsageWindow, now: Date = new Date()): string {
+  if (typeof window === 'number') return `近 ${window} 天 · ${windowLabel(window, now)}`
+  const { start, end } = normalizeUsageRange(window.start, window.end)
+  return `${start.slice(5)} ~ ${end.slice(5)} · 共 ${countRangeDays(start, end)} 天`
 }

@@ -67,6 +67,8 @@ export interface ComposerCommandProps {
   onSelectConversation: (item: WorkspaceConversation) => void
   onClearConversation: () => Promise<void>
   onInitProject: () => Promise<void>
+  /** `!命令`：直接执行 shell，不发给模型。设置里关掉时为 undefined，`!` 当普通文本。 */
+  onRunShellCommand?: (command: string) => void
   /** /resume 的语境依据：当前选中项目 id，null 表示快速对话，列表按它过滤。 */
   currentProjectId: string | null
 }

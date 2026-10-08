@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { ModelUsageAggregate, ModelUsageDayRow, ModelUsageModelRow, ModelUsageOverview, ModelUsageRecord, ModelUsageSummary } from '../shared/types'
+import type { ModelUsageAggregate, ModelUsageDayRow, ModelUsageModelRow, ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, ModelUsageWindow } from '../shared/types'
 
 export const MODEL_USAGE_SCHEMA_SQL = `
   CREATE TABLE IF NOT EXISTS model_request_usage (
@@ -40,6 +40,22 @@ const AGGREGATE_COLUMNS = `COUNT(*) AS requestCount,
   COALESCE(SUM(CASE WHEN read_availability = 'reported' THEN cache_read_tokens ELSE 0 END), 0) AS cacheReadTokens,
   COALESCE(SUM(CASE WHEN write_availability = 'reported' THEN cache_write_tokens ELSE 0 END), 0) AS cacheWriteTokens`
 
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * 窗口条件。自选区间按本地日期闭区间过滤，与 byDay 的 localtime 分组同口径，
+ * 否则用户选到某天、图上那天却因为时区偏移少一截。日期不合法时退回默认天数。
+ */
+function usageWindowFilter(window: ModelUsageWindow): { clause: string; params: string[] } {
+  if (typeof window === 'object' && window !== null && DAY_PATTERN.test(window.start) && DAY_PATTERN.test(window.end)) {
+    const [start, end] = window.start <= window.end ? [window.start, window.end] : [window.end, window.start]
+    return { clause: `namespace = ? AND date(created_at, 'localtime') BETWEEN ? AND ?`, params: [start, end] }
+  }
+  const days = typeof window === 'number' ? window : 30
+  const clamped = Math.min(Math.max(Math.trunc(days) || 30, 1), 365)
+  return { clause: 'namespace = ? AND created_at >= ?', params: [new Date(Date.now() - clamped * 86_400_000).toISOString()] }
+}
+
 export class ModelUsageStore {
   constructor(private readonly db: Database.Database) {}
 
@@ -67,27 +83,25 @@ export class ModelUsageStore {
     this.db.prepare('DELETE FROM model_request_usage WHERE namespace = ? AND conversation_id = ?').run(namespace, conversationId)
   }
 
-  /** 用量仪表盘的跨会话聚合。days 上限 365，避免一次性拉全库；日粒度按本地时区切天。 */
-  overview(namespace: string, days: number): ModelUsageOverview {
-    const clamped = Math.min(Math.max(Math.trunc(days) || 30, 1), 365)
-    const since = new Date(Date.now() - clamped * 86_400_000).toISOString()
-    const range = 'namespace = ? AND created_at >= ?'
+  /** 用量仪表盘的跨会话聚合。天数上限 365，避免一次性拉全库；日粒度按本地时区切天。 */
+  overview(namespace: string, window: ModelUsageWindow = 30): ModelUsageOverview {
+    const { clause: range, params } = usageWindowFilter(window)
     const totals = this.db.prepare(`SELECT COUNT(*) AS requestCount,
       COALESCE(SUM(status = 'failed'), 0) AS failedCount,
       COALESCE(SUM(status = 'cancelled'), 0) AS cancelledCount,
-      ${AGGREGATE_COLUMNS} FROM model_request_usage WHERE ${range}`).get(namespace, since) as ModelUsageOverview['totals']
+      ${AGGREGATE_COLUMNS} FROM model_request_usage WHERE ${range}`).get(namespace, ...params) as ModelUsageOverview['totals']
     const byModel = this.db.prepare(`SELECT provider, model_name AS modelName,
       COUNT(*) AS requestCount, COALESCE(SUM(status = 'failed'), 0) AS failedCount,
       ${AGGREGATE_COLUMNS}, MAX(created_at) AS lastUsedAt
       FROM model_request_usage WHERE ${range}
       GROUP BY provider, model_name
-      ORDER BY inputTokens + outputTokens DESC, requestCount DESC`).all(namespace, since) as ModelUsageModelRow[]
+      ORDER BY inputTokens + outputTokens DESC, requestCount DESC`).all(namespace, ...params) as ModelUsageModelRow[]
     const byDay = this.db.prepare(`SELECT date(created_at, 'localtime') AS day,
       COUNT(*) AS requestCount,
       COALESCE(SUM(input_tokens + cache_read_tokens + cache_write_tokens), 0) AS inputTokens,
       COALESCE(SUM(output_tokens), 0) AS outputTokens
       FROM model_request_usage WHERE ${range}
-      GROUP BY day ORDER BY day`).all(namespace, since) as ModelUsageDayRow[]
+      GROUP BY day ORDER BY day`).all(namespace, ...params) as ModelUsageDayRow[]
     return { totals, byModel, byDay }
   }
 }

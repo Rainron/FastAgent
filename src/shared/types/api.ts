@@ -9,7 +9,7 @@ import type { AgentRunChanges, FileVersionRecord } from './changes'
 import type { ActiveRunInfo, AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
 import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
 import type { ApprovalDecision, ApprovalRequest, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
-import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageOverview, ModelUsageSummary, TurnContextSource } from './context'
+import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageOverview, ModelUsageSummary, ModelUsageWindow, TurnContextSource } from './context'
 import type { Attachment, ConversationDetailed, ConversationInspector, ConversationPageQuery, ConversationRecord, ConversationStats, ConversationTurn, ConversationTurnPatch } from './conversation'
 import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, MemoryUpdateInput } from './memory'
 import type { LocalModelSummary, LocalModelTestResult } from './models'
@@ -18,6 +18,7 @@ import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, 
 import type { RuntimeReport } from './runtime'
 import type { SandboxCapabilities, SandboxSessionInfo } from './sandbox'
 import type { SearchQuery, SearchResponse } from './search'
+import type { ShellCommandChunk, ShellCommandRequest, ShellCommandResult } from './shell-command'
 import type { TerminalAttachment, TerminalChunk, TerminalExit, TerminalSessionInfo } from './terminal'
 import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, RendererErrorReport, StartupWarnings, StoredPermissionRule } from './settings'
 import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
@@ -238,8 +239,8 @@ export interface FastAgentApi {
     markRead(conversationId: string): Promise<void>
   }
   usage: {
-    /** 跨会话用量聚合；days 由调用方选 7/30/90，主进程会夹到 1..365。 */
-    overview(days: number): Promise<ModelUsageOverview>
+    /** 跨会话用量聚合；给天数时主进程夹到 1..365，给日期区间时按本地日期闭区间统计。 */
+    overview(window: ModelUsageWindow): Promise<ModelUsageOverview>
   },
   conversations: {
     list(): Promise<ConversationRecord[]>
@@ -430,6 +431,15 @@ export interface FastAgentApi {
     openPath(path: string): Promise<string>
     /** 仅 http/https，其它协议返回错误信息且不会打开。 */
     openExternal(url: string): Promise<string>
+    /**
+     * 输入框 `!命令`：在工作区根目录执行一条命令并等它退出。
+     * 会话有活跃运行时复用其沙箱会话，命令与 agent 的 shell 工具落在同一隔离环境。
+     */
+    runCommand(input: ShellCommandRequest & { conversationId?: string | null }): Promise<ShellCommandResult>
+    /** 终止仍在跑的 `!` 命令；命令已结束时返回 false。 */
+    cancelCommand(id: string): Promise<boolean>
+    /** `!` 命令的增量输出，返回取消订阅函数。 */
+    onCommandOutput(listener: (payload: ShellCommandChunk) => void): () => void
   }
   terminal: {
     /** 仍活着的终端会话；面板重新挂载时靠它接回原来的 shell。 */

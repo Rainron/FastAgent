@@ -22,23 +22,33 @@ import { todoStats } from './todo-status'
 import { ToolCallCard } from './ToolCallCard'
 import { MemoryTurnBar } from './MemoryTurnBar'
 import { ContextSourceBar } from './ContextSourceBar'
+import { ShellCommandCard } from './ShellCommandCard'
+import { groupShellEntries, type ShellCommandEntry } from './shell-entries'
 
-export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, memoryTurnIds, contextSourceTurnIds, compactionHistory, contextWindow, onNotice, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; memoryTurnIds: ReadonlySet<string>; contextSourceTurnIds: ReadonlySet<string>; compactionHistory?: CompactionHistory[]; contextWindow?: number; onNotice: (notice: string) => void; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
+export const MessageList = React.memo(function MessageList({ turns, models, todosByTurn, memoryTurnIds, contextSourceTurnIds, shellEntries, onCancelShellCommand, onDismissShellCommand, compactionHistory, contextWindow, onNotice, onCopy, onDelete, onRetry, onRegenerate, onEdit, onContinue, onShowContextMenu }: { turns: ConversationTurn[]; models: ModelOption[]; todosByTurn: Record<string, TodoItem[]>; memoryTurnIds: ReadonlySet<string>; contextSourceTurnIds: ReadonlySet<string>; shellEntries: ShellCommandEntry[]; onCancelShellCommand: (id: string) => void; onDismissShellCommand: (id: string) => void; compactionHistory?: CompactionHistory[]; contextWindow?: number; onNotice: (notice: string) => void; onCopy: (text: string) => void; onDelete: (turnId: string) => void; onRetry: (turn: ConversationTurn) => void; onRegenerate: (turn: ConversationTurn) => void; onEdit: (turn: ConversationTurn, text: string, attachments: Attachment[]) => void; onContinue: (turn: ConversationTurn) => void; onShowContextMenu: (event: React.MouseEvent, turn: ConversationTurn) => void }) {
   const modelChanges = useMemo(() => modelChangeTurnIds(turns), [turns])
+  const turnIds = useMemo(() => turns.map((turn) => turn.id), [turns])
+  // 会话里的 `!命令` 记录按「在哪个回合前后」分组：没有回合归属的排在最前。
+  const shellGroups = useMemo(() => groupShellEntries(shellEntries, turnIds), [shellEntries, turnIds])
   // 压缩分隔卡只跟回合的 id/createdAt 有关，流式期间正文变化不必重算。
   const turnAnchors = useMemo(() => turns.map((turn) => ({ id: turn.id, createdAt: turn.createdAt })), [turns])
   const compactionMarkers = useMemo(() => buildCompactionMarkers(turnAnchors, compactionHistory ?? []), [turnAnchors, compactionHistory])
   const renderCompaction = (records: CompactionHistory[] | undefined) => records?.map((record) =>
     <CompactionMarker key={record.id} record={record} contextWindow={contextWindow ?? 0} />)
+  const renderShell = (entries: ShellCommandEntry[] | undefined) => entries?.map((entry) =>
+    <ShellCommandCard key={entry.id} entry={entry} onCancel={onCancelShellCommand} onDismiss={onDismissShellCommand} />)
   const knownTurnIds = useRef<Set<string> | null>(null)
   if (knownTurnIds.current === null) knownTurnIds.current = new Set(turns.map((turn) => turn.id))
-  return <div className="conversation-content message-list">{turns.map((turn) => {
+  return <div className="conversation-content message-list">
+    {renderShell(shellGroups.leading)}
+    {turns.map((turn) => {
     const isNew = !knownTurnIds.current!.has(turn.id)
     knownTurnIds.current!.add(turn.id)
     return <React.Fragment key={turn.id}>
       {renderCompaction(compactionMarkers.beforeTurnId[turn.id])}
       {modelChanges.has(turn.id) && <ModelChangeMarker label={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} />}
       <ConversationTurnView isNew={isNew} turn={turn} todos={todosByTurn[turn.id]} hasMemoryActivity={memoryTurnIds.has(turn.id)} hasContextSources={contextSourceTurnIds.has(turn.id)} modelName={models.find((model) => model.id === turn.runtimeConfig.modelId)?.model_name} onCopy={onCopy} onDelete={onDelete} onRetry={onRetry} onRegenerate={onRegenerate} onEdit={onEdit} onContinue={onContinue} onShowContextMenu={onShowContextMenu} onNotice={onNotice} />
+      {renderShell(shellGroups.byTurnId[turn.id])}
     </React.Fragment>
   })}
     {renderCompaction(compactionMarkers.trailing)}

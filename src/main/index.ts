@@ -9,6 +9,7 @@ import { ApiClient, ApiError } from './api-client'
 import { extractDialogueReply } from './model-dialogue'
 import { createAbilitiesService } from './abilities-service'
 import { settlePendingRequests } from './approval-bridge'
+import { cancelAllShellCommands } from './shell-command'
 import { buildEffectiveRules } from './agent/permission/effective-rules'
 import { LocalStore } from './local-store'
 import { ModelConnectionService } from './model-connections'
@@ -60,6 +61,7 @@ import { findProfile, mergeProfiles } from '../shared/permission-profiles'
 import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../shared/model-context-windows'
 import { applyOverride, overrideKey } from '../shared/model-parameters'
 import { defaultSandboxSettings, normalizeSandboxSettings } from '../shared/sandbox'
+import { DEFAULT_SHELL_COMMAND_SETTINGS } from '../shared/shell-command'
 import { SandboxManager } from './agent/sandbox/sandbox-manager'
 import { SUBAGENT_LIMITS } from './agent/subagent/subagent-types'
 import { resolveSandboxPaths, WindowsSandboxProvider } from './agent/sandbox/providers/windows-native/windows-sandbox-provider'
@@ -280,6 +282,7 @@ const defaultSettings: AppSettings = {
   forceCompaction: false,
   shellPreference: 'bash',
   bashPath: '',
+  shellCommand: DEFAULT_SHELL_COMMAND_SETTINGS,
   externalEditorPath: '',
   agentAbilityPolicy: { mode: 'all_enabled', agentAbilityIds: [] },
   subAgentEnabled: true,
@@ -1295,6 +1298,7 @@ async function confirmInterruptRuns(action: '重启' | '退出') {
 }
 
 function stopActiveWork() {
+  cancelAllShellCommands()
   for (const run of activeRuns.values()) run.controller.abort()
   activeRuns.clear()
   settlePendingRequests(new DOMException('应用正在退出', 'AbortError'))
@@ -1686,6 +1690,7 @@ app.on('before-quit', () => {
   // 退出清理里任何一步抛出都会让进程卡住不退，下一次启动又被单实例锁挡住，
   // 于是表现成「重启后没反应」。逐步隔离，保证一定能退干净。
   setQuitting(true)
+  try { cancelAllShellCommands() } catch (error) { logStartup('停止直接命令失败', error) }
   try { clearStartupTimers(); destroySplashWindow() } catch (error) { logStartup('清理启动页失败', error) }
   try { settlePendingRequests(new DOMException('窗口已关闭', 'AbortError')) } catch (error) { logStartup('结算挂起请求失败', error) }
   try { void sandboxManager?.destroyAll() } catch (error) { logStartup('清理沙箱会话失败', error) }

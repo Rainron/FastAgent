@@ -1,6 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit } from '../shared/types'
-
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -211,7 +210,7 @@ const api: FastAgentApi = {
     markRead: (conversationId: string) => ipcRenderer.invoke('run-states:read', conversationId)
   },
   usage: {
-    overview: (days: number): Promise<ModelUsageOverview> => ipcRenderer.invoke('usage:overview', days)
+    overview: (window: ModelUsageWindow): Promise<ModelUsageOverview> => ipcRenderer.invoke('usage:overview', window)
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
@@ -354,7 +353,14 @@ const api: FastAgentApi = {
   },
   shell: {
     openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open-path', path),
-    openExternal: (url: string): Promise<string> => ipcRenderer.invoke('shell:open-external', url)
+    openExternal: (url: string): Promise<string> => ipcRenderer.invoke('shell:open-external', url),
+    runCommand: (input) => ipcRenderer.invoke('shell:run-command', input),
+    cancelCommand: (id: string) => ipcRenderer.invoke('shell:cancel-command', id),
+    onCommandOutput: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: ShellCommandChunk) => listener(payload)
+      ipcRenderer.on('shell:command-output', handler)
+      return () => ipcRenderer.removeListener('shell:command-output', handler)
+    }
   },
   terminal: {
     list: () => ipcRenderer.invoke('terminal:list'),

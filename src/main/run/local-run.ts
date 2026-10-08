@@ -32,6 +32,7 @@ import type { LocalMcpManager, McpToolBinding } from '../mcp-manager'
 import type { PiSessionRuntime, RuntimeRunOptions } from '../pi-runtime'
 import { sendQuickWindowEvent } from '../quick-window'
 import { executionInputForEvent } from '../run/execution-input'
+import { collectShellContext } from './shell-context'
 import { verificationCommandsFor } from '../run/verification-cache'
 import { createTokenEventBatcher } from '../token-event-batcher'
 import { persistableEvent } from '../turn-activity'
@@ -245,7 +246,14 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         }
       } catch (error) { console.warn('[kb] 知识库检索失败:', error) }
     }
-    const effectivePrompt = withMemoryPrompt(`${kbPrompt ? `${kbPrompt}\n\n` : ''}${prompt}`, recalled.prompt)
+    let shellContext = ''
+    // Pi session 文件不会包含渲染进程后来落库的 !命令回合；内存运行时尚未写文件时也要补读。
+    const existingSessionFile = ctx.store.getConversationSessionFile(namespace, conversationId)
+    const hasCachedRuntime = Boolean(ctx.conversationRuntimeCache.peek(ctx.conversationRuntimeKey(namespace, conversationId)))
+    if ((existingSessionFile || hasCachedRuntime) && !/^!\S/.test(prompt)) {
+      shellContext = collectShellContext(ctx.store.listShellCommandTurns(namespace, conversationId))
+    }
+    const effectivePrompt = withMemoryPrompt(`${shellContext ? `${shellContext}\n\n` : ''}${kbPrompt ? `${kbPrompt}\n\n` : ''}${prompt}`, recalled.prompt)
     const bashPath = resolveBashPath({ explicitPath: ctx.settings.bashPath, bundledPath: ctx.bundledTools.bash }) ?? undefined
     const shellToolName = resolveShellToolName(ctx.settings.shellPreference, { explicitPath: ctx.settings.bashPath, bundledPath: ctx.bundledTools.bash })
     let allowedAbilities: Ability[] = []

@@ -59,7 +59,9 @@ import { useEffectiveDark } from './hooks/use-effective-dark'
 import { useFindBar } from './hooks/use-find-bar'
 import { useNotice } from './hooks/use-notice'
 import { usePlanMode } from './hooks/use-plan-mode'
+import { persistShellCommandTurn, useShellCommands } from './hooks/use-shell-commands'
 import { useStreamBuffers } from './hooks/use-stream-buffers'
+import { formatShellCommandOutput } from '../../shared/shell-command'
 import { useTurnActivitySets } from './hooks/use-turn-activity-sets'
 import { useAppShortcuts } from './hooks/use-app-shortcuts'
 import { useGitWorkspace } from './hooks/use-git-workspace'
@@ -144,6 +146,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [batchConversationScope, setBatchConversationScope] = useState<ConversationScope>('all')
   const [projectItems, setProjectItems] = useState<WorkspaceProject[]>([])
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
+  const selectedConversationIdRef = useRef<string | null>(null)
+  useEffect(() => { selectedConversationIdRef.current = selectedConversationId }, [selectedConversationId])
+  const pendingShellContextRef = useRef<{ conversationId: string; promise: Promise<unknown> } | null>(null)
   // 重载前停留的会话，等首屏几路数据落定后由下方效应恢复一次。
   const [restoreConversationId] = useState<string | null>(() => readLastConversationId())
   const restoredRef = useRef(false)
@@ -372,6 +377,28 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const { streamBuffer, thinkingBuffer, streamedTextRef } = useStreamBuffers(setTurns)
   const { memoryTurnIds, contextSourceTurnIds } = useTurnActivitySets(selectedConversationId, turns.length, runId)
   const { findOpen, findRequest, setFindOpen } = useFindBar(section, batchKind)
+  // `!命令`：默认只在对话区展示；设置成 context 时补一轮落库问答让模型也读得到，composer 时回填输入框。
+  // `!命令`：默认只在对话区展示；设置成 context 时补一轮落库问答让模型也读得到，composer 时回填输入框。
+  const shellCommands = useShellCommands(selectedConversationId, {
+    onNotice: setNotice,
+    onFinished: (result, shellSettings) => {
+      if (shellSettings.output === 'composer') {
+        setPrefillRequest({ text: formatShellCommandOutput(result), nonce: Date.now() })
+        return
+      }
+      if (shellSettings.output !== 'context') return
+      const targetConversationId = selectedConversationIdRef.current
+      if (!targetConversationId) { setNotice('还没有会话，命令输出这次只在本地显示'); return }
+      const persistPromise = persistShellCommandTurn(targetConversationId, result, selectedModelId)
+      pendingShellContextRef.current = { conversationId: targetConversationId, promise: persistPromise }
+      void persistPromise
+        // 会话可能在命令跑完前被切走，落库成功也不能把这一轮塞进别的会话。
+        .then((turn) => setTurns((current) => turn.conversationId === selectedConversationIdRef.current ? [...current, turn] : current))
+        .catch(() => setNotice('命令输出写入会话失败'))
+        .finally(() => { if (pendingShellContextRef.current?.promise === persistPromise) pendingShellContextRef.current = null })
+    }
+  }, settings?.shellCommand)
+
   const { scrollRef, followRef, scrollNav, headerStuck, onConversationScroll, jumpConversation } = useConversationScroll(turns, runId, selectedConversationId)
 
   useAgentEvents({
@@ -900,6 +927,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
    * 运行中提交走 queuedPrompts 队列，由下方 flush 效应在回合结束后逐条发出。
    */
   async function sendPrompt(text: string, attachments: Attachment[]) {
+    const pendingShellContext = pendingShellContextRef.current
+    if (pendingShellContext && pendingShellContext.conversationId === selectedConversationIdRef.current) await pendingShellContext.promise.catch(() => undefined)
     // 新消息无论用户之前浏览到哪里，都从最新内容开始跟随。
     followRef.current = true
     // 中断恢复必须创建新回合：旧回合保留截断正文与执行证据，Pi 在新 prompt 前负责压缩内部上下文。
@@ -1237,6 +1266,9 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   /** 查找跳转会主动离开底部，必须停掉贴底跟随，否则流式输出立刻把视口拽回去。 */
   const handleFindBeforeJump = useEventCallback(() => { followRef.current = false })
   const handleNotice = useEventCallback((next: string) => setNotice(next))
+  const handleRunShellCommand = useEventCallback((command: string) => { void shellCommands.run(command, turns.at(-1)?.id ?? null) })
+  const handleCancelShellCommand = useEventCallback((id: string) => shellCommands.cancel(id))
+  const handleDismissShellCommand = useEventCallback((id: string) => shellCommands.dismiss(id))
   const handleNavigate = useEventCallback(navigate)
   const handleNewChat = useEventCallback(() => startNewChat())
   const handleNewChatInContext = useEventCallback(() => startNewChatInContext())
@@ -1497,7 +1529,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             {/* 页内查找条：挂在对话头下沿，搜索范围就是上面的滚动容器 */}
             <FindBar open={findOpen} request={findRequest} containerRef={scrollRef} contentVersion={turns} scopeKey={selectedConversationId} onClose={handleCloseFind} onBeforeJump={handleFindBeforeJump} />
             <div className={`conversation-scroll ${conversationEntering ? 'conversation-entering' : ''}`} ref={scrollRef} onScroll={onConversationScroll}>
-              {turns.length === 0 ? <EmptyConversation onPickWorkspace={handlePickWorkspace} onAddAttachment={() => setAttachmentRequest((value) => value + 1)} onRunAgent={agentAvailable ? () => { setMode('agent'); applyDefaultPermission('ask'); setNotice('已切换到智能体模式') } : undefined} /> : <MessageList turns={turns} models={allModels} onCopy={handleCopyText} onDelete={handleDeleteTurn} onRetry={handleRerunTurn} onRegenerate={handleRerunTurn} onEdit={handleEditTurn} onContinue={handleContinueTurn} onShowContextMenu={showMessageContextMenu} todosByTurn={todosByTurn} memoryTurnIds={memoryTurnIds} contextSourceTurnIds={contextSourceTurnIds} compactionHistory={compactionHistory} contextWindow={contextHealth.contextWindow} onNotice={setNotice} />}
+              {turns.length === 0 && shellCommands.entries.length === 0 ? <EmptyConversation onPickWorkspace={handlePickWorkspace} onAddAttachment={() => setAttachmentRequest((value) => value + 1)} onRunAgent={agentAvailable ? () => { setMode('agent'); applyDefaultPermission('ask'); setNotice('已切换到智能体模式') } : undefined} /> : <MessageList turns={turns} models={allModels} onCopy={handleCopyText} onDelete={handleDeleteTurn} onRetry={handleRerunTurn} onRegenerate={handleRerunTurn} onEdit={handleEditTurn} onContinue={handleContinueTurn} onShowContextMenu={showMessageContextMenu} todosByTurn={todosByTurn} memoryTurnIds={memoryTurnIds} contextSourceTurnIds={contextSourceTurnIds} shellEntries={shellCommands.entries} onCancelShellCommand={handleCancelShellCommand} onDismissShellCommand={handleDismissShellCommand} compactionHistory={compactionHistory} contextWindow={contextHealth.contextWindow} onNotice={setNotice} />}
             </div>
             <div className="scroll-nav-anchor">{scrollNav !== 'none' && <button className="scroll-nav" onClick={() => jumpConversation(scrollNav === 'top' ? 'top' : 'bottom')} aria-label={scrollNavLabel[scrollNav]} title={scrollNavLabel[scrollNav]}>
               {scrollNav === 'top' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
@@ -1506,7 +1538,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             {pressure && <ContextPressureBar pressure={pressure} onCompact={handleCompact} onOpenSettings={handleOpenContextSettings} />}
-            <Composer workspace={composerWorkspace} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
+            <Composer workspace={composerWorkspace} onRunShellCommand={handleRunShellCommand} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
           </> : <SectionView key={section} onInsertComposer={handleInsertMcpPrompt} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}

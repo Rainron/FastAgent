@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { AlertTriangle, ArrowUp, ChevronDown, FileText, ListEnd, Paperclip, Pause, Play, X } from 'lucide-react'
 import type { Attachment, LocalSkillRecord, PermissionPreset, WorkspaceFileMatch } from '../../shared/types'
 import { findProfile } from '../../shared/permission-profiles'
+import { parseShellCommandInput, unescapeShellCommandInput } from '../../shared/shell-command'
 import { ContextHealth } from '../conversation/ContextHealth'
 import { AttachmentImage, formatAttachmentSize, isImageAttachment } from '../conversation/AttachmentImage'
 import { activeMentionQuery, applyMention, applySlashCommand, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
@@ -29,7 +30,7 @@ import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidat
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
-export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
+export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, onRunShellCommand, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
@@ -222,6 +223,15 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     if (compacting) { onNotice(compaction?.auto ? '正在自动压缩上下文，稍后可继续发送' : '当前会话正在压缩，暂时无法发送；可切换到其它会话继续问答'); return }
     if (!text.trim()) return
     const value = text.trim()
+    // `!命令` 直接执行 shell：不发给模型、不进队列，但进输入历史（同一条命令常要重跑）。
+    const shellCommand = onRunShellCommand ? parseShellCommandInput(value) : null
+    if (shellCommand && onRunShellCommand) {
+      promptHistoryRef.current.record(value)
+      setEditorText('')
+      setMention(null)
+      onRunShellCommand(shellCommand)
+      return
+    }
     // 斜杠命令即时执行：不进聊天记录、不进输入历史，命令名精确匹配（不带参数）。
     const command = SLASH_COMMANDS.find((item) => value === `/${item.name}`)
     if (command) {
@@ -230,16 +240,18 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       runSlashCommand(command.name)
       return
     }
+    // `!!` 是「我就是要发一条 ! 开头的消息」，发出前去掉转义用的那个感叹号。
+    const outgoing = unescapeShellCommandInput(value, Boolean(onRunShellCommand))
     // 运行中不再拦截发送：问题进队列，回合结束后自动发出。
     if (runId) {
       promptHistoryRef.current.record(value)
-      onEnqueue(value, attachments)
+      onEnqueue(outgoing, attachments)
       setEditorText(''); setMention(null); setAttachments([])
       onNotice('已加入排队，当前回复完成后自动发送')
       return
     }
     promptHistoryRef.current.record(value)
-    setEditorText(''); setMention(null); await onSend(value, attachments); setAttachments([])
+    setEditorText(''); setMention(null); await onSend(outgoing, attachments); setAttachments([])
   }
 
   function runSlashCommand(name: string) {
@@ -671,7 +683,7 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     </div>
   </div>
   <div className="composer-hints">
-    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件</span>
+    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件{onRunShellCommand ? <> · <kbd>!</kbd> 执行命令</> : null} · <kbd>Tab</kbd> 进目录</span>
     <span><kbd>Ctrl</kbd>+<kbd>G</kbd> 编辑器 · 拖入文件即可附加</span>
   </div>
   {fullPrompt && <FullAccessDialog profile={findProfile(permissionProfiles, fullPrompt)} onRespond={closeFullPrompt} />}

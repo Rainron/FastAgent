@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
-import type { ModelUsageOverview } from '../../shared/types'
-import { axisLabelEvery, buildUsageBars, cacheHitRate, formatTokenCount, sortByTotalTokens, windowLabel } from './usage-format'
+import type { ModelUsageOverview, ModelUsageWindow } from '../../shared/types'
+import { axisLabelEvery, buildUsageBars, cacheHitRate, dayKey, formatTokenCount, shiftDay, sortByTotalTokens, usageWindowSummary } from './usage-format'
 
 const RANGES = [7, 30, 90] as const
 
@@ -10,19 +10,25 @@ const RANGES = [7, 30, 90] as const
  * 数据只在窗口切换时拉一次；渲染派生全部 useMemo，避免表格重排时反复排序。
  */
 export function UsageSettings({ onNotice }: { onNotice: (notice: string) => void }) {
-  const [days, setDays] = useState<number>(30)
+  // preset 为 null 表示走自定义日期；两者各自保留上次的值，来回切不用重填
+  const [preset, setPreset] = useState<number | null>(30)
+  const [custom, setCustom] = useState(() => ({ start: shiftDay(dayKey(), -29), end: dayKey() }))
   const [overview, setOverview] = useState<ModelUsageOverview | null>(null)
   const [loading, setLoading] = useState(false)
+  const today = useMemo(() => dayKey(), [])
+
+  // 对象字面量每次渲染都是新引用，effect 依赖只认里面的三个原始值
+  const range = useMemo<ModelUsageWindow>(() => preset ?? { start: custom.start, end: custom.end }, [preset, custom.start, custom.end])
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    void window.fastAgent.usage.overview(days)
+    void window.fastAgent.usage.overview(range)
       .then((result) => { if (!cancelled) setOverview(result) })
       .catch(() => { if (!cancelled) onNotice('用量数据加载失败') })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [days, onNotice])
+  }, [range, onNotice])
 
   const bars = useMemo(() => (overview ? buildUsageBars(overview.byDay) : []), [overview])
   const hitRate = useMemo(() => (overview ? cacheHitRate(overview) : null), [overview])
@@ -34,15 +40,29 @@ export function UsageSettings({ onNotice }: { onNotice: (notice: string) => void
   return <section className="settings-panel" aria-labelledby="settings-usage">
     <div className="settings-section-heading">
       <div><h2 id="settings-usage">用量统计</h2><p>跨会话的模型调用与 token 消耗，按本地日期汇总。</p></div>
-      <div className="usage-range" role="group" aria-label="统计窗口">
-        {RANGES.map((range) => <button key={range} className={`usage-range-button ${days === range ? 'on' : ''}`} onClick={() => setDays(range)} aria-pressed={days === range}>近 {range} 天</button>)}
-        {loading && overview && <LoaderCircle size={13} className="spin usage-range-loading" aria-label="加载中" />}
+      <div className="usage-range-group">
+        <div className="usage-range" role="group" aria-label="统计窗口">
+          {RANGES.map((option) => <button key={option} className={`usage-range-button ${preset === option ? 'on' : ''}`} onClick={() => setPreset(option)} aria-pressed={preset === option}>近 {option} 天</button>)}
+          <button className={`usage-range-button ${preset === null ? 'on' : ''}`} onClick={() => setPreset(null)} aria-pressed={preset === null}>自定义</button>
+          {loading && overview && <LoaderCircle size={13} className="spin usage-range-loading" aria-label="加载中" />}
+        </div>
+        {preset === null && <div className="usage-range-dates">
+          <label>
+            <span>开始</span>
+            <input type="date" value={custom.start} max={custom.end} onChange={(event) => { if (event.target.value) setCustom((current) => ({ ...current, start: event.target.value })) }} />
+          </label>
+          <span className="usage-range-sep">~</span>
+          <label>
+            <span>结束</span>
+            <input type="date" value={custom.end} min={custom.start} max={today} onChange={(event) => { if (event.target.value) setCustom((current) => ({ ...current, end: event.target.value })) }} />
+          </label>
+        </div>}
       </div>
     </div>
     {loading && !overview ? <div className="section-list-empty"><LoaderCircle size={18} className="spin" /> 用量数据加载中</div> : !overview || overview.totals.requestCount === 0 ? <div className="section-list-empty">所选时间范围内还没有模型调用记录</div> : <div className={`usage-body${loading ? ' loading' : ''}`} aria-busy={loading}>
       <div className="usage-cards">
         <div className="usage-card usage-card-primary">
-          <small>总 token 消耗 <em className="usage-window">近 {days} 天 · {windowLabel(days)}</em></small>
+          <small>总 token 消耗 <em className="usage-window">{usageWindowSummary(range)}</em></small>
           <strong>{formatTokenCount(overview.totals.inputTokens + overview.totals.outputTokens)}</strong>
           <span className="usage-split"><i className="usage-dot input" />输入 {formatTokenCount(overview.totals.inputTokens)}<i className="usage-dot output" />输出 {formatTokenCount(overview.totals.outputTokens)}</span>
         </div>

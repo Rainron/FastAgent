@@ -4,6 +4,7 @@ import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
 import { clampRecallLimit, DEFAULT_RECALL } from '../agent/memory/memory-rank'
 import { SUBAGENT_LIMITS } from '../agent/subagent/subagent-types'
 import { DEFAULT_ATTACHMENT_POLICY } from '../../shared/attachment-policy'
+import { DEFAULT_SHELL_COMMAND_SETTINGS } from '../../shared/shell-command'
 
 export interface ConversationRecord {
   id: string
@@ -56,6 +57,7 @@ export const defaultSettings: AppSettings = {
   forceCompaction: false,
   shellPreference: 'bash',
   bashPath: '',
+  shellCommand: DEFAULT_SHELL_COMMAND_SETTINGS,
   externalEditorPath: '',
   agentAbilityPolicy: { mode: 'all_enabled', agentAbilityIds: [] },
   subAgentEnabled: true,

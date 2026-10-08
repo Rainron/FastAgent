@@ -14,6 +14,7 @@ import { registerMemoryIpc } from './memory'
 import { registerModelIpc } from './model'
 import { registerSearchIpc } from './search'
 import { registerSettingsIpc } from './settings'
+import { registerShellCommandIpc } from './shell-command'
 import { registerSkillsIpc } from './skills'
 import { registerTerminalIpc } from './terminal'
 import { registerWorkspaceIpc } from './workspace'
@@ -35,6 +36,7 @@ export function registerAllIpc(handle: IpcRegistrar, ctx: MainContext) {
   registerBundleIpc(handle, { bundles: ctx.bundleService, mainWindow: () => ctx.mainWindow, exportsDir: () => ctx.appPaths.exportsDir })
   registerChatIpc(handle, ctx)
   registerWorkspaceIpc(handle, ctx)
+  registerShellCommandIpc(handle, ctx)
   registerTerminalIpc(handle, ctx)
   registerKbIpc(handle, ctx)
   registerArtifactsIpc(handle, ctx)

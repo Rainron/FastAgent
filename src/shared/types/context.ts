@@ -60,6 +60,12 @@ export interface ModelUsageDayRow {
   outputTokens: number
 }
 
+/**
+ * 用量窗口：预设「近 N 天」给个数字，用户自选日期时给本地日期闭区间（YYYY-MM-DD）。
+ * 自选区间按本地日期切天，与 byDay 的分组同口径，选中的两天都算在内。
+ */
+export type ModelUsageWindow = number | { start: string; end: string }
+
 export interface ModelUsageOverview {
   totals: {
     requestCount: number

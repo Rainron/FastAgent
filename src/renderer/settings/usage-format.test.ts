@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ModelUsageOverview } from '../../shared/types'
-import { axisLabelEvery, buildUsageBars, cacheHitRate, formatTokenCount, sortByTotalTokens, windowLabel } from './usage-format'
+import { axisLabelEvery, buildUsageBars, cacheHitRate, countRangeDays, dayKey, formatTokenCount, normalizeUsageRange, shiftDay, sortByTotalTokens, usageWindowSummary, windowLabel } from './usage-format'
 
 describe('formatTokenCount', () => {
   it('万以下原样输出', () => {
@@ -94,5 +94,43 @@ describe('windowLabel', () => {
     expect(windowLabel(7, new Date(2026, 1, 23, 18, 30))).toBe('02-17 ~ 02-23')
     expect(windowLabel(1, new Date(2026, 2, 1, 0, 1))).toBe('03-01 ~ 03-01')
     expect(windowLabel(90, new Date(2026, 0, 1, 23, 59))).toBe('10-04 ~ 01-01')
+  })
+})
+
+describe('dayKey 与 shiftDay', () => {
+  it('按本地字段拼日期，不受时区回退影响', () => {
+    expect(dayKey(new Date(2026, 8, 12, 23, 30))).toBe('2026-09-12')
+    expect(dayKey(new Date(2026, 0, 1, 0, 0))).toBe('2026-01-01')
+  })
+
+  it('加减天数跨月跨年', () => {
+    expect(shiftDay('2026-09-12', -29)).toBe('2026-08-14')
+    expect(shiftDay('2026-03-01', -1)).toBe('2026-02-28')
+    expect(shiftDay('2025-12-31', 1)).toBe('2026-01-01')
+  })
+})
+
+describe('normalizeUsageRange 与 countRangeDays', () => {
+  it('起止颠倒时交换', () => {
+    expect(normalizeUsageRange('2026-09-12', '2026-09-01')).toEqual({ start: '2026-09-01', end: '2026-09-12' })
+    expect(normalizeUsageRange('2026-09-01', '2026-09-12')).toEqual({ start: '2026-09-01', end: '2026-09-12' })
+  })
+
+  it('天数是闭区间，同一天算 1 天', () => {
+    expect(countRangeDays('2026-09-12', '2026-09-12')).toBe(1)
+    expect(countRangeDays('2026-09-01', '2026-09-12')).toBe(12)
+    // 夏令时地区跨切换日仍应是整数天
+    expect(countRangeDays('2026-09-12', '2026-09-01')).toBe(12)
+  })
+})
+
+describe('usageWindowSummary', () => {
+  it('预设窗口报「近 N 天」加日期范围', () => {
+    expect(usageWindowSummary(7, new Date(2026, 1, 23, 18, 30))).toBe('近 7 天 · 02-17 ~ 02-23')
+  })
+
+  it('自定义区间只报起止与天数', () => {
+    expect(usageWindowSummary({ start: '2026-09-01', end: '2026-09-12' })).toBe('09-01 ~ 09-12 · 共 12 天')
+    expect(usageWindowSummary({ start: '2026-09-12', end: '2026-09-01' })).toBe('09-01 ~ 09-12 · 共 12 天')
   })
 })

@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import Database from 'better-sqlite3'
 import type { AbilityInstallMeta, AbilityType, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, AgentTaskRecord, AgentTaskStatus, ResumableRun, RunErrorKind, AppSettings, Artifact, ArtifactQuery, CompactionHistory, ContextPolicy, ContextState, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, ConversationTurnPatch, ClientPreferences, CliToolCheck, FileOperation, FileVersionRecord, HubSource, LocalCliTool, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PageResult, ProjectRecord, SkillVersionRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnContextSource, TurnRuntimeConfig, TurnStatus } from '../shared/types'
-import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, TurnSessionAnchor } from '../shared/types'
+import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, ModelUsageWindow, TurnSessionAnchor } from '../shared/types'
 import type { PermissionAction } from '../shared/permission-rules'
 import type { ModelParameterOverride } from '../shared/model-parameters'
 import type { StoredPermissionProfile } from '../shared/permission-profiles'
@@ -102,7 +102,7 @@ export class LocalStore {
   setModelOverride(provider: string, modelName: string, override: ModelParameterOverride): ModelParameterOverride { return this.modelOverrideRepository.setModelOverride(provider, modelName, override) }
   recordModelUsage(namespace: string, record: ModelUsageRecord): boolean { return this.modelUsageRepository.record(namespace, record) }
   getModelUsage(namespace: string, conversationId: string, turnId?: string): ModelUsageSummary { return this.modelUsageRepository.get(namespace, conversationId, turnId) }
-  getModelUsageOverview(namespace: string, days: number): ModelUsageOverview { return this.modelUsageRepository.overview(namespace, days) }
+  getModelUsageOverview(namespace: string, window: ModelUsageWindow): ModelUsageOverview { return this.modelUsageRepository.overview(namespace, window) }
   listKbEntries(namespace: string, projectId: string) { return this.kbRepository.list(namespace, projectId) }
   saveKbEntry(namespace: string, projectId: string, input: { id?: string; title: string; content: string }) { return this.kbRepository.save(namespace, projectId, input) }
   removeKbEntry(namespace: string, projectId: string, entryId: string) { return this.kbRepository.remove(namespace, projectId, entryId) }
@@ -231,6 +231,7 @@ export class LocalStore {
   createTurn(...args: Parameters<ConversationStore['createTurn']>): ConversationTurn { return this.conversationRepository.createTurn(...args) }
   getTurn(namespace: string, turnId: string): ConversationTurn | null { return this.conversationRepository.getTurn(namespace, turnId) }
   listTurns(namespace: string, conversationId: string): ConversationTurn[] { return this.conversationRepository.listTurns(namespace, conversationId) }
+  listShellCommandTurns(namespace: string, conversationId: string) { return this.conversationRepository.listShellCommandTurns(namespace, conversationId) }
   latestTurnRuntime(namespace: string, conversationId: string): { runtimeConfig: TurnRuntimeConfig; status: TurnStatus } | null { return this.conversationRepository.latestTurnRuntime(namespace, conversationId) }
   updateTurn(namespace: string, turnId: string, patch: ConversationTurnPatch, known?: ConversationTurn | null): ConversationTurn | null { return this.conversationRepository.updateTurn(namespace, turnId, patch, known) }
   deleteTurn(namespace: string, turnId: string): ConversationTurn | null { return this.conversationRepository.deleteTurn(namespace, turnId) }

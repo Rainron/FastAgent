@@ -18,6 +18,7 @@ import { PromptSettings } from './PromptSettings'
 import { SandboxSettings } from './SandboxSettings'
 import { DoctorSettings } from './DoctorSettings'
 import { RuntimeSettings } from './RuntimeSettings'
+import { ShellCommandSettings } from './ShellCommandSettings'
 import { UsageSettings } from './UsageSettings'
 import { RunLimitSettings } from './RunLimitSettings'
 
@@ -99,7 +100,7 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'memory' && settings && <MemorySettings settings={settings} models={selectableModels} onChange={onSettingsChange} onNotice={onNotice} />}
             {category === 'knowledge' && <KnowledgeSettings onNotice={onNotice} />}
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
-            {category === 'runtime' && <RuntimeSettings onNotice={onNotice} />}
+            {category === 'runtime' && settings && <><RuntimeSettings onNotice={onNotice} /><ShellCommandSettings settings={settings} onChange={onSettingsChange} /></>}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}
             {category === 'prompts' && <PromptSettings prompts={modePrompts} onChange={onModePromptChange} />}
             {category === 'keybindings' && settings && <KeybindingSettings settings={settings} onChange={onSettingsChange} onNotice={onNotice} />}

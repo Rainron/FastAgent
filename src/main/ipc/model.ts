@@ -1,4 +1,5 @@
 import type { ModelParameterOverride } from '../../shared/model-parameters'
+import type { ModelUsageWindow } from '../../shared/types'
 import { listLocalModelCatalog } from '../model-catalog'
 import type { IpcRegistrar, MainContext } from '../app-context'
 
@@ -15,7 +16,7 @@ export function registerModelIpc(handle: IpcRegistrar, ctx: MainContext) {
   handle('model-connections:answer-login', (_event, sessionId: string, value: string) => ctx.modelConnectionService.answerLogin(sessionId, value))
   handle('model-connections:cancel-login', (_event, sessionId: string) => ctx.modelConnectionService.cancelLogin(sessionId))
   handle('model-connections:logout', (_event, id: string) => ctx.modelConnectionService.logout(id))
-  handle('usage:overview', (_event, days: number) => ctx.store.getModelUsageOverview(ctx.requireNamespace(), days))
+  handle('usage:overview', (_event, window: ModelUsageWindow) => ctx.store.getModelUsageOverview(ctx.requireNamespace(), window))
   handle('models:localList', () => listLocalModelCatalog(ctx.store))
   handle('models:testDialogue', (_event, id: number) => ctx.testModelDialogue(id))
   // 云端模型的本地参数覆盖。连接内模型不走这里：它们的参数直接写进自己的 payload。
