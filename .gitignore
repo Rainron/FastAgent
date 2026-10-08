@@ -13,3 +13,5 @@ logs
 .DS_Store
 RELEASE-INTERNAL.md
 tasks/
+promo/
+.playwright-cli/
