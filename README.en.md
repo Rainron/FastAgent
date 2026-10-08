@@ -54,6 +54,12 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 **Read-only subagents**  
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
+**Built-in terminal and `!` commands**  
+Open a terminal panel from the conversation header and run commands in the project directory, with multiple tabs; output never goes through the model. Typing `!` in the composer also runs a shell command directly — commands and output stay in the conversation as cards you can stop or remove, and the output can be kept local, appended as a turn the model can read, or sent back to the composer.
+
+**Per-project trust for instruction files**  
+`AGENTS.md` and `CLAUDE.md` are injected into the system prompt only for trusted projects. Untrusted projects are probed for existence without reading the content, and the execution trace says the file was not loaded. Trust is toggled from the project menu in the composer; existing and newly added projects are trusted by default.
+
 **Skills, MCP, and plugins**  
 Manage and validate local Skills, import MCP servers and test connectivity (including the resources and prompt templates a server exposes), export/import capability bundles, and check for updates from configured Hub sources. The capability page is split into Discover and My capabilities views.
 
