@@ -1,4 +1,4 @@
-import type { LocalMcpServerInput, McpServerDetail, McpTestStatus } from '../../shared/types'
+import type { LocalMcpServerInput, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, McpServerDetail, McpTestStatus } from '../../shared/types'
 import { emptyConnection } from '../abilities'
 import { logIntegrationError } from '../logging/logger'
 import { parseMcpImport } from '../mcp-import'
@@ -61,6 +61,31 @@ export function registerMcpIpc(handle: IpcRegistrar, ctx: MainContext) {
     toolCount: snapshot.toolCount,
     tools: snapshot.tools
   })))
+  handle('mcp:resources', async (_event, id: string): Promise<{ resources: McpResourceDescriptor[]; templates: McpResourceTemplateDescriptor[] }> => {
+    const config = ctx.store.getMcpRuntimeConfig(id)
+    if (!config || !config.enabled) throw new Error(`MCP Server 不存在或未启用：${id}`)
+    const { listMcpServerResources } = await ctx.loadMcpRuntime()
+    const { resources, templates } = await listMcpServerResources(config)
+    return { resources, templates }
+  })
+  handle('mcp:read-resource', async (_event, id: string, uri: string): Promise<{ contents: McpResourceContent[] }> => {
+    const config = ctx.store.getMcpRuntimeConfig(id)
+    if (!config || !config.enabled) throw new Error(`MCP Server 不存在或未启用：${id}`)
+    const { readMcpServerResource } = await ctx.loadMcpRuntime()
+    return readMcpServerResource(config, uri)
+  })
+  handle('mcp:prompts', async (_event, id: string): Promise<{ prompts: McpPromptDescriptor[] }> => {
+    const config = ctx.store.getMcpRuntimeConfig(id)
+    if (!config || !config.enabled) throw new Error(`MCP Server 不存在或未启用：${id}`)
+    const { listMcpServerPrompts } = await ctx.loadMcpRuntime()
+    return listMcpServerPrompts(config)
+  })
+  handle('mcp:get-prompt', async (_event, id: string, name: string, args?: Record<string, string>): Promise<McpPromptResult> => {
+    const config = ctx.store.getMcpRuntimeConfig(id)
+    if (!config || !config.enabled) throw new Error(`MCP Server 不存在或未启用：${id}`)
+    const { getMcpServerPrompt } = await ctx.loadMcpRuntime()
+    return getMcpServerPrompt(config, name, args ?? {})
+  })
   handle('mcp:detail', (_event, id: string): McpServerDetail => {
     const server = ctx.store.listMcpServers().find((item) => item.id === id)
     if (!server) throw new Error(`MCP Server 不存在：${id}`)

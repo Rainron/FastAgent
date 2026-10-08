@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor } from '../shared/types'
+
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -151,7 +152,11 @@ const api: FastAgentApi = {
     status: (): Promise<Array<{ id: string } & McpTestStatus>> => ipcRenderer.invoke('mcp:status'),
     import: () => ipcRenderer.invoke('mcp:import'),
     testConfig: (input: LocalMcpServerInput): Promise<McpTestStatus> => ipcRenderer.invoke('mcp:test-config', input),
-    detail: (id: string): Promise<McpServerDetail> => ipcRenderer.invoke('mcp:detail', id)
+    detail: (id: string): Promise<McpServerDetail> => ipcRenderer.invoke('mcp:detail', id),
+    resources: (id: string): Promise<{ resources: McpResourceDescriptor[]; templates: McpResourceTemplateDescriptor[] }> => ipcRenderer.invoke('mcp:resources', id),
+    readResource: (id: string, uri: string): Promise<{ contents: McpResourceContent[] }> => ipcRenderer.invoke('mcp:read-resource', id, uri),
+    prompts: (id: string): Promise<{ prompts: McpPromptDescriptor[] }> => ipcRenderer.invoke('mcp:prompts', id),
+    getPrompt: (id: string, name: string, args?: Record<string, string>): Promise<McpPromptResult> => ipcRenderer.invoke('mcp:get-prompt', id, name, args ?? {})
   },
   abilities: {
     list: (): Promise<Ability[]> => ipcRenderer.invoke('abilities:list'),
@@ -280,7 +285,7 @@ const api: FastAgentApi = {
     add: (input: { path: string; name?: string }): Promise<ProjectRecord> => ipcRenderer.invoke('projects:add', input),
     touch: (id: string): Promise<ProjectRecord | null> => ipcRenderer.invoke('projects:touch', id),
     archive: (id: string): Promise<void> => ipcRenderer.invoke('projects:archive', id),
-    remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id)
+    remove: (id: string): Promise<void> => ipcRenderer.invoke('projects:remove', id),
   },
   search: {
     query: (input: SearchQuery): Promise<SearchResponse> => ipcRenderer.invoke('search:query', input)

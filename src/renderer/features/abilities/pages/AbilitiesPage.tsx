@@ -67,8 +67,9 @@ const TYPE_CHIPS: Array<[MineTypeFilter, string]> = [
 ]
 
 /** 「能力」一级页面：发现与我的能力两个 Tab，统计与筛选只针对 Skill 与 MCP。 */
-export function AbilitiesPage({ onNotice, focusRequest = null }: {
+export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer }: {
   onNotice: (notice: string) => void
+  onInsertComposer?: (text: string) => void
   /** 外部深链：定位并展开某个能力的详情；nonce 变化才触发，重复点同一个也生效。 */
   focusRequest?: { abilityId: string; nonce: number } | null
 }) {
@@ -324,6 +325,7 @@ export function AbilitiesPage({ onNotice, focusRequest = null }: {
       onClose={() => setOverlay(null)}
       onEdit={() => setOverlay({ kind: 'mcp-form', ability: overlay.ability })}
       onReconnect={() => { void mcpService.test(overlay.ability.id).then(() => refresh()).catch(() => onNotice('连接测试失败')) }}
+      onInsertComposer={onInsertComposer}
     />}
   </div>
 }

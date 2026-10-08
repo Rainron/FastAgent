@@ -31,6 +31,53 @@ export interface McpTestStatus {
   tools: McpToolDescriptor[]
 }
 
+export interface McpResourceDescriptor {
+  uri: string
+  name: string
+  title?: string
+  description?: string
+  mimeType?: string
+  size?: number
+}
+
+export interface McpResourceTemplateDescriptor {
+  uriTemplate: string
+  name: string
+  title?: string
+  description?: string
+  mimeType?: string
+}
+
+export interface McpPromptArgumentDescriptor {
+  name: string
+  description?: string
+  required?: boolean
+}
+
+export interface McpPromptDescriptor {
+  name: string
+  title?: string
+  description?: string
+  arguments?: McpPromptArgumentDescriptor[]
+}
+
+export interface McpResourceContent {
+  uri: string
+  mimeType?: string
+  text?: string
+  blob?: string
+}
+
+export interface McpPromptMessage {
+  role: 'user' | 'assistant'
+  content: unknown
+}
+
+export interface McpPromptResult {
+  description?: string
+  messages: McpPromptMessage[]
+}
+
 export interface LocalSkillRecord {
   name: string
   description: string

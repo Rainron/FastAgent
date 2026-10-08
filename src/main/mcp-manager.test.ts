@@ -87,6 +87,27 @@ describe('probeMcpServer', () => {
     expect(result).toMatchObject({ ok: true, resourceCount: 0, promptCount: 0 })
   })
 
+  it('读取 resources、templates 和 prompts，并按 URI/name 过滤非法条目', async () => {
+    const resource = { uri: 'file://docs/a.md', name: 'a.md', mimeType: 'text/markdown' }
+    const prompt = { name: 'summarize', arguments: [{ name: 'topic', required: true }] }
+    const client: McpClientFacade = {
+      connect: vi.fn(async () => undefined),
+      listTools: vi.fn(async () => ({ tools: [] })),
+      listResources: vi.fn(async () => ({ resources: [resource, {}] })),
+      listResourceTemplates: vi.fn(async () => ({ resourceTemplates: [{ uriTemplate: 'file://docs/{name}', name: 'docs' }, {}] })),
+      readResource: vi.fn(async () => ({ contents: [{ uri: resource.uri, text: '# docs' }] })),
+      listPrompts: vi.fn(async () => ({ prompts: [prompt, {}] })),
+      getPrompt: vi.fn(async () => ({ messages: [{ role: 'user' as const, content: { type: 'text', text: 'summarize docs' } }] })),
+      callTool: vi.fn(async () => ({ content: [] })),
+      close: vi.fn(async () => undefined)
+    }
+    expect(await (await import('./mcp-manager')).listMcpServerResources(config, () => client)).toEqual({ resources: [resource], templates: [{ uriTemplate: 'file://docs/{name}', name: 'docs' }] })
+    expect(await (await import('./mcp-manager')).readMcpServerResource(config, resource.uri, () => client)).toEqual({ contents: [{ uri: resource.uri, text: '# docs' }] })
+    expect(await (await import('./mcp-manager')).listMcpServerPrompts(config, () => client)).toEqual({ prompts: [prompt] })
+    expect(await (await import('./mcp-manager')).getMcpServerPrompt(config, 'summarize', { topic: 'docs' }, () => client)).toMatchObject({ messages: [{ role: 'user' }] })
+    expect(client.close).toHaveBeenCalledTimes(4)
+  })
+
   it('连接失败返回错误消息且不抛出', async () => {
     const close = vi.fn(async () => undefined)
     const result = await probeMcpServer(config, () => ({ ...base, close, connect: async () => { throw new Error('offline') } }))

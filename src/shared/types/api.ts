@@ -1,7 +1,7 @@
 import type { PermissionProfile, StoredPermissionProfile } from '../permission-profiles'
 import type { PermissionAction } from '../permission-rules'
 import type { ModelParameterOverride } from '../model-parameters'
-import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpServerDetail, McpTestStatus, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord } from './abilities'
+import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, McpServerDetail, McpTestStatus, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord } from './abilities'
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
 import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
 import type { AgentEvent, ToolCallRecord } from './agent-events'
@@ -162,6 +162,13 @@ export interface FastAgentApi {
     testConfig(input: LocalMcpServerInput): Promise<McpTestStatus>
     /** 概览 + tools + 配置回显；密钥只回传 key 与 hasValue。 */
     detail(id: string): Promise<McpServerDetail>
+    /** 读取已连接 Server 的资源清单；服务端不支持时返回空数组和诊断信息。 */
+    resources(id: string): Promise<{ resources: McpResourceDescriptor[]; templates: McpResourceTemplateDescriptor[] }>
+    /** 读取指定 MCP resource；仅允许读取已保存且启用的 Server。 */
+    readResource(id: string, uri: string): Promise<{ contents: McpResourceContent[] }>
+    /** 获取指定 MCP prompt 模板和展开后的消息。 */
+    prompts(id: string): Promise<{ prompts: McpPromptDescriptor[] }>
+    getPrompt(id: string, name: string, args?: Record<string, string>): Promise<McpPromptResult>
   }
   abilities: {
     list(): Promise<Ability[]>

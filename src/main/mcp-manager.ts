@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js'
+import type { McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor } from '../shared/types'
 
 export interface McpServerRuntimeConfig {
   id: string
@@ -30,8 +31,11 @@ export interface McpClientFacade {
   callTool(name: string, args: Record<string, unknown>, signal: AbortSignal, timeoutMs: number): Promise<unknown>
   close(): Promise<void>
   /** 可选能力：Server 未实现时 SDK 会抛 MethodNotFound，探测时按 0 计。 */
-  listResources?(): Promise<{ resources: unknown[] }>
-  listPrompts?(): Promise<{ prompts: unknown[] }>
+  listResources?(signal?: AbortSignal, timeoutMs?: number): Promise<{ resources: Array<McpResourceDescriptor | Record<string, unknown>> }>
+  listResourceTemplates?(signal?: AbortSignal, timeoutMs?: number): Promise<{ resourceTemplates: Array<McpResourceTemplateDescriptor | Record<string, unknown>> }>
+  readResource?(uri: string, signal: AbortSignal, timeoutMs: number): Promise<{ contents: McpResourceContent[] }>
+  listPrompts?(signal?: AbortSignal, timeoutMs?: number): Promise<{ prompts: Array<McpPromptDescriptor | Record<string, unknown>> }>
+  getPrompt?(name: string, args: Record<string, string>, signal: AbortSignal, timeoutMs: number): Promise<McpPromptResult>
 }
 
 export interface McpToolBinding {
@@ -86,12 +90,24 @@ class SdkMcpClient implements McpClientFacade {
     return await this.client.listTools() as { tools: McpToolDescriptor[] }
   }
 
-  async listResources() {
-    return await this.client.listResources() as { resources: unknown[] }
+  async listResources(signal?: AbortSignal, timeoutMs?: number) {
+    return await this.client.listResources(undefined, { signal, timeout: timeoutMs }) as { resources: Array<McpResourceDescriptor | Record<string, unknown>> }
   }
 
-  async listPrompts() {
-    return await this.client.listPrompts() as { prompts: unknown[] }
+  async listResourceTemplates(signal?: AbortSignal, timeoutMs?: number) {
+    return await this.client.listResourceTemplates(undefined, { signal, timeout: timeoutMs }) as { resourceTemplates: Array<McpResourceTemplateDescriptor | Record<string, unknown>> }
+  }
+
+  async readResource(uri: string, signal: AbortSignal, timeoutMs: number) {
+    return await this.client.readResource({ uri }, { signal, timeout: timeoutMs }) as { contents: McpResourceContent[] }
+  }
+
+  async listPrompts(signal?: AbortSignal, timeoutMs?: number) {
+    return await this.client.listPrompts(undefined, { signal, timeout: timeoutMs }) as { prompts: Array<McpPromptDescriptor | Record<string, unknown>> }
+  }
+
+  async getPrompt(name: string, args: Record<string, string>, signal: AbortSignal, timeoutMs: number) {
+    return await this.client.getPrompt({ name, arguments: args }, { signal, timeout: timeoutMs }) as McpPromptResult
   }
 
   async callTool(name: string, args: Record<string, unknown>, signal: AbortSignal, timeoutMs: number) {
@@ -101,6 +117,55 @@ class SdkMcpClient implements McpClientFacade {
   async close() {
     await this.client.close()
   }
+}
+
+async function withMcpTimeout<T>(timeoutMs: number, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await task(controller.signal)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function withConnectedMcpServer<T>(config: McpServerRuntimeConfig, task: (client: McpClientFacade) => Promise<T>, factory: (config: McpServerRuntimeConfig) => McpClientFacade = (item) => new SdkMcpClient(item)): Promise<T> {
+  const client = factory(config)
+  try {
+    await client.connect()
+    return await task(client)
+  } finally {
+    await client.close().catch(() => undefined)
+  }
+}
+
+export async function listMcpServerResources(config: McpServerRuntimeConfig, factory?: (config: McpServerRuntimeConfig) => McpClientFacade) {
+  return withConnectedMcpServer(config, async (client) => ({
+    resources: client.listResources ? (await withMcpTimeout(config.timeoutMs, (signal) => client.listResources!(signal, config.timeoutMs))).resources.filter((item): item is McpResourceDescriptor => typeof item.uri === 'string' && typeof item.name === 'string') : [],
+    templates: client.listResourceTemplates ? (await withMcpTimeout(config.timeoutMs, (signal) => client.listResourceTemplates!(signal, config.timeoutMs))).resourceTemplates.filter((item): item is McpResourceTemplateDescriptor => typeof item.uriTemplate === 'string' && typeof item.name === 'string') : []
+  }), factory)
+}
+
+export async function readMcpServerResource(config: McpServerRuntimeConfig, uri: string, factory?: (config: McpServerRuntimeConfig) => McpClientFacade) {
+  return withConnectedMcpServer(config, async (client) => {
+    if (!client.readResource) throw new Error('MCP Server 不支持读取 Resources')
+    return withMcpTimeout(config.timeoutMs, (signal) => client.readResource!(uri, signal, config.timeoutMs))
+  }, factory)
+}
+
+export async function listMcpServerPrompts(config: McpServerRuntimeConfig, factory?: (config: McpServerRuntimeConfig) => McpClientFacade) {
+  return withConnectedMcpServer(config, async (client) => ({
+    prompts: client.listPrompts
+      ? (await withMcpTimeout(config.timeoutMs, (signal) => client.listPrompts!(signal, config.timeoutMs))).prompts.filter((item): item is McpPromptDescriptor => typeof item.name === 'string')
+      : []
+  }), factory)
+}
+
+export async function getMcpServerPrompt(config: McpServerRuntimeConfig, name: string, args: Record<string, string>, factory?: (config: McpServerRuntimeConfig) => McpClientFacade) {
+  return withConnectedMcpServer(config, async (client) => {
+    if (!client.getPrompt) throw new Error('MCP Server 不支持 Prompts')
+    return withMcpTimeout(config.timeoutMs, (signal) => client.getPrompt!(name, args, signal, config.timeoutMs))
+  }, factory)
 }
 
 export interface McpProbeResult {
@@ -131,8 +196,8 @@ export async function probeMcpServer(
     client = factory(config)
     await client.connect()
     const listed = await client.listTools()
-    const resourceCount = await countOptional(client.listResources && (async () => (await client!.listResources!()).resources))
-    const promptCount = await countOptional(client.listPrompts && (async () => (await client!.listPrompts!()).prompts))
+    const resourceCount = await countOptional(client.listResources && (async () => (await client!.listResources!(undefined, config.timeoutMs)).resources))
+    const promptCount = await countOptional(client.listPrompts && (async () => (await client!.listPrompts!(undefined, config.timeoutMs)).prompts))
     return { ok: true, error: null, tools: listed.tools, resourceCount, promptCount }
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error), tools: [], resourceCount: 0, promptCount: 0 }
