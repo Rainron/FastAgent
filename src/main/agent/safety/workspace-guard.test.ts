@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveToolPath } from './workspace-guard'
@@ -29,7 +29,9 @@ describe('workspace guard', () => {
     const result = resolveToolPath('src/index.ts', root)
     expect(result.external).toBe(false)
     expect(result.relativePath).toBe(join('src', 'index.ts'))
-    expect(result.absolutePath).toBe(join(realpathSync.native(root), 'src', 'index.ts'))
+    // 工作区内返回词法路径，不做 realpath：Windows 的 8.3 短名（RUNNER~1 这类）
+    // 会让同一目录有两个写法，写进变更账本与撤销判断时对不上。
+    expect(result.absolutePath).toBe(join(root, 'src', 'index.ts'))
   })
 
   it('../ 越界判为外部', () => {
@@ -46,12 +48,12 @@ describe('workspace guard', () => {
     expect(result.external).toBe(true)
   })
 
-  it('不存在的目标取最近存在的父目录做 realpath', () => {
+  it('不存在的目标按词法路径返回，越界判定仍用 canonical 路径', () => {
     const root = makeRootKeep()
     const result = resolveToolPath('src/deep/new-file.ts', root)
     expect(result.external).toBe(false)
     expect(result.relativePath).toBe(join('src', 'deep', 'new-file.ts'))
-    expect(result.absolutePath).toBe(join(realpathSync.native(root), 'src', 'deep', 'new-file.ts'))
+    expect(result.absolutePath).toBe(join(root, 'src', 'deep', 'new-file.ts'))
   })
 
   it('symlink/junction 指向工作区外时判为外部', (context) => {
