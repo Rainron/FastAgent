@@ -5,12 +5,14 @@ import { QuestionDialog } from './QuestionDialog'
 
 export function ApprovalDialog({ request, onRespond }: { request: ApprovalRequest; onRespond: (decision: ApprovalDecision, answer?: string) => void }) {
   useEffect(() => {
+    // question 的 Esc 由 QuestionDialog 自己处理：先弹弃用确认，不能在这里直接 reject 掉用户已填的内容
+    if (request.kind === 'question') return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onRespond('reject')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onRespond])
+  }, [onRespond, request.kind])
 
   // question 类型整体交给 QuestionDialog，这里只保留批准/循环检测两种弹窗
   if (request.kind === 'question') {
