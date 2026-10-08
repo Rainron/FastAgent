@@ -55,7 +55,7 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
 **Skills, MCP, and plugins**  
-Manage and validate local Skills, import MCP servers and test connectivity, export/import capability bundles, and check for updates from configured Hub sources. The capability page is split into Discover and My capabilities views.
+Manage and validate local Skills, import MCP servers and test connectivity (including the resources and prompt templates a server exposes), export/import capability bundles, and check for updates from configured Hub sources. The capability page is split into Discover and My capabilities views.
 
 **Run state and model permissions**
 
