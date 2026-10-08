@@ -26,6 +26,9 @@ import { hideQuickWindow, showQuickWindow } from './quick-window'
 import { createSplashWindow, destroySplashWindow, dismissSplashWindow, showSplashWindow, updateSplashWindow } from './splash-window'
 import { createRevealCoordinator, splashUpdate, SPLASH_SLOW_DELAY_MS, SPLASH_STATUS_DELAY_MS, type RevealCoordinator, type RevealReason } from './startup-progress'
 import { breadcrumb, initLogging, logAppError, logIntegrationError, writeCrashReport, type CrashKind } from './logging/logger'
+import { TerminalManager } from './terminal/pty-manager'
+import { spawnPty } from './terminal/node-pty'
+import { defaultShell } from './terminal/shell'
 import type { CrashProcessMetric, CrashRuntimeInfo } from './logging/crash-report'
 import { appIcon } from './app-icon'
 import { migrateLegacyData, sweepMigrationResidue } from './data-migration'
@@ -137,6 +140,19 @@ let bundledTools: Record<string, string> = {}
 const catalogProvider = new BuiltinCatalogProvider()
 let pluginInstaller: PluginInstaller
 let sandboxManager: SandboxManager
+const terminalManager = new TerminalManager({
+  spawn: spawnPty,
+  resolveShell: () => defaultShell({
+    platform: process.platform,
+    env: process.env,
+    prefer: settings.shellPreference,
+    bashPath: settings.bashPath || bundledTools.bash || null
+  }),
+  defaultCwd: () => workspaceRoot || homedir(),
+  env: () => process.env,
+  onData: (chunk) => mainWindow?.webContents.send('terminal:data', chunk),
+  onExit: (event) => mainWindow?.webContents.send('terminal:exit', event)
+})
 const conversationRuns = new ConversationRunCoordinator()
 // 不同会话并行，同一会话仍由 conversationRuns 保证 Pi session 顺序。
 const runScheduler = new RunScheduler({ maxConcurrent: 4 })
@@ -1396,6 +1412,7 @@ const mainContext: MainContext = {
   get modelConnectionService() { return modelConnectionService },
   get pluginInstaller() { return pluginInstaller },
   get sandboxManager() { return sandboxManager },
+  terminalManager,
   get bundledTools() { return bundledTools },
   get authState() { return authState },
   get backendUrl() { return backendUrl },
@@ -1672,6 +1689,7 @@ app.on('before-quit', () => {
   try { clearStartupTimers(); destroySplashWindow() } catch (error) { logStartup('清理启动页失败', error) }
   try { settlePendingRequests(new DOMException('窗口已关闭', 'AbortError')) } catch (error) { logStartup('结算挂起请求失败', error) }
   try { void sandboxManager?.destroyAll() } catch (error) { logStartup('清理沙箱会话失败', error) }
+  try { terminalManager.disposeAll() } catch (error) { logStartup('关闭终端会话失败', error) }
   try { destroyTray() } catch (error) { logStartup('销毁托盘失败', error) }
   try {
     if (doubleCtrlHook) { doubleCtrlHook.stop(); doubleCtrlHook = null }

@@ -6,7 +6,9 @@ import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDr
 import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState } from '../git'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
 import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
+import { openTerminalAt } from '../open-terminal'
 import { shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
@@ -45,6 +47,16 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
   handle('projects:archive', (_event, id: string) => ctx.store.archiveProject(ctx.requireNamespace(), id))
   handle('projects:remove', (_event, id: string) => ctx.store.removeProject(ctx.requireNamespace(), id))
   handle('shell:open-path', (_event, path: string) => shell.openPath(path))
+  // 会话头的「打开终端」：在项目根目录起一个系统终端窗口。目录来自已打开的工作区，
+  // 参数数组传给 spawn，不拼 shell 字符串——路径里的空格与 & 都不能变成注入点。
+  handle('workspace:open-terminal', async () => {
+    if (!ctx.workspaceRoot) return '尚未打开工作区'
+    try {
+      return await openTerminalAt(ctx.workspaceRoot, spawn as never)
+    } catch (error) {
+      return error instanceof Error ? error.message : '无法打开终端'
+    }
+  })
   // Ctrl+G 外部编辑：草稿写入系统临时目录，配置了编辑器就用它打开，否则交给系统默认应用。
   // 窗口重新聚焦时由渲染进程读回回填。
   handle('composer:external-edit-open', (_event, text: string) => {

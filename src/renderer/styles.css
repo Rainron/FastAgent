@@ -2768,3 +2768,22 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
   .sidebar-section { margin-top: 12px; }
   .recent { margin-top: 12px; }
 }
+
+/* 内嵌终端面板（私有 e15fe4b 的终端部分；侧栏重做那批样式不随本批进来） */
+@keyframes motion-resource-enter { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+/* ---------- 内嵌终端面板 ---------- */
+.terminal-panel { width: 460px; min-width: 320px; flex: 0 0 460px; display: flex; flex-direction: column; min-height: 0; padding: 10px 10px 8px; border-left: 1px solid var(--border); background: var(--surface); animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) backwards; }
+.terminal-panel-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.terminal-panel-head > svg { flex: 0 0 auto; color: var(--accent-tech); }
+.terminal-panel-head .icon-button { width: 26px; height: 26px; }
+.terminal-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.terminal-tab { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 9px; border: none; border-radius: 7px; background: transparent; color: var(--text-tertiary); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.terminal-tab:hover { background: var(--bg-side-2); color: var(--text-secondary); }
+.terminal-tab.active { background: var(--surface-2); color: var(--text-primary); }
+.terminal-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 4px; opacity: .55; }
+.terminal-tab-close:hover { background: var(--hover); opacity: 1; }
+/* xterm 自己按容器尺寸算行列，父容器必须给出确定高度，否则 fit 算不出行数 */
+.terminal-surface { flex: 1 1 auto; min-height: 0; margin-top: 8px; overflow: hidden; }
+.terminal-surface .xterm { height: 100%; }
+.terminal-surface .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
+.terminal-empty { margin: 16px 4px; color: var(--text-tertiary); font-size: 12px; }

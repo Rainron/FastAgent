@@ -18,6 +18,7 @@ import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, 
 import type { RuntimeReport } from './runtime'
 import type { SandboxCapabilities, SandboxSessionInfo } from './sandbox'
 import type { SearchQuery, SearchResponse } from './search'
+import type { TerminalAttachment, TerminalChunk, TerminalExit, TerminalSessionInfo } from './terminal'
 import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, RendererErrorReport, StartupWarnings, StoredPermissionRule } from './settings'
 import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
 import type { Artifact, ArtifactQuery, GitOperationResult, GitStatusEntry, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
@@ -305,6 +306,8 @@ export interface FastAgentApi {
     onChanged(listener: () => void): () => void
   }
   workspace: {
+    /** 在项目根目录打开系统终端窗口（Windows 优先 wt.exe，退回 cmd start）。 */
+    openTerminal(): Promise<string>
     pickRoot(): Promise<string | null>
     /** 传 null 表示离开工作区，之后 @ 补全与产物面板都不再指向旧项目。 */
     setRoot(path: string | null): Promise<string | null>
@@ -423,6 +426,20 @@ export interface FastAgentApi {
     openPath(path: string): Promise<string>
     /** 仅 http/https，其它协议返回错误信息且不会打开。 */
     openExternal(url: string): Promise<string>
+  }
+  terminal: {
+    /** 仍活着的终端会话；面板重新挂载时靠它接回原来的 shell。 */
+    list(): Promise<TerminalSessionInfo[]>
+    /** 在当前工作区开一个新 shell；工作区未打开时落在用户主目录。 */
+    create(options?: { cols?: number; rows?: number }): Promise<TerminalSessionInfo>
+    /** 取回会话与断开期间缓冲的输出；会话已结束时返回 null。 */
+    attach(id: string): Promise<TerminalAttachment | null>
+    write(id: string, data: string): Promise<void>
+    resize(id: string, cols: number, rows: number): Promise<void>
+    /** 结束会话；会话本就不在时返回 false。 */
+    close(id: string): Promise<boolean>
+    onData(listener: (chunk: TerminalChunk) => void): () => void
+    onExit(listener: (event: TerminalExit) => void): () => void
   }
   onAuthState(listener: (snapshot: AuthSnapshot) => void): () => void
   onTrayNewConversation(listener: () => void): () => void

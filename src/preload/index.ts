@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit } from '../shared/types'
 
 
 /**
@@ -265,6 +265,7 @@ const api: FastAgentApi = {
     exists: (path: string): Promise<boolean> => ipcRenderer.invoke('workspace:exists', path),
     absolutePath: (path: string): Promise<string> => ipcRenderer.invoke('workspace:absolute-path', path),
     openExternal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:open-external', path),
+    openTerminal: (): Promise<string> => ipcRenderer.invoke('workspace:open-terminal'),
     delete: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:delete', path)
   },
   git: {
@@ -352,6 +353,24 @@ const api: FastAgentApi = {
   shell: {
     openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:open-path', path),
     openExternal: (url: string): Promise<string> => ipcRenderer.invoke('shell:open-external', url)
+  },
+  terminal: {
+    list: () => ipcRenderer.invoke('terminal:list'),
+    create: (options?: { cols?: number; rows?: number }) => ipcRenderer.invoke('terminal:create', options ?? {}),
+    attach: (id: string) => ipcRenderer.invoke('terminal:attach', id),
+    write: (id: string, data: string) => ipcRenderer.invoke('terminal:write', id, data),
+    resize: (id: string, cols: number, rows: number) => ipcRenderer.invoke('terminal:resize', id, cols, rows),
+    close: (id: string) => ipcRenderer.invoke('terminal:close', id),
+    onData: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: TerminalChunk) => listener(payload)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
+    },
+    onExit: (listener) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: TerminalExit) => listener(payload)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
+    }
   },
   onAuthState: (listener: (snapshot: AuthSnapshot) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: AuthSnapshot) => listener(payload)

@@ -7,6 +7,7 @@ import type { ModelConnectionService } from './model-connections'
 import type { PluginInstaller } from './plugins/installer'
 import type { BuiltinCatalogProvider } from './plugins/catalog'
 import type { SandboxManager } from './agent/sandbox/sandbox-manager'
+import type { TerminalManager } from './terminal/pty-manager'
 import type { ConversationRunCoordinator, ConversationRuntimeCache } from './conversation-runtime-cache'
 import type { RunScheduler } from './run-scheduler'
 import type { PauseGate } from './agent/pause-gate'
@@ -73,6 +74,7 @@ export interface MainContext {
   readonly modelConnectionService: ModelConnectionService
   readonly pluginInstaller: PluginInstaller
   readonly sandboxManager: SandboxManager
+  readonly terminalManager: TerminalManager
   readonly bundledTools: Record<string, string>
   readonly authState: AuthSnapshot
   readonly backendUrl: string | null
