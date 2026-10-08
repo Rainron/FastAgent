@@ -64,10 +64,11 @@ describe('createShellOperations', () => {
     const hostEnv = { PATH: 'C:\\bin', ANTHROPIC_API_KEY: 'secret', COMPANY_INTERNAL_VAR: 'x' }
     const { manager, calls } = fakeManager()
 
-    const sandboxed = createShellOperations({ shellToolName: 'bash', session: session('sandboxed'), manager, hostEnv })
+    const sandboxed = createShellOperations({ shellToolName: 'bash', bashPath: 'C:\\Users\\me\\.fa\\runtime\\git\\usr\\bin\\bash.exe', session: session('sandboxed'), manager, hostEnv })
     await sandboxed.exec('env', 'D:\\work', { onData: () => undefined })
     // 沙箱路径还会追加 GIT_CONFIG_*，只断言宿主环境的取舍结果。
-    expect(calls[0].env.PATH).toBe('C:\\bin')
+    expect(calls[0].env.PATH).toContain('C:\\bin')
+    expect(calls[0].env.PATH).toContain('C:\\Users\\me\\.fa\\runtime\\git\\usr\\bin')
     expect(calls[0].env.ANTHROPIC_API_KEY).toBeUndefined()
     expect(calls[0].env.COMPANY_INTERNAL_VAR).toBeUndefined()
 

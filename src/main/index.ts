@@ -151,6 +151,7 @@ interface CachedConversationRuntime {
   mcpBindings: McpToolBinding[]
   sandboxSession: SandboxSession | null
   sessionOverrides: Map<string, ApprovalDecision>
+  setAbilityUsageSink(sink: ((type: 'skill' | 'mcp', id: string) => void) | null): void
   dispose(): Promise<void>
 }
 

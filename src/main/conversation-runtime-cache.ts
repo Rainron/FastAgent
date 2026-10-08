@@ -2,6 +2,12 @@ export interface DisposableConversationRuntime {
   dispose(): void | Promise<void>
 }
 
+export interface ConversationRuntimeLease<T extends DisposableConversationRuntime = DisposableConversationRuntime> {
+  readonly conversationId: string
+  readonly entry: T
+  released: boolean
+}
+
 /** 同一会话共用一个 promise tail；不同会话没有共享锁。 */
 export class ConversationRunCoordinator {
   private readonly tails = new Map<string, Promise<void>>()
@@ -31,12 +37,7 @@ interface CacheEntry<T> {
 
 export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
   private readonly entries = new Map<string, CacheEntry<T>>()
-  /**
-   * 已失效但还被运行占用的条目：它们已经从 entries 里摘掉，仍要等 release 才能销毁。
-   * 不单独记着的话 release 按 conversationId 查已经查不到，那份运行时（含 MCP 连接与沙箱）
-   * 就永远泄漏了。同一会话的运行由 ConversationRunCoordinator 串行化，任一时刻最多一份租约，
-   * 所以这里按会话取一条即可，不会释放错对象。
-   */
+  /** 已失效但仍被运行占用的条目：必须等对应租约释放后才能销毁。 */
   private readonly detached = new Map<string, CacheEntry<T>[]>()
   private readonly operations = new ConversationRunCoordinator()
   private readonly capacity: number
@@ -98,29 +99,28 @@ export class ConversationRuntimeCache<T extends DisposableConversationRuntime> {
   }
 
   /** 运行期间固定 runtime，避免容量淘汰或压缩失效销毁活跃 session。 */
-  retain(conversationId: string): void {
+  retain(conversationId: string): ConversationRuntimeLease<T> | null {
     const entry = this.entries.get(conversationId)
-    if (entry) entry.leases += 1
+    if (!entry) return null
+    entry.leases += 1
+    return { conversationId, entry: entry.value, released: false }
   }
 
-  async release(conversationId: string): Promise<void> {
-    // 运行期间条目可能已被失效摘走（压缩作废 session、容量淘汰），这时租约挂在 detached 上。
-    const detached = this.detached.get(conversationId)
-    if (detached?.length) {
-      const entry = detached[0]
-      entry.leases = Math.max(0, entry.leases - 1)
-      if (entry.leases === 0) {
-        detached.shift()
-        if (!detached.length) this.detached.delete(conversationId)
-        await entry.value.dispose()
-      }
-      return
-    }
-    const entry = this.entries.get(conversationId)
-    if (!entry) return
+  async release(lease: ConversationRuntimeLease<T>): Promise<void> {
+    if (lease.released) return
+    lease.released = true
+    const detached = this.detached.get(lease.conversationId)
+    const detachedIndex = detached?.findIndex((item) => item.value === lease.entry) ?? -1
+    const entry = detachedIndex >= 0 && detached ? detached[detachedIndex] : this.entries.get(lease.conversationId)
+    if (!entry || entry.value !== lease.entry) return
     entry.leases = Math.max(0, entry.leases - 1)
     if (entry.invalidated && entry.leases === 0) {
-      this.entries.delete(conversationId)
+      if (detachedIndex >= 0 && detached) {
+        detached.splice(detachedIndex, 1)
+        if (!detached.length) this.detached.delete(lease.conversationId)
+      } else {
+        this.entries.delete(lease.conversationId)
+      }
       await entry.value.dispose()
     }
   }

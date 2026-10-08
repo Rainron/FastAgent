@@ -41,9 +41,6 @@ import type { RunContext } from './context'
 
 type AbilityUsageSink = (type: 'skill' | 'mcp', id: string) => void
 
-/** 当前这一轮的能力使用记录入口。跨轮复用的运行时扩展只认这个转发点。 */
-let abilityUsageSink: AbilityUsageSink | null = null
-
 export async function runLocalRun(ctx: RunContext, runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, mode: ConversationMode, modelId: number | null, thinkingLevel: ThinkingLevel, permission: PermissionPreset | null, modePrompt: string, planMode: boolean, attachments: Attachment[], signal: AbortSignal, acceptedAt = Date.now()) {  // 主进程累积一份助手文本：渲染进程切走会话后流式状态就没了，只有这份能在
   // 终态时兜底落库。cancelled / failed 以及 completed 不带 text 的分支都靠它。
   let streamedText = ''
@@ -65,7 +62,6 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       // 统计写失败不该影响这轮对话。
     }
   }
-  abilityUsageSink = onAbilityUsed
   let execution = createExecutionState(runId, ctx.store.listTodos(namespace, conversationId))
   let firstTokenAt: number | null = null
   // 本轮结束后从 Pi 当前有效消息树生成快照；总量用 provider usage，分类按真实 session 消息校准。
@@ -154,6 +150,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
   }
   ctx.store.startAgentRun(namespace, { runId, conversationId, turnId, mode, startedAt: acceptedAt })
   emit({ type: 'run_started', phase: 'queued', detail: '请求已接收，正在排队', status: 'running' })
+  let cachedRuntimeForRun: CachedConversationRuntime | null = null
+  let runtimeLease: ReturnType<RunContext['conversationRuntimeCache']['retain']> = null
   try {
     if (!modelId) throw new Error('未选择可用模型')
     if (signal.aborted) throw new DOMException('已取消', 'AbortError')
@@ -373,6 +371,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     const cached = await ctx.conversationRuntimeCache.getWithStatus(cacheKey, signature, async () => {
       let mcpManager: LocalMcpManager | null = null
       let mcpBindings: McpToolBinding[] = []
+      let currentAbilityUsageSink: AbilityUsageSink | null = null
       let sandboxSession: SandboxSession | null = null
       let pi: PiSessionRuntime | null = null
       const sessionOverrides = new Map<string, ApprovalDecision>()
@@ -419,9 +418,9 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           agentContextPrompt,
           skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
           mcpBindings,
-          // MCP 桥接扩展随运行时创建一次并跨轮复用，必须经由 sink 转发到当前这一轮的
-          // 去重窗口，直接捕获闭包会永远记在首轮上。
-          onAbilityUsed: (type, id) => abilityUsageSink?.(type, id),
+          // MCP / Skill 桥接扩展随运行时跨轮复用；通过显式 setter 绑定当前回合，
+          // 不能捕获模块级全局 callback，否则并发会话会串写使用记录。
+          onAbilityUsed: (type, id) => currentAbilityUsageSink?.(type, id),
           onSessionFile: (path) => ctx.store.setConversationSessionFile(namespace, conversationId, path),
           onEvent: emit,
           onCompaction: recordRuntimeCompaction,
@@ -452,6 +451,9 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           mcpBindings,
           sandboxSession,
           sessionOverrides,
+          setAbilityUsageSink(sink) {
+            currentAbilityUsageSink = sink
+          },
           async dispose() {
             // 后台进程按会话存活，会话运行时一销毁就必须停掉，不能跨会话残留。
             stopBackgroundShells(namespace, conversationId)
@@ -468,7 +470,10 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         throw error
       }
     })
-    ctx.conversationRuntimeCache.retain(cacheKey)
+    runtimeLease = ctx.conversationRuntimeCache.retain(cacheKey)
+    if (!runtimeLease) throw new Error('会话运行时租约创建失败')
+    cachedRuntimeForRun = cached.value
+    cached.value.setAbilityUsageSink(onAbilityUsed)
     emit({ type: 'run_phase', phase: 'initializing', cacheHit: cached.cacheHit, detail: cached.cacheHit ? '已复用会话运行时' : '会话运行时已就绪', status: 'completed' })
     // 运行时创建（MCP 连接、沙箱、扩展加载）耗时期间用户可能已点停止：
     // 此时 signal 已 abort，consumeSession 里的 abort 监听还来不及注册，必须在这里拦截。
@@ -569,10 +574,12 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     }
   } finally {
     breadcrumb('run', `finish ${runId}`)
+    // 先解绑复用 runtime 上的本轮回调，再摘牌，避免下一轮并发开始后被旧回合清空 sink。
+    cachedRuntimeForRun?.setAbilityUsageSink(null)
     // 先摘牌再做清理：终态事件已经发给界面了，界面收到后可能马上发下一条，
     // 而清理里有 await；留在表里会让那一条撞上「该会话已有任务在运行」。
     ctx.activeRuns.delete(runId)
-    await ctx.conversationRuntimeCache.release(ctx.conversationRuntimeKey(namespace, conversationId))
+    if (runtimeLease) await ctx.conversationRuntimeCache.release(runtimeLease)
     // run 级授权与循环计数随任务结束一并清掉。
     ctx.runPermissionOverrides.delete(runId)
     emit({ type: 'run_phase', phase: 'cleanup', detail: '运行清理完成', status: 'completed' })

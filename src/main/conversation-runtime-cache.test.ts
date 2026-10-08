@@ -16,8 +16,8 @@ function api() {
       getWithStatus(conversationId: string, signature: string, create: () => Promise<T>): Promise<{ value: T; cacheHit: boolean }>
       peek(conversationId: string): T | null
       invalidate(conversationId: string): Promise<void>
-      retain(conversationId: string): void
-      release(conversationId: string): Promise<void>
+      retain(conversationId: string): { conversationId: string; entry: T; released: boolean } | null
+      release(lease: { conversationId: string; entry: T; released: boolean }): Promise<void>
       prune(): Promise<void>
       disposeAll(): Promise<void>
     }
@@ -130,16 +130,35 @@ describe('ConversationRuntimeCache', () => {
     const cache = new ConversationRuntimeCache<Runtime>()
     const value = runtime('one')
     await cache.get('c1', 'sig', async () => value)
-    cache.retain('c1')
+    const lease = cache.retain('c1')
+    expect(lease?.entry).toBe(value)
     await cache.invalidate('c1')
     expect(value.dispose).not.toHaveBeenCalled()
-    await cache.release('c1')
+    await cache.release(lease!)
     expect(value.dispose).toHaveBeenCalledTimes(1)
     // 失效后重建的新实例不受上一份租约影响
     const next = runtime('next')
     expect(await cache.get('c1', 'sig', async () => next)).toBe(next)
     await cache.disposeAll()
     expect(next.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('多个失效 runtime 按具体租约乱序释放，不会错释实例', async () => {
+    const { ConversationRuntimeCache } = api()
+    const cache = new ConversationRuntimeCache<Runtime>()
+    const first = runtime('first')
+    const second = runtime('second')
+    await cache.get('c1', 'sig-a', async () => first)
+    const firstLease = cache.retain('c1')!
+    await cache.invalidate('c1')
+    await cache.get('c1', 'sig-b', async () => second)
+    const secondLease = cache.retain('c1')!
+    await cache.invalidate('c1')
+    await cache.release(secondLease)
+    expect(second.dispose).toHaveBeenCalledOnce()
+    expect(first.dispose).not.toHaveBeenCalled()
+    await cache.release(firstLease)
+    expect(first.dispose).toHaveBeenCalledOnce()
   })
 
   it('容量淘汰最久未使用的实例', async () => {

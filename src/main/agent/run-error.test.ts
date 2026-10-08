@@ -57,6 +57,36 @@ describe('classifyRunError', () => {
     expect(classifyRunError(new Error('磁盘写入失败'))).toMatchObject({ kind: 'system', retryable: false })
   })
 
+  it('HTTP 状态码结构化判定优先于文本：429/5xx 归 network 可重试', () => {
+    const rateLimited = Object.assign(new Error('provider 换了文案'), { status: 429 })
+    expect(classifyRunError(rateLimited)).toMatchObject({ kind: 'network', retryable: true })
+    const serverError = Object.assign(new Error('no hint words at all'), { status: 503 })
+    expect(classifyRunError(serverError)).toMatchObject({ kind: 'network', retryable: true })
+  })
+
+  it('4xx 结构化判定归 validation 不可重试', () => {
+    const unauthorized = Object.assign(new Error('Unauthorized'), { status: 401 })
+    expect(classifyRunError(unauthorized)).toMatchObject({ kind: 'validation', retryable: false, backoffMs: null })
+    const badRequest = Object.assign(new Error('Bad Request'), { status: 400 })
+    expect(classifyRunError(badRequest).kind).toBe('validation')
+  })
+
+  it('Node 网络系统码结构化判定为 network，文案不含线索也能分类', () => {
+    for (const code of ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'UND_ERR_SOCKET']) {
+      const error = Object.assign(new Error('完全不像网络错误的文案'), { code })
+      expect(classifyRunError(error), code).toMatchObject({ kind: 'network', retryable: true })
+    }
+  })
+
+  it('TimeoutError 名称结构化判定为 timeout', () => {
+    expect(classifyRunError(new DOMException('The operation timed out', 'TimeoutError'))).toMatchObject({ kind: 'timeout', retryable: true, backoffMs: 2_000 })
+  })
+
+  it('权限拒绝仍优先于结构化判定：带 status 的权限消息不会被误判为网络错误', () => {
+    const denied = Object.assign(new Error('操作未获批准：bash'), { status: 500 })
+    expect(classifyRunError(denied).kind).toBe('permission')
+  })
+
   it('非 Error 输入不抛异常', () => {
     expect(classifyRunError('ECONNREFUSED').kind).toBe('network')
     expect(classifyRunError(undefined)).toMatchObject({ kind: 'system', message: '运行失败' })

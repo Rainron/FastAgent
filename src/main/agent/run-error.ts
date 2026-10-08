@@ -31,6 +31,29 @@ const PATTERNS: Array<{ kind: RunErrorKind; test: RegExp }> = [
 /** tool-runtime 拒绝执行时写进结果的几种理由，全部不该自动重试。 */
 const PERMISSION_PATTERN = /权限规则禁止执行|用户拒绝了该操作|操作未获批准|计划模式禁止写入操作/
 
+/** Node/undici 网络层系统码：结构化判定优先于文本，provider 改文案不影响分类。 */
+const NETWORK_CODES: ReadonlySet<string> = new Set([
+  'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN',
+  'ECONNABORTED', 'EPIPE', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT'
+])
+
+/**
+ * 从错误的结构化字段（HTTP status / Node code / DOMException name）直接判类。
+ * 拿不到结构化信息时返回 null，落到文本匹配兑底——两条路径叠加保证文案变化不伤分类。
+ */
+function structuralKindOf(error: unknown): RunErrorKind | null {
+  if (!error || typeof error !== 'object') return null
+  const { status, code, name } = error as { status?: unknown; code?: unknown; name?: unknown }
+  if (typeof status === 'number' && Number.isFinite(status)) {
+    if (status === 429 || (status >= 500 && status < 600)) return 'network'
+    // 4xx（鉴权失败、参数拒收等）重试无意义，归 validation 不可重试，文案里已带状态码。
+    if (status >= 400 && status < 500) return 'validation'
+  }
+  if (typeof code === 'string' && NETWORK_CODES.has(code)) return 'network'
+  if (name === 'TimeoutError') return 'timeout'
+  return null
+}
+
 function messageOf(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
@@ -65,6 +88,13 @@ export function classifyRunError(error: unknown, attempt = 0): RunErrorClass {
   }
   if (PERMISSION_PATTERN.test(message)) {
     return { kind: 'permission', retryable: false, backoffMs: null, message }
+  }
+
+  // 结构化字段优先于文本匹配：status/code 是 provider 与运行时不会随意改写的稳定信号。
+  const structural = structuralKindOf(error)
+  if (structural) {
+    const retryable = structural === 'network' || structural === 'timeout'
+    return { kind: structural, retryable, backoffMs: retryable ? backoffFor(structural, attempt) : null, message }
   }
 
   for (const pattern of PATTERNS) {
