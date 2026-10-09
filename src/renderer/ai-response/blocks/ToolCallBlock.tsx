@@ -22,7 +22,8 @@ const sourceLabels: Record<ToolCallBlockData['source'], string | null> = {
   mcp: 'MCP',
   skill: 'Skill',
   cli: 'CLI',
-  agent: 'Agent'
+  agent: 'Agent',
+  plugin: '插件'
 }
 
 export function permissionLabel(value: string | null | undefined): string {

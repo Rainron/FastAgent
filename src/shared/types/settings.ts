@@ -1,12 +1,12 @@
-import type { KnowledgeSettings } from './kb'
 import type { PermissionAction } from '../permission-rules'
 import type { SandboxSettings } from '../sandbox'
 import type { AgentAbilityPolicy } from './abilities'
 import type { AppTheme, ContextStrategy, ConversationMode, ThinkingLevel } from './common'
 import type { MemorySettings } from './memory'
+import type { KnowledgeSettings } from './kb'
 import type { ShellCommandSettings } from './shell-command'
-import type { TraceDisplaySettings } from './trace-display'
 import type { ShortcutSettings } from './shortcuts'
+import type { TraceDisplaySettings } from './trace-display'
 
 export interface StoredPermissionRule {
   toolKey: string
@@ -27,11 +27,12 @@ export interface ClientPreferences {
     recent: boolean
   }
   paginationPageSize: number
+  planDisplayMode: 'top' | 'inline'
+  /** Git 面板「未提交改动」的组织方式与折叠记忆；存折叠而非展开，新目录默认展开 */
   gitChangeView: {
     mode: 'file' | 'folder' | 'status'
     collapsedDirs: string[]
   }
-  planDisplayMode: 'top' | 'inline'
 }
 
 export interface DataStorageInfo {
@@ -164,17 +165,15 @@ export interface AppSettings {
   shellPreference: 'bash' | 'powershell'
   /** 显式指定的 bash 路径（如 Git Bash / MSYS2 的 bash.exe）；空串表示自动探测 */
   bashPath: string
-  /** 执行轨迹的展示偏好；缺省视为默认值（底部用时 + 中文文案 + 展开即见内容） */
-  traceDisplay?: TraceDisplaySettings
-  /** 知识库注入开关与条数；缺省视为默认值。 */
-  knowledge: KnowledgeSettings
   /** 输入框 `!命令` 直接执行 shell；缺省视为默认值（开启 + 只本地显示） */
   shellCommand?: ShellCommandSettings
+  /** 执行轨迹的展示偏好；缺省视为默认值（底部用时 + 中文文案 + 展开即见内容） */
+  traceDisplay?: TraceDisplaySettings
   /** Ctrl+G 外部编辑使用的编辑器可执行文件路径；空串表示用系统默认应用打开草稿 */
   externalEditorPath: string
   /** Agent 可发现的能力范围；当前只实现 all_enabled 分支 */
   agentAbilityPolicy: AgentAbilityPolicy
-  /** 是否启用只读 Sub-agent；关闭后主 Agent 不会获得委派工具。 */
+  /** 是否启用 Sub-agent 委派；关闭后主 Agent 不会获得委派工具。 */
   subAgentEnabled: boolean
   /**
    * 单个子任务允许的工具调用次数上限。
@@ -184,16 +183,22 @@ export interface AppSettings {
    */
   subAgentMaxToolCalls: number
   /**
-   * 用户定义的只读 Sub-agent 角色，写入能力由后续阶段单独开放。
+   * 用户定义的 Sub-agent 角色。
+   *
+   * `tools` 取值见 `shared/subagent` 的 SUBAGENT_TOOL_IDS；`allowWrite` 为假时写类工具在主进程
+   * 归一时被裁掉，缺省（旧配置）即只读，行为与开放写入前一致。
    *
    * `maxTurns` 是历史字段：轮次从来没有传给子运行，填多少都不生效，已由 `maxToolCalls` 取代。
    * 保留声明只为读旧配置，不再写入。
    */
-  subAgents?: Array<{ id: string; name: string; description: string; systemPrompt: string; thinkingLevel?: ThinkingLevel; maxToolCalls?: number; maxTurns?: number }>
+  subAgents?: Array<{ id: string; name: string; description: string; systemPrompt: string; thinkingLevel?: ThinkingLevel; tools?: string[]; allowWrite?: boolean; allowMcp?: boolean; maxToolCalls?: number; maxTurns?: number }>
   /** 跨会话长期记忆；关闭后既不召回也不抽取 */
   memory: MemorySettings
+  /** 项目知识库的自动注入；关闭后条目仍可管理与搜索，只是不再注入对话 */
+  knowledge: KnowledgeSettings
   /** Agent 命令执行的 OS 级沙箱设置 */
   sandbox: SandboxSettings
+  /** Agent 操作本机桌面的能力；默认关闭，关闭时语义层工具不注册 */
   /** 全局连按两次 Ctrl 唤起快速对话；关闭后卸载键盘钩子 */
   quickDialogEnabled: boolean
   /** 快捷键绑定；缺省字段视为未绑定 */

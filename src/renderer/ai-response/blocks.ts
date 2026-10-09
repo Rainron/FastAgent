@@ -46,7 +46,7 @@ export interface FileListBlock extends BaseBlock {
   note: string | null
 }
 
-export type ToolSource = 'builtin' | 'command' | 'mcp' | 'skill' | 'cli' | 'agent'
+export type ToolSource = 'builtin' | 'command' | 'mcp' | 'skill' | 'cli' | 'agent' | 'plugin'
 
 export interface ToolCallBlock extends BaseBlock {
   type: 'toolCall'

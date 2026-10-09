@@ -18,6 +18,14 @@
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.4",
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-brand": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-scope": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.1.5-rc.2",
+
     "@earendil-works/pi-coding-agent": "0.84.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tanstack/react-query": "^5.66.8",

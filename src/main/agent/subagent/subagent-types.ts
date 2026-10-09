@@ -9,9 +9,17 @@ export interface SubAgentConfig {
   name: string
   description: string
   systemPrompt: string
+  /** 已授予的工具，取值来自 `shared/subagent` 的 SUBAGENT_TOOL_IDS；`shell` 在执行时映射成实际 shell 工具名。 */
   tools: string[]
-  allowWrite: false
-  allowMcp: false
+  /**
+   * 是否允许给这个角色授予写类工具（edit / write / patch / shell）。
+   *
+   * 它只管「能不能选」，真正的边界是 `tools`：归一时会按它裁掉写类工具，
+   * 子运行的计划模式也按 `tools` 里有没有写类工具决定，不另立一套判断。
+   */
+  allowWrite: boolean
+  /** 是否把父运行已连接的 MCP 工具一并给子运行。 */
+  allowMcp: boolean
   thinkingLevel: ThinkingLevel
   /**
    * 工具调用次数上限；缺省时用设置里的 `subAgentMaxToolCalls`。
@@ -39,6 +47,7 @@ export interface SubAgentResult {
   agentName: string
   status: Exclude<SubAgentStatus, 'queued' | 'running'>
   output: string
+  // 结果里的交接一律来自 parseSubAgentHandoff，小节齐全；事件与落库结构另有历史记录，那边 changedFiles 是可选的。
   handoff?: { goal: string; changedFiles: string[]; verified: string[]; unverified: string[]; findings: string[]; decisions: string[]; recommendations: string[]; remainingSteps: string[] }
   error?: string
   truncated: boolean
@@ -56,7 +65,8 @@ export interface SubAgentRunEvent {
 }
 
 export const SUBAGENT_LIMITS = {
-  maxParallelTasks: 4,
+  /** 与单次任务上限一致：一次委派的任务全部同时起跑，不在工具内部再排队。 */
+  maxParallelTasks: 8,
   maxTasksPerCall: 8,
   maxTaskCharacters: 20_000,
   maxOutputCharacters: 50_000,

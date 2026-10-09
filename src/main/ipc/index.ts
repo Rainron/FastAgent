@@ -8,6 +8,7 @@ import { registerChatIpc } from './chat'
 import { registerConversationIpc } from './conversation'
 import { registerDiagnosticsIpc } from './diagnostics'
 import { registerGitIpc } from './git'
+import { registerDshIpc } from './dsh'
 import { registerHubIpc } from './hub'
 import { registerKbIpc } from './kb'
 import { registerMcpIpc } from './mcp'
@@ -35,6 +36,7 @@ export function registerAllIpc(handle: IpcRegistrar, ctx: MainContext) {
   registerMcpIpc(handle, ctx)
   registerAbilitiesIpc(handle, ctx)
   registerHubIpc(handle, ctx.hubService)
+  registerDshIpc(handle, () => ctx.dshService)
   registerBundleIpc(handle, { bundles: ctx.bundleService, mainWindow: () => ctx.mainWindow, exportsDir: () => ctx.appPaths.exportsDir })
   registerChatIpc(handle, ctx)
   registerWorkspaceIpc(handle, ctx)

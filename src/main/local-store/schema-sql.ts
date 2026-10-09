@@ -269,6 +269,15 @@ export const SCHEMA_SQL = `
         PRIMARY KEY(namespace, project_id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS projects_path ON projects(namespace, path);
+      CREATE TABLE IF NOT EXISTS dsh_plugins (
+        name TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0,
+        config TEXT NOT NULL DEFAULT '{}',
+        activation TEXT,
+        installed_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS project_trust (
         namespace TEXT NOT NULL,
         trust_key TEXT NOT NULL,

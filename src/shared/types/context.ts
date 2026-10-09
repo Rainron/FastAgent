@@ -131,6 +131,20 @@ export interface ContextState {
   updatedAt: string
 }
 
+/** 运行中的瞬态上下文测量；不含落库统计字段。 */
+export interface ContextProgressSnapshot {
+  contextWindow: number
+  estimatedTokens: number
+  messageTokens: number
+  toolTokens: number
+  systemTokens: number
+  summaryTokens?: number
+  attachmentTokens?: number
+  modelId?: number | null
+  provider?: string | null
+  countingMethod?: 'provider-usage' | 'fallback-estimate'
+}
+
 export interface ContextSummary {
   id: string
   conversationId: string

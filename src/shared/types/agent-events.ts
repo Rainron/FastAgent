@@ -1,10 +1,10 @@
-import type { Attachment } from './conversation'
 import type { ApprovalRequest, PermissionPreset, TodoItem } from './common'
-import type { CompactionHistory, ContextState, ModelUsageRecord, ModelUsageSummary } from './context'
+import type { CompactionHistory, ContextProgressSnapshot, ContextState, ModelUsageRecord, ModelUsageSummary } from './context'
 import type { SandboxNotice } from './sandbox'
 import type { RunErrorKind } from './agent-runs'
+import type { Attachment, } from './conversation'
 
-export type ToolSource = 'builtin' | 'command' | 'mcp' | 'skill' | 'cli' | 'agent'
+export type ToolSource = 'builtin' | 'command' | 'mcp' | 'skill' | 'cli' | 'agent' | 'plugin'
 
 export interface ToolCallRecord {
   id: string
@@ -60,7 +60,7 @@ export interface AgentEvent {
   runId: string
   conversationId?: string
   turnId?: string
-  type: 'run_started' | 'run_phase' | 'token' | 'thinking' | 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'question_required' | 'permission_changed' | 'file_changed' | 'contextUpdated' | 'usageUpdated' | 'compactionCompleted' | 'todo_changed' | 'sandbox_blocked' | 'sandbox_degraded' | 'subagent_started' | 'subagent_update' | 'subagent_result' | 'subagent_failed' | 'subagent_cancelled' | 'user_steer' | 'steer_update' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  type: 'run_started' | 'run_phase' | 'token' | 'thinking' | 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'approval_required' | 'approval_resolved' | 'question_required' | 'permission_changed' | 'file_changed' | 'contextProgress' | 'contextUpdated' | 'usageUpdated' | 'compactionCompleted' | 'todo_changed' | 'sandbox_blocked' | 'sandbox_degraded' | 'subagent_started' | 'subagent_update' | 'subagent_result' | 'subagent_failed' | 'subagent_cancelled' | 'user_steer' | 'steer_update' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
   /** 不带子 Agent 全文：全文只经工具返回值交给模型，事件里放全文会被整轮 activity 反复序列化。 */
   subAgent?: { taskId: string; agentId: string; agentName: string; status: string; parentToolCallId?: string; parentRunId?: string; subAgentRunId?: string; detail?: string; handoff?: { goal: string; changedFiles?: string[]; verified: string[]; unverified: string[]; findings: string[]; decisions: string[]; recommendations: string[]; remainingSteps: string[] } }
   phase?: 'queued' | 'compacting' | 'initializing' | 'preparing_attachments' | 'prompting' | 'waiting_first_token' | 'streaming' | 'cleanup'
@@ -75,7 +75,7 @@ export interface AgentEvent {
   text?: string
   /** 新插队消息使用稳定 id；旧活动记录可能缺失。 */
   queueId?: string
-  /** user_steer 随消息一起送进这一轮的附件（只有元数据）。 */
+  /** user_steer 随消息一起送进这一轮的附件（已归档到附件目录，只有元数据）；旧活动记录缺失。 */
   attachments?: Attachment[]
   tool?: string
   source?: ToolSource | null
@@ -106,6 +106,7 @@ export interface AgentEvent {
   /** todo_changed 完整清单 */
   todos?: TodoItem[]
   context?: ContextState
+  contextProgress?: ContextProgressSnapshot
   usageRecord?: ModelUsageRecord
   usage?: ModelUsageSummary
   compaction?: CompactionHistory

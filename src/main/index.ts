@@ -41,6 +41,7 @@ import type { LocalMcpManager, McpToolBinding } from './mcp-manager'
 import { BuiltinCatalogProvider } from './plugins/catalog'
 import { PluginInstaller } from './plugins/installer'
 import { createHubService } from './hub/hub-service'
+import { createDshService } from './dsh/service'
 import { createBundleService } from './bundle/bundle-service'
 import { registerAllIpc } from './ipc'
 import type { MainContext } from './app-context'
@@ -270,6 +271,14 @@ const { mcpRuntimeSecrets, listAbilities, requireAbility, recordMcpStatus, backf
 // 同样的延后取值：Hub 与整包服务都要在 store / skillRegistry 就绪后才真正读它们。
 const hubService = createHubService({ store: () => store, skillRegistry: () => skillRegistry, catalogProvider, listAbilities })
 const bundleService = createBundleService({ store: () => store, skillRegistry: () => skillRegistry })
+// dsh 插件宿主：运行时从应用自带的 node_modules 播种到数据目录，宿主进程入口与 index.js 同级。
+const dshService = createDshService({
+  root: () => appPaths.dshPluginsDir,
+  appNodeModules: () => join(app.getAppPath(), 'node_modules'),
+  hostEntryPath: join(__dirname, 'dsh-host.js'),
+  store: () => store,
+  onCrash: (reason) => logAppError('dsh-host', new Error(reason))
+})
 
 /** 首帧后再做可延后维护，避免把同步磁盘工作塞进首窗链路。 */
 function scheduleDeferredStartupTasks() {
@@ -292,6 +301,9 @@ function scheduleDeferredStartupTasks() {
         logStartup('清理迁移残留失败', error)
       }
       void sandboxManager.probe().catch((error) => logStartup('沙箱能力探测失败', error))
+      // 已启用的 dsh 插件要在这里重新挂起来，否则重启后工具集会一直是空的。
+      // 没有启用的插件时 remount 不会 fork 进程，这条是零成本的。
+      void dshService.remount().catch((error) => logStartup('dsh 插件挂载失败', error))
     }, 0)
   }
   const window = mainWindow
@@ -1478,6 +1490,7 @@ const mainContext: MainContext = {
   catalogProvider,
   hubService,
   bundleService,
+  dshService,
   listAbilities,
   requireAbility,
   recordMcpStatus,
@@ -1756,6 +1769,7 @@ app.on('before-quit', () => {
   try { settlePendingRequests(new DOMException('窗口已关闭', 'AbortError')) } catch (error) { logStartup('结算挂起请求失败', error) }
   try { void sandboxManager?.destroyAll() } catch (error) { logStartup('清理沙箱会话失败', error) }
   try { terminalManager.disposeAll() } catch (error) { logStartup('关闭终端会话失败', error) }
+  try { dshService.host.stop() } catch (error) { logStartup('停止 dsh 插件宿主失败', error) }
   try { destroyTray() } catch (error) { logStartup('销毁托盘失败', error) }
   try {
     if (doubleCtrlHook) { doubleCtrlHook.stop(); doubleCtrlHook = null }

@@ -17,10 +17,25 @@ import type { AgentEvent } from '../../../shared/types'
  */
 export const SUBAGENT_MAX_FORWARDED_EVENTS = 400
 
-/** 不转发的高频流式事件；正文由调用方自行累积。 */
-const STREAMING_TYPES = new Set<AgentEvent['type']>(['token', 'thinking', 'thinking_started', 'thinking_ended'])
+/**
+ * 不转发的事件：流式正文由调用方自行累积；上下文与用量快照只对子运行自己有意义。
+ *
+ * contextProgress 在流式输出期间每 250ms 一条，折成不带工具的 subagent_update 后卡片上什么都不显示，
+ * 却占掉转发配额（实测 5 个子任务 1464 条里 1392 条是它），配额一满真正的工具进度就被丢掉，
+ * 卡片停在「启动中」；每条还要把整轮 activity 重新序列化写库。用量记录由调用方直接落库。
+ */
+const STREAMING_TYPES = new Set<AgentEvent['type']>(['token', 'thinking', 'thinking_started', 'thinking_ended', 'contextProgress', 'contextUpdated', 'usageUpdated'])
 
 const TERMINAL_TYPES = new Set<AgentEvent['type']>(['completed', 'failed', 'cancelled', 'interrupted'])
+
+/**
+ * 原样转发、不折叠成 subagent_update 的事件。
+ *
+ * file_changed 带着 path 与增删行，父运行靠它登记 Artifact、刷新本轮改动统计；折叠后这些字段
+ * 全丢，可写 Sub-agent 改的文件在产物面板与改动条上就彻底不存在。它映射不到执行轨迹动作，
+ * 原样放行不会在轨迹上多出一条。同理不受转发配额限制——丢一条就等于丢一个文件。
+ */
+const PASSTHROUGH_TYPES = new Set<AgentEvent['type']>(['file_changed'])
 
 export interface SubAgentForwardContext {
   taskId: string
@@ -31,8 +46,19 @@ export interface SubAgentForwardContext {
   subAgentRunId: string
 }
 
+const FORWARD_INPUT_MAX = 160
+
+function truncateForwardInput(input: string): string {
+  return input.length > FORWARD_INPUT_MAX ? `${input.slice(0, FORWARD_INPUT_MAX)}…` : input
+}
+
 export function isSubAgentTerminalEvent(type: AgentEvent['type']): boolean {
   return TERMINAL_TYPES.has(type)
+}
+
+/** 原样转发的事件不占转发配额：它们服务的是产物登记，不是卡片上的进度动画。 */
+export function isSubAgentPassthroughEvent(type: AgentEvent['type']): boolean {
+  return PASSTHROUGH_TYPES.has(type)
 }
 
 /**
@@ -46,6 +72,7 @@ export function forwardSubAgentEvent(
   forwarded: number
 ): Omit<AgentEvent, 'runId'> | null {
   if (STREAMING_TYPES.has(event.type)) return null
+  if (PASSTHROUGH_TYPES.has(event.type)) return event
   const terminal = TERMINAL_TYPES.has(event.type)
   if (!terminal && forwarded >= SUBAGENT_MAX_FORWARDED_EVENTS) return null
   const type: AgentEvent['type'] = event.type === 'completed'
@@ -68,6 +95,9 @@ export function forwardSubAgentEvent(
     type,
     toolCallId: context.parentToolCallId,
     tool: event.tool,
+    // 只带工具开始时的入参摘要且截短：卡片与过程头要说「正在读取 App.tsx」，
+    // 但每条事件都会进整轮 activity 反复序列化，不能把整段命令原样搬过来。
+    ...(event.type === 'tool_started' && event.input ? { input: truncateForwardInput(event.input) } : {}),
     detail: event.detail,
     status: event.status,
     subAgent: {

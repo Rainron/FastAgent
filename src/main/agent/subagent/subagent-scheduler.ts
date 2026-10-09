@@ -1,11 +1,19 @@
 import type { SubAgentResult, SubAgentStatus } from './subagent-types'
 import { SUBAGENT_LIMITS } from './subagent-types'
 import { truncateSubAgentOutput } from './subagent-handoff'
+import type { WriteTarget } from './workspace-gate'
 
 export interface ScheduledSubAgentTask {
   taskId: string
   agentId: string
   task: string
+  /** 角色是否可写：可写子任务要等同批主 Agent 的写操作，并按文件认领写入目标。 */
+  canWrite?: boolean
+  /**
+   * 写入前认领目标文件；返回拒绝原因，null 表示可以写。
+   * 由 subagent 工具按工作区闸门生成，经子运行的工具钩子调用。
+   */
+  claimWrite?: (targets: WriteTarget[]) => string | null
 }
 
 export type SubAgentRunner = (task: ScheduledSubAgentTask, signal: AbortSignal) => Promise<SubAgentResult>
@@ -76,8 +84,12 @@ export async function runSubAgentTask(
   }
 }
 
-export async function runSubAgentTasks(tasks: ScheduledSubAgentTask[], options: SubAgentSchedulerOptions): Promise<SubAgentResult[]> {
-  if (tasks.length > SUBAGENT_LIMITS.maxTasksPerCall) throw new Error(`Sub-agent 任务数不能超过 ${SUBAGENT_LIMITS.maxTasksPerCall}`)
+/**
+ * 并行执行一组子任务。
+ *
+ * 用工作池而不是整批 Promise.all：一个慢任务不该把同批次其他任务的额度一起占住。
+ */
+async function runSubAgentPool(tasks: ScheduledSubAgentTask[], options: SubAgentSchedulerOptions): Promise<SubAgentResult[]> {
   const concurrency = Math.max(1, Math.min(options.concurrency ?? SUBAGENT_LIMITS.maxParallelTasks, SUBAGENT_LIMITS.maxParallelTasks))
   const results: Array<SubAgentResult | undefined> = new Array(tasks.length)
   let next = 0
@@ -90,6 +102,17 @@ export async function runSubAgentTasks(tasks: ScheduledSubAgentTask[], options: 
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker))
   return results.filter((result): result is SubAgentResult => Boolean(result))
+}
+
+/**
+ * 并行委派：只读与可写子任务一律并行，结果顺序与入参一致。
+ *
+ * 可写子任务之间的冲突不在这里排队解决，而是由 WorkspaceGate 按文件认领：
+ * 整体独占会让五个各写一个文件的任务也只能一个接一个跑。
+ */
+export async function runSubAgentTasks(tasks: ScheduledSubAgentTask[], options: SubAgentSchedulerOptions): Promise<SubAgentResult[]> {
+  if (tasks.length > SUBAGENT_LIMITS.maxTasksPerCall) throw new Error(`Sub-agent 任务数不能超过 ${SUBAGENT_LIMITS.maxTasksPerCall}`)
+  return runSubAgentPool(tasks, options)
 }
 
 /**

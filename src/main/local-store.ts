@@ -1,3 +1,4 @@
+import type { DshPluginActivation, DshPluginRecord } from '../shared/types'
 import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, ModelUsageWindow, TurnSessionAnchor } from '../shared/types'
 import { app } from 'electron'
 import Database from 'better-sqlite3'
@@ -25,6 +26,7 @@ import { McpStore } from './local-store/mcp-store'
 import { MemoryStore } from './local-store/memory-store'
 import { PermissionStore } from './local-store/permission-store'
 import { ProjectTrustStore } from './local-store/project-trust-store'
+import { DshPluginStore, type DshPluginInput } from './local-store/dsh-plugin-store'
 import { SettingsStore } from './local-store/settings-store'
 import { SkillVersionStore } from './local-store/skill-version-store'
 import type { ConversationRecord } from './local-store/row-mappers'
@@ -63,6 +65,7 @@ export class LocalStore {
   private readonly memoryRepository: MemoryStore
   private readonly permissionRepository: PermissionStore
   private readonly projectTrustRepository: ProjectTrustStore
+  private readonly dshPluginRepository: DshPluginStore
   private readonly settingsRepository: SettingsStore
   private readonly skillVersionRepository: SkillVersionStore
 
@@ -93,6 +96,7 @@ export class LocalStore {
     this.memoryRepository = new MemoryStore(this.db)
     this.permissionRepository = new PermissionStore(this.db)
     this.projectTrustRepository = new ProjectTrustStore(this.db)
+    this.dshPluginRepository = new DshPluginStore(this.db)
     this.skillVersionRepository = new SkillVersionStore(this.db)
   }
 
@@ -332,6 +336,14 @@ export class LocalStore {
   listPermissionRules(namespace: string): StoredPermissionRule[] { return this.permissionRepository.listPermissionRules(namespace) }
   upsertPermissionRule(namespace: string, input: { toolKey: string; pattern: string; action: PermissionAction }) { this.permissionRepository.upsertPermissionRule(namespace, input) }
   removePermissionRule(namespace: string, toolKey: string, pattern: string) { this.permissionRepository.removePermissionRule(namespace, toolKey, pattern) }
+  listDshPlugins(): DshPluginRecord[] { return this.dshPluginRepository.listDshPlugins() }
+  getDshPlugin(name: string): DshPluginRecord | null { return this.dshPluginRepository.getDshPlugin(name) }
+  countDshPlugins(): number { return this.dshPluginRepository.countDshPlugins() }
+  saveDshPlugin(input: DshPluginInput): DshPluginRecord { return this.dshPluginRepository.saveDshPlugin(input) }
+  setDshPluginEnabled(name: string, enabled: boolean) { this.dshPluginRepository.setDshPluginEnabled(name, enabled) }
+  setDshPluginConfig(name: string, config: Record<string, unknown>) { this.dshPluginRepository.setDshPluginConfig(name, config) }
+  setDshPluginActivation(name: string, activation: DshPluginActivation | null) { this.dshPluginRepository.setDshPluginActivation(name, activation) }
+  removeDshPlugin(name: string) { this.dshPluginRepository.removeDshPlugin(name) }
   isProjectTrusted(namespace: string, projectPath: string): boolean { return this.projectTrustRepository.isTrusted(namespace, projectPath) }
   getProjectTrust(namespace: string, projectPath: string) { return this.projectTrustRepository.get(namespace, projectPath) }
   setProjectTrust(namespace: string, projectPath: string, trusted: boolean) { this.projectTrustRepository.set(namespace, projectPath, trusted) }

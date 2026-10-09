@@ -3,6 +3,7 @@ import type { PermissionAction } from '../permission-rules'
 import type { ModelParameterOverride } from '../model-parameters'
 import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServerInput, LocalSkillRecord, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, McpServerDetail, McpTestStatus, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord } from './abilities'
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
+import type { DshHostState, DshInstallResult, DshPluginActivation, DshPluginRecord, DshSearchHit } from './dsh'
 import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
 import type { AgentEvent, ToolCallRecord } from './agent-events'
 import type { AgentRunChanges, FileVersionRecord, TurnRevertResult } from './changes'
@@ -197,6 +198,19 @@ export interface FastAgentApi {
     categories(): Promise<string[]>
     /** 给已安装的 Hub 能力对一遍远端版本并落库，供能力页与侧栏徽标离线判断。 */
     checkUpdates(): Promise<HubUpdateCheckResult>
+  }
+  /** DeepSeek Harness（dsh）插件。与 hub / plugins 分开：它们装的是数据或外部进程，这里装的是在宿主里执行的代码。 */
+  dsh: {
+    list(): Promise<DshPluginRecord[]>
+    state(): Promise<DshHostState>
+    search(keyword: string): Promise<DshSearchHit[]>
+    /** 安装即停用；只有重装一个原本已启用的插件才会立刻挂载。 */
+    install(name: string, range?: string): Promise<DshInstallResult>
+    uninstall(name: string): Promise<void>
+    setEnabled(name: string, enabled: boolean): Promise<void>
+    configure(name: string, config: Record<string, unknown>): Promise<void>
+    /** 杀掉宿主重挂全部启用的插件，返回每个插件的激活结果。 */
+    remount(): Promise<Record<string, DshPluginActivation>>
   }
   bundle: {
     /** 弹保存对话框写出整包；用户取消时返回 null，否则返回落地路径。 */

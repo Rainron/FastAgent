@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent, RateLimitSnapshot, MemoryCreateInput, RecallPreview } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent, RateLimitSnapshot, MemoryCreateInput, RecallPreview, DshHostState, DshInstallResult, DshPluginActivation, DshPluginRecord, DshSearchHit } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -180,6 +180,16 @@ const api: FastAgentApi = {
     install: (sourceId: string, ref: string, config?: Record<string, string>): Promise<HubInstallResult> => ipcRenderer.invoke('hub:install', sourceId, ref, config),
     categories: (): Promise<string[]> => ipcRenderer.invoke('hub:categories'),
     checkUpdates: (): Promise<HubUpdateCheckResult> => ipcRenderer.invoke('hub:check-updates')
+  },
+  dsh: {
+    list: (): Promise<DshPluginRecord[]> => ipcRenderer.invoke('dsh:list'),
+    state: (): Promise<DshHostState> => ipcRenderer.invoke('dsh:state'),
+    search: (keyword: string): Promise<DshSearchHit[]> => ipcRenderer.invoke('dsh:search', keyword),
+    install: (name: string, range?: string): Promise<DshInstallResult> => ipcRenderer.invoke('dsh:install', name, range),
+    uninstall: (name: string): Promise<void> => ipcRenderer.invoke('dsh:uninstall', name),
+    setEnabled: (name: string, enabled: boolean): Promise<void> => ipcRenderer.invoke('dsh:set-enabled', name, enabled),
+    configure: (name: string, config: Record<string, unknown>): Promise<void> => ipcRenderer.invoke('dsh:configure', name, config),
+    remount: (): Promise<Record<string, DshPluginActivation>> => ipcRenderer.invoke('dsh:remount')
   },
   bundle: {
     export: (options: BundleExportOptions): Promise<string | null> => ipcRenderer.invoke('bundle:export', options),

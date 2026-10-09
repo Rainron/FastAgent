@@ -4,7 +4,18 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin()], build: { sourcemap: false, minify: 'esbuild' } },
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      sourcemap: false,
+      minify: 'esbuild',
+      rollupOptions: {
+        // dsh 插件宿主跑在独立 utilityProcess 里，需要单独一个入口产物。
+        input: { index: resolve('src/main/index.ts'), 'dsh-host': resolve('src/main/dsh/host-entry.ts') },
+        output: { entryFileNames: '[name].js' }
+      }
+    }
+  },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {

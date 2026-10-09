@@ -20,6 +20,8 @@ export interface AppPaths {
   skillsDir: string
   mcpDir: string
   pluginsDir: string
+  /** DSH 插件安装目录。 */
+  dshPluginsDir: string
   attachmentsDir: string
   /** 未绑定项目的会话（快速对话的 agent 模式是主要来源）的工作目录，避免落到应用安装目录。 */
   quickWorkspaceDir: string
@@ -92,6 +94,7 @@ export function resolveAppPaths(platform: PlatformAppPaths, dataRoot = readDataR
     skillsDir: join(normalizedRoot, 'skills'),
     mcpDir: join(normalizedRoot, 'mcp'),
     pluginsDir: join(normalizedRoot, 'plugins'),
+    dshPluginsDir: join(normalizedRoot, 'dsh-plugins'),
     attachmentsDir: join(normalizedRoot, 'attachments'),
     quickWorkspaceDir: join(normalizedRoot, 'quick-workspace'),
     backupsDir: join(normalizedRoot, 'backups'),

@@ -19,6 +19,7 @@ import type { SandboxSession } from './agent/sandbox/sandbox-types'
 import type { createAbilitiesService } from './abilities-service'
 import type { createHubService } from './hub/hub-service'
 import type { createBundleService } from './bundle/bundle-service'
+import type { DshService } from './dsh/service'
 import type { ContextMeasurement } from './context-meter'
 import type { CrashKind } from './logging/logger'
 import type { createModelRuntime } from './pi-runtime'
@@ -89,6 +90,7 @@ export interface MainContext {
   readonly catalogProvider: BuiltinCatalogProvider
   readonly hubService: ReturnType<typeof createHubService>
   readonly bundleService: ReturnType<typeof createBundleService>
+  readonly dshService: DshService
   readonly listAbilities: AbilitiesService['listAbilities']
   readonly requireAbility: AbilitiesService['requireAbility']
   readonly recordMcpStatus: AbilitiesService['recordMcpStatus']
