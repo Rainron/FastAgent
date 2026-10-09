@@ -10,6 +10,7 @@ import { displayPathValue } from '../ai-response/path-display'
 import type { TraceDiffStat, TraceToolStatus } from '../execution-trace'
 import { useTraceDisplay } from './trace-display-context'
 import { ToolReadPreview } from './ToolReadPreview'
+import { PreviewToolCard } from './PreviewToolCard'
 
 const toolTitles: Record<string, string> = {
   read: '读取文件',
@@ -22,7 +23,8 @@ const toolTitles: Record<string, string> = {
   bash: '运行命令',
   powershell: '运行命令',
   question: '提问',
-  todowrite: '更新待办'
+  todowrite: '更新待办',
+  preview_show: '预览页面'
 }
 
 /** 英文文案下的工具标题；与执行轨迹摘要里的动词同源，一眼能对上是哪一步。 */
@@ -37,7 +39,8 @@ const toolTitlesEn: Record<string, string> = {
   bash: 'Ran',
   powershell: 'Ran',
   question: 'Asked',
-  todowrite: 'Planned'
+  todowrite: 'Planned',
+  preview_show: 'Previewed'
 }
 
 /** compact 是既有形态，沿用中文标题；只有显式选英文时才换。 */
@@ -167,6 +170,8 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
       <button type="button" className="tool-call-summary" onClick={() => setOpen((value) => !value)} aria-expanded={open} title={open ? '收起' : '展开'}>
         <ToolCallBlockRenderer block={head} durationMs={durationMs} diff={display.showDiffStats ? summary?.diff ?? null : null} />
       </button>
+      {/* 预览卡片常显：它是给用户看的结果，不该藏在折叠详情里 */}
+      {group.toolName === 'preview_show' && <PreviewToolCard turnId={turnId} toolCallId={group.toolCallId} status={head.status ?? 'completed'} />}
       {open && (
         <div className="tool-call-detail">
           {readPath && readPreviewOn && <ToolReadPreview path={readPath} workspaceRoot={root} />}

@@ -7,6 +7,7 @@ import type { ModelConnectionService } from './model-connections'
 import type { PluginInstaller } from './plugins/installer'
 import type { BuiltinCatalogProvider } from './plugins/catalog'
 import type { SandboxManager } from './agent/sandbox/sandbox-manager'
+import type { PreviewService } from './preview/preview-service'
 import type { TerminalManager } from './terminal/pty-manager'
 import type { ConversationRunCoordinator, ConversationRuntimeCache } from './conversation-runtime-cache'
 import type { RunScheduler } from './run-scheduler'
@@ -74,6 +75,9 @@ export interface MainContext {
   readonly modelConnectionService: ModelConnectionService
   readonly pluginInstaller: PluginInstaller
   readonly sandboxManager: SandboxManager
+  readonly previewService: PreviewService
+  /** 资源树里移动文件后，把登记过的产物路径跟到新位置。 */
+  relocateArtifactsUnderPath(namespace: string, workspaceId: string, from: string, to: string): boolean
   readonly terminalManager: TerminalManager
   readonly bundledTools: Record<string, string>
   readonly authState: AuthSnapshot

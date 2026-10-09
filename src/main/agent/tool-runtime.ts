@@ -20,6 +20,7 @@ import { createSubAgentTool } from './tools/subagent'
 import type { SubAgentToolContext } from './tools/subagent'
 import { createShellOperations } from './sandbox/shell-operations'
 import { createBackgroundShellTools } from './tools/background-shell'
+import { createPreviewTool, PREVIEW_TOOL_NAME, type PreviewHost } from './tools/preview'
 import { isVerificationCommand, verificationPrompt, type VerificationCommand } from './verification'
 import { skillIdForPaths } from './skill-usage'
 import type { SandboxManager } from './sandbox/sandbox-manager'
@@ -60,6 +61,8 @@ export interface ToolRuntimeContext {
   mcpToolRisk: ReadonlyMap<string, 'read' | 'write'>
   /** 命令执行的沙箱上下文；session 为 sandboxed 时命令进入受限系统环境 */
   sandbox?: { manager: SandboxManager | null; session: SandboxSession | null } | null
+  /** 页面预览（离屏检查 + 通知界面打开）；为空时 preview_show 返回不可用。 */
+  preview?: PreviewHost | null
   subAgent?: SubAgentToolContext
   subAgentMetadata?: { parentToolCallId: string; subAgentId: string; subAgentRunId: string }
   customSubAgents?: import('./subagent/subagent-types').SubAgentConfig[]
@@ -109,6 +112,8 @@ export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 
   const verifyNote = verificationPrompt(context.verificationCommands ?? [])
   // 不写这段的话模型只会用 `&` 把服务甩到后台，既拿不到日志也停不掉，随后就得让用户自己去起服务。
   const backgroundNote = `\n启动开发服务器、watch 这类不会自己退出的进程，用 shell_background 而不是 ${context.shellToolName}：${context.shellToolName} 会一直等到进程退出，整轮就卡在那里。命令里不要再加 &、start 或 nohup。启动后用 shell_background_output 确认它真的起来了，不再需要时用 shell_background_stop 停掉。后台进程会一直活到本会话结束。`
+  const previewNote = `\n做网页样稿、演示页或需要让用户看效果时，写好 HTML 后调用 ${PREVIEW_TOOL_NAME}：一次性样稿放在 .fastagent/previews/<名称>/index.html，属于项目本身的页面照常写在项目里；需要 dev server 时先用 shell_background 启动、用 shell_background_output 确认端口，再以 url 调用 ${PREVIEW_TOOL_NAME}。它会在用户的预览面板打开页面，并把控制台错误、失败请求和截图返回给你；改完页面后再调用一次复查。`
+  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、shell_background（后台启动长期运行的命令）、shell_background_output、shell_background_stop、${PREVIEW_TOOL_NAME}（预览网页）、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${backgroundNote}${previewNote}${sandboxNote}${verifyNote}`
   return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、shell_background（后台启动长期运行的命令）、shell_background_output、shell_background_stop、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${backgroundNote}${sandboxNote}${verifyNote}`
 }
 
@@ -351,6 +356,12 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
           return { cwd: context.cwd, operations, emit: context.emit }
         }
       })) pi.registerTool(tool)
+      pi.registerTool(createPreviewTool({
+        resolveContext: () => {
+          const context = runtimeContext(source)
+          return { cwd: context.cwd, conversationId: context.conversationId, host: context.preview ?? null }
+        }
+      }))
     }
 
     // 兜底：把当前工具清单追加进系统提示，旧会话历史里「没有工具」的说法不会误导模型
@@ -405,6 +416,9 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       } else if (SHELL_TOOLS.has(toolName) && typeof input.command === 'string') {
         toolKey = 'shell'
         subject = input.command
+      } else if (toolName === PREVIEW_TOOL_NAME) {
+        // 路径不走 collectPathInputs：url 也在这个工具里，当成路径解析会被误判成工作区外。
+        subject = String(input.path ?? input.url ?? '')
       }
 
       if (toolName.startsWith('mcp__')) {
@@ -593,6 +607,8 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       // edit 的结果正文只有一句「Successfully replaced …」，逐行 diff 在 details 里；
       // 不落库的话展开工具卡片就没有可排版的内容。
       const diff = event.toolName === 'edit' && isEditToolResult(event) ? event.details?.diff ?? null : null
+      // 预览卡片要靠它画缩略图、状态与打开地址；只有结构化摘要，截图本身在磁盘上。
+      const preview = event.toolName === PREVIEW_TOOL_NAME && event.details ? event.details : null
 
       const errorText = event.isError ? (text.trim().split('\n')[0] || '执行失败') : ''
       try {
@@ -601,7 +617,8 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
           result: {
             summary: truncateText(guarded.text, MAX_STORED_SUMMARY_BYTES),
             ...(stats ?? {}),
-            ...(diff ? { diff: truncateText(guardToolText(diff).text, MAX_STORED_SUMMARY_BYTES) } : {})
+            ...(diff ? { diff: truncateText(guardToolText(diff).text, MAX_STORED_SUMMARY_BYTES) } : {}),
+            ...(preview ? { preview } : {})
           },
           error: errorText || null,
           permissionResult: decision ?? null,

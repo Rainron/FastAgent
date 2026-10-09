@@ -37,7 +37,7 @@ import { findProfile, mergeProfiles, type PermissionProfile } from '../../shared
 import { GitPanel } from '../git/GitPanel'
 import { ResourcePanel } from '../resource-panel/ResourcePanel'
 import type { SettingsCategory } from '../settings/SettingsPage'
-import type { SkillDraft } from '../../shared/types'
+import type { PreviewReadyEvent, PreviewTarget, SkillDraft } from '../../shared/types'
 import { SkillDistillDialog } from '../conversation/SkillDistillDialog'
 import { toggleSidebarSection, type SidebarSectionState } from '../sidebar-sections'
 import { buildContinuationPrompt, isContinuationInput, isNewConversationShortcut, pushNavigation, stepNavigation } from '../workspace-actions'
@@ -59,6 +59,7 @@ import { useConversationScroll } from './hooks/use-conversation-scroll'
 import { useConversationMinimap } from './hooks/use-conversation-minimap'
 import { ConversationMinimap } from '../conversation/ConversationMinimap'
 import { PlanDrawer } from '../conversation/PlanDrawer'
+import { normalizeTraceDisplay } from '../../shared/trace-display'
 import { SubAgentPanel } from '../conversation/SubAgentPanel'
 import { SubAgentPanelContext } from '../conversation/subagent-panel-context'
 import { useSubAgentPanel } from './hooks/use-subagent-panel'
@@ -211,6 +212,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   // 不渲染的话这些提示全部静默丢失。
   const { notice, noticeAction, noticeClosing, setNotice, setNoticeAction } = useNotice()
   const [artifactFile, setArtifactFile] = useState<FileReference | null>(null)
+  // 网页预览（preview_show 结果或对话卡片点开）；与文件预览共用资源面板，预览优先显示。
+  const [artifactPreview, setArtifactPreview] = useState<PreviewTarget | null>(null)
   const effectiveDark = useEffectiveDark(theme)
   // 审批按发起它的 run / 会话归属存放：后台会话的审批不能弹到当前会话，也不能被别的 run 结束时清掉。
   const [approvals, setApprovals] = useState<PendingApproval[]>([])
@@ -1035,7 +1038,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   // 消息右键菜单：按划选内容与所在消息侧（用户/助手）组装上下文操作。
   // 成果「继续修改」：只把提示写进输入框，不代替用户发送——要改什么必须由人补充。
   const handleContinueEditArtifact = useEventCallback((text: string) => setPrefillRequest({ text, nonce: Date.now() }))
-  const handleInsertMcpPrompt = useEventCallback((text: string) => { setPrefillRequest({ text, nonce: Date.now() }); setNotice('Prompt 已插入 Composer，请确认内容后再发送') })
+  const handleAddResourcesToChat = useEventCallback((text: string) => setPrefillRequest({ text, nonce: Date.now() }))
 
   /** 终端开在界面右侧的面板里，不再弹系统终端窗口；系统终端作为面板里的一个按钮保留。 */
   const handleToggleTerminal = useEventCallback(() => {
@@ -1210,8 +1213,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   }
 
   // responseActions 用空依赖记忆化（换引用会让整棵回答子树重渲染），读不到最新 state，用 ref 兜住当前预览目标。
-  const artifactViewRef = useRef({ open: false, key: '' })
-  artifactViewRef.current = { open: artifactOpen, key: artifactFile ? formatFileReference(artifactFile) : '' }
+  const artifactViewRef = useRef({ open: false, key: '', previewUrl: '' })
+  artifactViewRef.current = { open: artifactOpen, key: artifactFile ? formatFileReference(artifactFile) : '', previewUrl: artifactPreview?.url ?? '' }
 
   const responseActions = useMemo<ResponseActions>(() => ({
     openFile: (reference) => {
@@ -1219,12 +1222,26 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       setInspectorId(null)
       const key = formatFileReference(reference)
       // 再点一次同一个引用就收回预览，和展开/收起工具卡片的手感保持一致。
-      if (artifactViewRef.current.open && artifactViewRef.current.key === key) {
+      if (artifactViewRef.current.open && artifactViewRef.current.key === key && !artifactViewRef.current.previewUrl) {
         setArtifactOpen(false)
         setArtifactFile(null)
         return
       }
+      setArtifactPreview(null)
       setArtifactFile(reference)
+      setArtifactOpen(true)
+    },
+    // 与 openFile 同样的手感：再点一次同一个预览收回面板。
+    openPreview: (target) => {
+      setInspector(null)
+      setInspectorId(null)
+      if (artifactViewRef.current.open && artifactViewRef.current.previewUrl === target.url) {
+        setArtifactOpen(false)
+        setArtifactPreview(null)
+        return
+      }
+      setArtifactFile(null)
+      setArtifactPreview(target)
       setArtifactOpen(true)
     },
     // 再点一次同一个附件收回预览，与 openFile 的手感一致。
@@ -1553,11 +1570,23 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     }, CANCEL_TERMINAL_TIMEOUT_MS)
   })
   const handleCloseArtifactFile = useEventCallback(() => setArtifactFile(null))
-  const handleCloseArtifactPanel = useEventCallback(() => { setArtifactOpen(false); setArtifactFile(null) })
+  const handleCloseArtifactPanel = useEventCallback(() => { setArtifactOpen(false); setArtifactFile(null); setArtifactPreview(null) })
+  const handleCloseArtifactPreview = useEventCallback(() => setArtifactPreview(null))
+  // preview_show 完成后自动在右栏打开：只认当前正在看的会话，检查面板开着时不去抢位置。
+  const handlePreviewReady = useEventCallback((event: PreviewReadyEvent) => {
+    if (!traceDisplay.autoOpenPreview || event.conversationId !== selectedConversationId || inspector) return
+    setPlanOpen(false)
+    setAttachmentPreview(null)
+    setArtifactFile(null)
+    setArtifactPreview(event.target)
+    setArtifactOpen(true)
+  })
+  useEffect(() => window.fastAgent.preview.onReady(handlePreviewReady), [handlePreviewReady])
   const handlePickArtifactSuggestion = useEventCallback((path: string) => setArtifactFile({ path, line: null, endLine: null }))
   const handleGitCheckout = useEventCallback((branch: string) => switchGitBranch(branch))
   const handleGitCreate = useEventCallback((name: string) => createGitBranch(name))
   const handleGitStopAndCheckout = useEventCallback((branch: string) => stopRunThenSwitch(branch))
+  const traceDisplay = useMemo(() => normalizeTraceDisplay(settings?.traceDisplay), [settings?.traceDisplay])
   const planPanelOpen = planOpen && planDisplayMode === 'top'
   const subAgentPanel = useSubAgentPanel({
     conversationId: selectedConversationId,
@@ -1621,13 +1650,14 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             {pressure && <ContextPressureBar pressure={pressure} onCompact={handleCompact} onOpenSettings={handleOpenContextSettings} />}
             <Composer workspace={composerWorkspace} onRunShellCommand={handleRunShellCommand} onSteer={handleSteer} onOpenGitPanel={handleOpenGitPanel} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
-          </> : <SectionView key={section} onInsertComposer={handleInsertMcpPrompt} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
+          </> : <SectionView key={section} onInsertComposer={handleAddResourcesToChat} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}
         {planPanelOpen && <PlanDrawer turns={turns} todosByTurn={todosByTurn} onClose={handleClosePlanDrawer} />}
         {attachmentPreview && <AttachmentPanel attachment={attachmentPreview} onClose={handleCloseAttachmentPreview} />}
+        {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} preview={artifactPreview} onClosePreview={handleCloseArtifactPreview} />}
         {subAgentPanel.turn && subAgentPanel.selected && <SubAgentPanel turn={subAgentPanel.turn} taskId={subAgentPanel.selected.taskId} onClose={subAgentPanel.close} />}
-        {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} />}
+        {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} preview={artifactPreview} onClosePreview={handleCloseArtifactPreview} />}
         {inspector && <ConversationInspector data={inspector} initialSection={inspectorSection} onUpdatePolicy={(conversationId, patch) => void handleUpdateContextPolicy(conversationId, patch)} compaction={inspectorId ? compactionStates[inspectorId] ?? null : null} onCancelCompaction={() => { if (inspectorId) { void window.fastAgent.conversations.cancelCompaction(inspectorId); setCompactionStates((current) => cancelCompaction(current, inspectorId)) } }} onClose={closeInspector} onRefresh={() => { if (inspectorId) void openInspector(inspectorId) }} onCompact={() => void compactConversationNow(inspectorId)} />}
         {Object.entries(compactionStates).filter(([, state]) => state.status === 'failed' || state.status === 'timed_out').map(([conversationId, state]) => <CompactionFallbackDialog key={`${conversationId}:${state.taskId}`} state={state} models={allModels} onRetry={(modelId) => void compactConversationNow(conversationId, modelId)} onCancel={() => { void window.fastAgent.conversations.cancelCompaction(conversationId); setCompactionStates((current) => cancelCompaction(current, conversationId)) }} onClose={() => setCompactionStates((current) => clearCompaction(current, conversationId))} />)}
       </div>

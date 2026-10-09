@@ -18,11 +18,22 @@ export function removeArtifactsUnderPath(store: LocalStore, namespace: string, w
   return removed.length > 0
 }
 
+/** 文件 / 目录从 from 移到 to 后，把其下已登记的 Artifact 路径跟着改掉，返回是否改动了记录。 */
+export function relocateArtifactsUnderPath(store: LocalStore, namespace: string, workspaceId: string, from: string, to: string): boolean {
+  const moved = store.listArtifacts(namespace, { workspaceId })
+    .filter((artifact) => artifact.path === from || (artifact.path ?? '').startsWith(`${from}/`))
+  for (const artifact of moved) {
+    const path = `${to}${(artifact.path as string).slice(from.length)}`
+    store.relocateArtifact(namespace, artifact.id, path, path.split('/').pop() || path)
+  }
+  return moved.length > 0
+}
+
 /** 写文件工具成功时登记 Artifact 并广播面板刷新；工作区外 / 非法路径直接忽略。 */
 export function registerArtifactForPath(deps: ArtifactRegistryDeps, namespace: string, conversationId: string, turnId: string, runId: string, root: string | null, requested: string, source: string | undefined) {
   if (!root) return
   // 工具入参既可能是相对路径也可能是绝对路径（pi 的 write/edit schema 两者都收），
-  // 必须用工具链同一套解析：resolveWorkspaceFile 只认相对路径，绝对路径会被它当越界抛掉。
+  // 必须用工具链同一套解析：根目录是这一轮的 cwd，而不是界面当前打开的工作区。
   let resolved: ReturnType<typeof resolveToolPath>
   try {
     resolved = resolveToolPath(requested, root)

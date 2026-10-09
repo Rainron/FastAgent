@@ -295,4 +295,8 @@ export class ArtifactStore {
       .get(namespace, turnId, path) as { diff: string | null } | undefined
     return row?.diff ?? null
   }
+
+  relocateArtifact(namespace: string, id: string, path: string, name: string) {
+    this.db.prepare('UPDATE artifacts SET path = ?, name = ? WHERE namespace = ? AND artifact_id = ?').run(path, name, namespace, id)
+  }
 }

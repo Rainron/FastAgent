@@ -1086,6 +1086,25 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 /* 树行：目录 / 文件 / 组 / Artifact 共用一套行样式 */
 .tree-row { width: 100%; height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 9px 0 8px; border-radius: 6px; background: transparent; color: var(--text-secondary); text-align: left; font-family: "JetBrains Mono", Consolas, monospace; font-size: 12px; }
 .tree-row:hover, .tree-row.active { background: var(--hover); color: var(--text-primary); }
+/* 拖选时不能顺带选中行内文字 */
+.tree-row { user-select: none; }
+.tree-row.checked, .tree-row.checked:hover { background: var(--accent-soft); color: var(--text-primary); box-shadow: inset 2px 0 0 var(--accent-2); }
+/* 底部留白是框选与「点空白清空选择」的起手区，长列表滚到底也有地方按下 */
+.resource-scroll.tree-scroll { position: relative; padding-bottom: 48px; }
+.tree-marquee { position: absolute; left: 4px; right: 4px; z-index: 2; border: 1px solid var(--accent-2); border-radius: 4px; background: color-mix(in srgb, var(--accent-2) 12%, transparent); pointer-events: none; }
+.tree-row.drop-target, .tree-row.drop-target:hover { background: color-mix(in srgb, var(--accent-2) 16%, transparent); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--accent-2); }
+.tree-drag-ghost { position: fixed; top: -1000px; left: -1000px; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); color: var(--text-primary); font-size: 12px; box-shadow: var(--shadow-popover); }
+.tree-selection-bar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 8px 10px; border-top: 1px solid var(--border); background: var(--surface); animation: tree-selection-in var(--motion-hover) var(--motion-ease); }
+@keyframes tree-selection-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.tree-selection-count { min-width: 0; display: flex; align-items: baseline; gap: 8px; white-space: nowrap; }
+.tree-selection-count strong { color: var(--text-primary); font-size: 12.5px; font-weight: 500; }
+.tree-selection-count span { overflow: hidden; color: var(--text-tertiary); font-size: 11.5px; text-overflow: ellipsis; }
+.tree-selection-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.tree-selection-actions button { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; white-space: nowrap; transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease); }
+.tree-selection-actions button:hover { background: var(--hover); color: var(--text-primary); }
+.tree-selection-actions button.danger { color: var(--danger); }
+.tree-selection-actions button.danger:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+.tree-selection-actions button.icon { width: 26px; justify-content: center; padding: 0; color: var(--text-tertiary); }
 .tree-row.root { font-weight: 600; color: var(--text-primary); }
 .tree-chevron { flex: 0 0 auto; color: var(--text-tertiary); transition: transform var(--motion-hover) ease-out; }
 .tree-row.open > .tree-chevron { transform: rotate(90deg); }
@@ -2173,6 +2192,44 @@ button.file-list-row:hover { background: var(--hover); color: var(--text-primary
 .view-mode-toggle button { height: 20px; padding: 0 8px; border-radius: 4px; background: transparent; color: var(--text-tertiary); font-size: 10.5px; }
 .view-mode-toggle button:hover { color: var(--text-primary); }
 .view-mode-toggle button.active { background: var(--surface); color: var(--accent-tech); font-weight: 600; box-shadow: 0 1px 2px rgba(32, 32, 30, .08); }
+/* 网页预览：标题栏 + 工具栏 + 画布。画布外是 canvas 底色，页面本身恒为白底（多数页面默认假设白色背景） */
+.preview-panel { overflow: hidden; }
+/* 最大化：盖住整个主区。外层只在此时成为定位容器，不改变其他绝对定位元素平时的参照 */
+.shell-body:has(> .preview-panel.maximized) { position: relative; }
+.preview-panel.maximized { position: absolute; inset: 0; z-index: 40; width: auto; min-width: 0; flex: none; border-left: none; animation: none; box-shadow: var(--shadow-lg, 0 12px 40px rgba(0, 0, 0, .18)); }
+.preview-toolbar { min-height: 36px; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.preview-toolbar .icon-button { width: 24px; height: 24px; }
+.preview-toolbar .icon-button:disabled { opacity: .4; cursor: default; }
+.preview-toolbar .icon-button:disabled:hover { background: transparent; color: var(--text-secondary); }
+.preview-device-group, .preview-zoom-group { display: inline-flex; align-items: center; gap: 1px; padding: 1px; border-radius: 6px; background: var(--surface-soft); }
+.preview-zoom-group select { height: 22px; padding: 0 2px; border: none; border-radius: 4px; outline: none; background: transparent; color: var(--text-secondary); font: 10.5px "JetBrains Mono", Consolas, monospace; cursor: pointer; }
+.preview-zoom-group select:hover { color: var(--text-primary); }
+.preview-reload { margin-left: auto; }
+.preview-stage { min-height: 0; flex: 1; display: flex; overflow: auto; background: var(--canvas); }
+.preview-stage.framed { padding: 16px; background: var(--surface-soft); }
+.preview-stage > .artifact-empty { flex: 1; }
+/* 用 auto 外边距居中而不是 justify-content：设备比画布宽时 auto 外边距归零、从左边排起，不会把左半边推到滚动区外 */
+.preview-box { flex: 0 0 auto; margin: 0 auto; overflow: hidden; background: #fff; }
+.preview-stage.framed .preview-box { align-self: flex-start; border-radius: 8px; box-shadow: 0 0 0 1px var(--border), 0 8px 28px rgba(0, 0, 0, .12); }
+.preview-box iframe { display: block; border: 0; background: #fff; transform-origin: 0 0; }
+.resource-resizing iframe { pointer-events: none; }
+/* 对话里的预览卡片：常显在工具行下方，缩略图 + 标题 + 状态 + 操作 */
+.preview-card { display: flex; gap: 12px; margin: 6px 0 2px; padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-width: 0; }
+.preview-card.loading { align-items: center; gap: 6px; color: var(--text-tertiary); font-size: 11px; }
+.preview-card-thumb { flex: 0 0 176px; width: 176px; height: 110px; padding: 0; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; background: #fff; cursor: pointer; }
+.preview-card-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.preview-card-thumb:hover { border-color: color-mix(in srgb, var(--accent-tech) 45%, var(--border)); }
+.preview-card-placeholder { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: var(--surface-soft); color: var(--text-tertiary); }
+.preview-card-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.preview-card-body strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: 12.5px; font-weight: 600; }
+.preview-card-body small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.preview-card-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+.preview-badge { padding: 1px 6px; border-radius: 4px; font-size: 10.5px; }
+.preview-badge.ok { background: color-mix(in srgb, var(--status-ok) 12%, transparent); color: var(--status-ok); }
+.preview-badge.warn { background: color-mix(in srgb, var(--status-warn) 12%, transparent); color: var(--status-warn); }
+.preview-badge.error { background: color-mix(in srgb, var(--status-error) 12%, transparent); color: var(--status-error); }
+.preview-card-actions { margin-top: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+.preview-card-actions .small-control { height: 24px; }
 .file-viewer-language { padding: 1px 5px; border-radius: 4px; background: var(--surface); letter-spacing: .06em; text-transform: uppercase; }
 .file-viewer-jump { color: var(--accent-tech); }
 .icon-button.active { background: var(--hover); color: var(--accent-tech); }
@@ -3179,35 +3236,45 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .theme-chip.system { background: linear-gradient(135deg, #f3f3f6 50%, #1f1f21 50%); }
 
 /* ---------- 回合改动卡片 ---------- */
-.turn-changes { margin: 14px 0 4px; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
-.turn-changes-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
-.turn-changes-icon { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; border-radius: 11px; background: var(--surface-3); color: var(--text-secondary); }
-.turn-changes-summary { min-width: 0; flex: 1 1 auto; display: grid; gap: 2px; }
-.turn-changes-summary strong { overflow: hidden; color: var(--text-primary); font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
-.turn-changes-stats { display: inline-flex; gap: 5px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.turn-changes { margin: 14px 0 4px; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); transition: border-color var(--motion-hover) var(--motion-ease); }
+.turn-changes.expanded { border-color: var(--border-strong); }
+.turn-changes-head { min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 4px; }
+.turn-changes-toggle { min-width: 0; flex: 1 1 auto; height: 36px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 8px; background: transparent; color: var(--text-primary); text-align: left; transition: background var(--motion-hover) var(--motion-ease); }
+.turn-changes-toggle:hover { background: var(--hover); }
+.turn-changes-icon { width: 24px; height: 24px; flex: 0 0 24px; display: grid; place-items: center; border-radius: 7px; background: var(--surface-3); color: var(--text-secondary); }
+.turn-changes-toggle strong { flex: 0 1 auto; min-width: 0; overflow: hidden; font-size: 13.5px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.turn-changes-stats { flex: 0 0 auto; display: inline-flex; gap: 5px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .turn-changes-stats i { font-style: normal; }
 .turn-changes-stats .add { color: var(--success); }
 .turn-changes-stats .del { color: var(--danger); }
-.turn-changes-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
-.turn-changes-undo { height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 8px; background: transparent; color: var(--text-primary); font-size: 13px; transition: background var(--motion-hover) var(--motion-ease); }
-.turn-changes-undo:hover:not(:disabled) { background: var(--hover); }
-.turn-changes-review { height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text-primary); font-size: 13px; transition: background var(--motion-hover) var(--motion-ease), border-color var(--motion-hover) var(--motion-ease); }
+.turn-changes-breakdown { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-tertiary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.turn-changes-chevron { flex: 0 0 auto; margin-left: auto; color: var(--text-tertiary); transition: transform var(--motion-hover) var(--motion-ease); }
+.turn-changes.expanded .turn-changes-chevron { transform: rotate(90deg); }
+.turn-changes-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
+.turn-changes-undo { height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border-radius: 7px; background: transparent; color: var(--text-secondary); font-size: 12.5px; transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease); }
+.turn-changes-undo:hover:not(:disabled) { background: var(--hover); color: var(--text-primary); }
+.turn-changes-review { height: 28px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-primary); font-size: 12.5px; transition: background var(--motion-hover) var(--motion-ease), border-color var(--motion-hover) var(--motion-ease); }
 .turn-changes-review:hover, .turn-changes-review[aria-pressed="true"] { border-color: var(--border-strong); background: var(--surface-2); }
-.turn-changes-files { border-top: 1px solid var(--border); }
-.turn-changes-file + .turn-changes-file { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
-.turn-changes-row { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 14px 0 4px; }
+/* 超过约十个文件就在卡片内滚动，不让清单把后面的正文推走 */
+.turn-changes-files { max-height: 360px; overflow-y: auto; padding: 4px 0; border-top: 1px solid var(--border); }
+.turn-changes-row { min-height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 12px 0 4px; }
 .turn-changes-row:hover { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
-.turn-changes-path { min-width: 0; flex: 1 1 auto; display: flex; align-items: baseline; padding: 9px 10px; background: transparent; font-size: 13px; text-align: left; white-space: nowrap; }
+.turn-changes-path { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: transparent; font-size: 13px; text-align: left; white-space: nowrap; }
 .turn-changes-path:disabled { cursor: default; opacity: 1; }
-.turn-changes-path .dir { min-width: 0; overflow: hidden; color: var(--text-tertiary); text-overflow: ellipsis; }
-.turn-changes-path .name { flex: 0 0 auto; color: var(--text-primary); }
-.turn-changes-tag { flex: 0 0 auto; margin-left: 8px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); color: var(--text-tertiary); font-size: 11px; }
-.turn-changes-file.reverted .name { color: var(--text-tertiary); text-decoration: line-through; }
+.turn-changes-status { width: 16px; flex: 0 0 16px; color: var(--warning); text-align: center; font: 600 11px/1 "JetBrains Mono", Consolas, monospace; }
+.turn-changes-status.add { color: var(--success); }
+.turn-changes-status.del { color: var(--danger); }
+.turn-changes-status.ren { color: var(--accent-2); }
+.turn-changes-path .name { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; }
+.turn-changes-path .dir { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--text-tertiary); font-size: 12px; text-overflow: ellipsis; }
+.turn-changes-tag { flex: 0 0 auto; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); color: var(--text-tertiary); font-size: 11px; }
+.turn-changes-file.reverted .name, .turn-changes-file.reverted .turn-changes-status { color: var(--text-tertiary); }
+.turn-changes-file.reverted .name { text-decoration: line-through; }
 .turn-changes-open { width: 22px; height: 22px; flex: 0 0 auto; display: grid; place-items: center; border-radius: 6px; background: transparent; color: var(--text-tertiary); opacity: 0; transition: opacity var(--motion-hover) ease-out, background var(--motion-hover) ease-out; }
 .turn-changes-row:hover .turn-changes-open, .turn-changes-open:focus-visible { opacity: 1; }
 .turn-changes-open:hover { background: var(--hover); color: var(--text-primary); }
-.turn-changes-row .turn-changes-stats { flex: 0 0 auto; }
-.turn-changes-diff { max-height: 320px; margin: 0 14px 12px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font: 11.5px/1.55 "JetBrains Mono", Consolas, monospace; }
+.turn-changes-row .turn-changes-stats { min-width: 44px; justify-content: flex-end; }
+.turn-changes-diff { max-height: 320px; margin: 2px 12px 8px 36px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font: 11.5px/1.55 "JetBrains Mono", Consolas, monospace; }
 .turn-changes-diff.empty { display: flex; align-items: center; gap: 6px; padding: 8px 10px; color: var(--text-tertiary); font-family: inherit; font-size: 12px; }
 
 /* ================================================================

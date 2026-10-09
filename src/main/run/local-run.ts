@@ -463,6 +463,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           requestApproval: bridge.requestApproval,
           requestQuestion: bridge.requestQuestion,
           sandbox: sandboxSession ? { manager: ctx.sandboxManager, session: sandboxSession } : null,
+          preview: mode === 'agent' ? ctx.previewService : null,
           subAgentExecution: ctx.settings.subAgentEnabled ? { execute: executeSubAgent } : undefined,
           customSubAgents: ctx.settings.subAgentEnabled ? normalizeCustomSubAgents(ctx.settings.subAgents) : []
         }
@@ -545,6 +546,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         requestApproval: bridge.requestApproval,
         requestQuestion: bridge.requestQuestion,
         sandbox: cached.value.sandboxSession ? { manager: ctx.sandboxManager, session: cached.value.sandboxSession } : null,
+        preview: mode === 'agent' ? ctx.previewService : null,
         // 复用缓存运行时时，subagent 工具从 toolRuntimeRef 现取执行桥与自定义列表：
         // 这两项必须逐轮下发，否则用的还是创建那一轮的闭包。
         subAgentExecution: ctx.settings.subAgentEnabled ? { execute: executeSubAgent } : undefined,

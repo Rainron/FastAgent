@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { Attachment } from '../../shared/types'
+import type { Attachment, PreviewTarget } from '../../shared/types'
 import type { FileReference } from './file-reference'
 
 export interface ResponseActions {
@@ -7,13 +7,15 @@ export interface ResponseActions {
   openFile: (reference: FileReference) => void
   /** 在右侧面板预览消息里的附件；与资源面板互斥。 */
   openAttachment: (attachment: Attachment) => void
+  /** 在资源面板打开网页预览（preview_show 的结果卡片）。 */
+  openPreview: (target: PreviewTarget) => void
   copyText: (text: string) => void
   notify: (message: string) => void
   /** 跳到「能力」页并展开该 Skill 的详情；回合内的来源清单只留标题，正文去那边看。 */
   openSkill: (abilityId: string) => void
 }
 
-const fallback: ResponseActions = { openFile: () => undefined, openAttachment: () => undefined, copyText: () => undefined, notify: () => undefined, openSkill: () => undefined }
+const fallback: ResponseActions = { openFile: () => undefined, openAttachment: () => undefined, openPreview: () => undefined, copyText: () => undefined, notify: () => undefined, openSkill: () => undefined }
 
 export const ResponseActionsContext = createContext<ResponseActions>(fallback)
 

@@ -277,6 +277,7 @@ export class LocalStore {
   getArtifact(namespace: string, artifactId: string): Artifact | null { return this.artifactRepository.getArtifact(namespace, artifactId) }
   listArtifacts(namespace: string, query?: ArtifactQuery): Artifact[] { return this.artifactRepository.listArtifacts(namespace, query) }
   upsertArtifact(...args: Parameters<ArtifactStore['upsertArtifact']>): Artifact { return this.artifactRepository.upsertArtifact(...args) }
+  relocateArtifact(namespace: string, id: string, path: string, name: string) { this.artifactRepository.relocateArtifact(namespace, id, path, name) }
   removeArtifact(namespace: string, id: string) { this.artifactRepository.removeArtifact(namespace, id) }
   upsertFileChange(...args: Parameters<ArtifactStore['upsertFileChange']>) { this.artifactRepository.upsertFileChange(...args) }
   removeFileChange(namespace: string, turnId: string, path: string) { this.artifactRepository.removeFileChange(namespace, turnId, path) }

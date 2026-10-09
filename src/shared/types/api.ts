@@ -15,6 +15,7 @@ import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, Me
 import type { LocalModelSummary, LocalModelTestResult } from './models'
 import type { ModelConnectionsApi } from './model-connections'
 import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, PluginQuery } from './plugins'
+import type { PreviewProbeResult, PreviewReadyEvent } from './preview'
 import type { RuntimeReport } from './runtime'
 import type { SandboxCapabilities, SandboxSessionInfo } from './sandbox'
 import type { SearchQuery, SearchResponse } from './search'
@@ -402,6 +403,8 @@ export interface FastAgentApi {
     openExternal(path: string): Promise<string>
     /** 删除工作区内文件/目录（目录递归）；成功返回 { ok: true }，失败返回错误信息。 */
     delete(path: string): Promise<{ ok: boolean; error?: string }>
+    /** 把文件 / 目录移进工作区内的目录（保留原名、不覆盖同名项），逐项返回结果。 */
+    move(sources: string[], targetDir: string): Promise<Array<{ ok: true; from: string; to: string } | { ok: false; error: string }>>
   }
   projects: {
     list(): Promise<ProjectRecord[]>
@@ -452,6 +455,18 @@ export interface FastAgentApi {
     restore(artifactId: string, turnId: string): Promise<{ ok: boolean; error?: string }>
     /** Agent 产生新 Artifact（或更新）后广播，Artifacts 面板据此实时刷新。 */
     onChanged(listener: () => void): () => void
+  }
+  preview: {
+    /** 当前工作区内文件的预览地址（fa-preview://）；越界或未打开工作区时抛错。 */
+    fileUrl(path: string): Promise<string>
+    /** 右栏载入前的连通性探测：文件是否还在、dev server 是否起着。 */
+    probe(url: string): Promise<PreviewProbeResult>
+    /** 交给系统浏览器；返回错误文案，成功为空串。 */
+    openExternal(url: string): Promise<string>
+    /** preview_show 留下的截图（data URL）；不存在时为 null。 */
+    screenshot(conversationId: string, toolCallId: string): Promise<string | null>
+    /** preview_show 执行完成后广播，界面据此自动在右栏打开。 */
+    onReady(listener: (event: PreviewReadyEvent) => void): () => void
   }
   agentRuns: {
     /** 会话的运行台账（含每次 Sub-agent 委派），按开始时间倒序。 */

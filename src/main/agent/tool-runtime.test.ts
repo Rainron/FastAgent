@@ -129,13 +129,13 @@ describe('tool runtime extension', () => {
   it('注册自定义工具与 shell 工具，共两个钩子', () => {
     const harness = createHarness()
     // shell 工具改由扩展注册（而非 pi 内置白名单），才能注入沙箱执行后端。
-    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'bash', 'shell_background', 'shell_background_output', 'shell_background_stop'])
+    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'bash', 'shell_background', 'shell_background_output', 'shell_background_stop', 'preview_show'])
     expect(harness.tools.every((tool) => typeof tool.execute === 'function')).toBe(true)
   })
 
   it('shell 偏好切到 powershell 时注册 powershell 工具', () => {
     const harness = createHarness({ shellToolName: 'powershell' })
-    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'powershell', 'shell_background', 'shell_background_output', 'shell_background_stop'])
+    expect(harness.tools.map((tool) => tool.name)).toEqual(['question', 'todowrite', 'patch', 'powershell', 'shell_background', 'shell_background_output', 'shell_background_stop', 'preview_show'])
   })
 
   it('两种模式都注入工具清单说明，chat 版不含写类工具', () => {

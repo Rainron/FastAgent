@@ -13,6 +13,7 @@ import { registerKbIpc } from './kb'
 import { registerMcpIpc } from './mcp'
 import { registerMemoryIpc } from './memory'
 import { registerModelIpc } from './model'
+import { registerPreviewIpc } from './preview'
 import { registerSearchIpc } from './search'
 import { registerSettingsIpc } from './settings'
 import { registerShellCommandIpc } from './shell-command'
@@ -42,6 +43,7 @@ export function registerAllIpc(handle: IpcRegistrar, ctx: MainContext) {
   registerGitIpc(handle, ctx)
   registerKbIpc(handle, ctx)
   registerArtifactsIpc(handle, ctx)
+  registerPreviewIpc(handle, ctx)
   registerDiagnosticsIpc(handle, ctx)
   registerMemoryIpc(handle, ctx)
 }

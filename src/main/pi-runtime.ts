@@ -24,6 +24,7 @@ import { createToolRuntimeExtension, modeSystemPrompt, type ToolRuntimeContext, 
 import type { SandboxManager } from './agent/sandbox/sandbox-manager'
 import type { SandboxSession } from './agent/sandbox/sandbox-types'
 import { BACKGROUND_SHELL_TOOL_NAMES } from './agent/tools/background-shell'
+import { PREVIEW_TOOL_NAME, type PreviewHost } from './agent/tools/preview'
 import { createMcpBridgeExtension } from './mcp-bridge'
 import { createStreamTextRepair } from './stream-text-repair'
 import { createInlineThinkStream, createThinkTagSplitter, type ThinkPart, type ThinkStreamEvent } from './think-tags'
@@ -237,6 +238,9 @@ export interface RuntimeRunOptions {
   customSubAgents?: import('./agent/subagent/subagent-types').SubAgentConfig[]
   /** 收窄内置工具白名单：Sub-agent 子运行据此限成只读，避免子 Agent 覆盖主 Agent 待办等状态。 */
   toolAllowlist?: string[]
+  /** 桌面控制运行时；为空或设置里关闭时 computer_* 工具既不注册也不进白名单 */
+  /** 页面预览能力；为空时 preview_show 返回「不可用」。 */
+  preview?: PreviewHost | null
   /** 工作区探测到的验证命令；进系统提示并豁免死循环守卫。 */
   verificationCommands?: readonly import('./agent/verification').VerificationCommand[]
 }
@@ -247,7 +251,8 @@ export function toolNamesForMode(mode: ConversationMode, shellToolName: 'bash' |
   return mode === 'chat'
     ? ['read', 'grep', 'find', 'ls', shellToolName]
     // 后台命令只给 agent：起服务、看日志、停进程都是执行类操作，chat 模式不提供。
-    : ['read', 'grep', 'find', 'ls', 'edit', 'write', 'question', 'todowrite', 'patch', shellToolName, 'subagent', ...BACKGROUND_SHELL_TOOL_NAMES]
+    // 预览同样只给 agent：chat 写不了页面，也起不了 dev server。
+    : ['read', 'grep', 'find', 'ls', 'edit', 'write', 'question', 'todowrite', 'patch', shellToolName, 'subagent', ...BACKGROUND_SHELL_TOOL_NAMES, PREVIEW_TOOL_NAME]
 }
 
 /**
@@ -585,6 +590,7 @@ function toolRuntimeContext(options: RuntimeRunOptions): ToolRuntimeContext {
     requestQuestion: options.requestQuestion,
     mcpToolRisk: new Map((options.mcpBindings ?? []).map((binding) => [binding.name, binding.risk])),
     sandbox: options.sandbox ?? null,
+    preview: options.preview ?? null,
     subAgent: options.subAgentExecution,
     subAgentMetadata: options.subAgentMetadata,
     customSubAgents: options.customSubAgents,

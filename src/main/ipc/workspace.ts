@@ -4,7 +4,7 @@ import { readAgentContextFiles, resolveAgentContextPaths } from '../agent-contex
 import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from '../agent-init'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
-import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readAttachmentText, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
+import { deleteWorkspaceEntry, listWorkspaceDirectory, moveWorkspaceEntry, type WorkspaceMoveResult, readAttachmentImage, readAttachmentText, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
 import { openTerminalAt } from '../open-terminal'
 import { shell } from 'electron'
 import { spawn } from 'node:child_process'
@@ -142,6 +142,21 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
       if (ctx.removeArtifactsUnderPath(ctx.requireNamespace(), ctx.workspaceRoot, path)) ctx.mainWindow?.webContents.send('artifacts:changed')
     }
     return result
+  })
+  // 资源树拖放移动：逐项执行，单项失败不影响其余项；已登记的 Artifact 路径跟着改。
+  handle('workspace:move', async (_event, sources: string[], targetDir: string) => {
+    const results: WorkspaceMoveResult[] = []
+    for (const source of Array.isArray(sources) ? sources.slice(0, 500) : []) {
+      results.push(await moveWorkspaceEntry(ctx.workspaceRoot, String(source), String(targetDir ?? '')))
+    }
+    const moved = results.filter((result) => result.ok)
+    if (moved.length && ctx.workspaceRoot) {
+      const namespace = ctx.requireNamespace()
+      const root = ctx.workspaceRoot
+      const changed = moved.map((result) => ctx.relocateArtifactsUnderPath(namespace, root, result.from, result.to)).some(Boolean)
+      if (changed) ctx.mainWindow?.webContents.send('artifacts:changed')
+    }
+    return results
   })
   // 产物是磁盘文件的登记，文件可能被应用外删掉（资源管理器 / rm / 切分支）。
   // 存在性现算不落库：切回分支文件回来了，条目自己就恢复正常，不需要用户手动收拾。

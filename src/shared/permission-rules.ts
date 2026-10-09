@@ -33,6 +33,10 @@ export const TOOL_KEY_MAP: Record<string, LogicalToolKey> = {
   shell_background_output: 'read',
   question: 'question',
   todowrite: 'todowrite',
+  // 预览只加载页面、不写任何东西，按读取判权限；越界路径由工具自身拒绝。
+  preview_show: 'read',
+  // Computer Use 语义层工具；实现层 ui.*/mouse.* 不暴露给 Planner，因此不在此登记。
+  // 工具名用下划线：模型侧函数名只允许 [a-zA-Z0-9_-]，带点的名字会被直接拒掉。
 }
 
 export function logicalToolKey(toolName: string): string {

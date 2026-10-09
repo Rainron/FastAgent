@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -267,7 +267,8 @@ const api: FastAgentApi = {
     absolutePath: (path: string): Promise<string> => ipcRenderer.invoke('workspace:absolute-path', path),
     openExternal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:open-external', path),
     openTerminal: (): Promise<string> => ipcRenderer.invoke('workspace:open-terminal'),
-    delete: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:delete', path)
+    delete: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:delete', path),
+    move: (sources: string[], targetDir: string): Promise<Array<{ ok: true; from: string; to: string } | { ok: false; error: string }>> => ipcRenderer.invoke('workspace:move', sources, targetDir)
   },
   git: {
     state: () => ipcRenderer.invoke('git:state'),
@@ -358,6 +359,17 @@ const api: FastAgentApi = {
       const handler = () => listener()
       ipcRenderer.on('artifacts:changed', handler)
       return () => ipcRenderer.removeListener('artifacts:changed', handler)
+    }
+  },
+  preview: {
+    fileUrl: (path: string): Promise<string> => ipcRenderer.invoke('preview:file-url', path),
+    probe: (url: string): Promise<PreviewProbeResult> => ipcRenderer.invoke('preview:probe', url),
+    openExternal: (url: string): Promise<string> => ipcRenderer.invoke('preview:open-external', url),
+    screenshot: (conversationId: string, toolCallId: string): Promise<string | null> => ipcRenderer.invoke('preview:screenshot', conversationId, toolCallId),
+    onReady: (listener: (event: PreviewReadyEvent) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: PreviewReadyEvent) => listener(payload)
+      ipcRenderer.on('preview:ready', handler)
+      return () => ipcRenderer.removeListener('preview:ready', handler)
     }
   },
   agentRuns: {

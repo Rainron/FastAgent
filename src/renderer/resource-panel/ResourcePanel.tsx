@@ -1,3 +1,7 @@
+import type { PreviewTarget } from '../../shared/types'
+import { PreviewPane, type PreviewPaneSource } from './preview/PreviewPane'
+import { isHtmlPath } from './preview/preview-target'
+import { useMemo } from 'react'
 import React, { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, Code2, Copy, FileCode2, FileImage, FileText, LayoutPanelLeft, Search, WrapText, X } from 'lucide-react'
 import type { FileReference } from '../ai-response/file-reference'
@@ -21,6 +25,11 @@ interface ResourcePanelProps {
   onPickSuggestion?: (path: string) => void
   /** 成果「继续修改」：把提示写进输入框，交给用户补充后自己发。 */
   onContinueEdit?: (text: string) => void
+  /** 资源树选中项「添加到对话」：把路径引用追加进输入框。 */
+  onAddToChat?: (text: string) => void
+  /** 对话里的预览卡片或 preview_show 自动打开的网页；优先于文件预览显示。 */
+  preview: PreviewTarget | null
+  onClosePreview: () => void
 }
 
 /**
@@ -29,7 +38,7 @@ interface ResourcePanelProps {
  * 文件预览态的 Header 直接承担类型/行数展示与预览源码、换行、复制、关闭操作，内部不再有第二行工具栏。
  */
 /** 打开时父组件会随流式输出每帧重渲染，面板内容与之无关，memo 挡住。 */
-export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, conversationId, file, onPickWorkspace, onOpenFile, onCloseFile, onClose, onNotice, onPickSuggestion, onContinueEdit }: ResourcePanelProps) {
+export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, conversationId, file, onPickWorkspace, onOpenFile, onCloseFile, onClose, onNotice, onPickSuggestion, onContinueEdit, onAddToChat, preview, onClosePreview }: ResourcePanelProps) {
   const { panelState, updatePanel, updateTab } = useResourcePanelState()
   const actions = useResponseActions()
   const activeTab = panelState.activeTab
@@ -53,10 +62,13 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
     event.preventDefault()
     const startX = event.clientX
     const startWidth = panelState.width
+    // 指针划过预览 iframe 时事件会被它吞掉，拖动就卡住；拖动期间让 iframe 不接收指针。
+    document.body.classList.add('resource-resizing')
     const move = (moveEvent: PointerEvent) => {
       updatePanel({ width: Math.min(Math.max(startWidth - (moveEvent.clientX - startX), MIN_PANEL_WIDTH), Math.round(window.innerWidth * 0.7)) })
     }
     const up = () => {
+      document.body.classList.remove('resource-resizing')
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
     }
@@ -71,11 +83,49 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
     if (file && (file.path === path || file.path.startsWith(`${path}/`))) onCloseFile()
   }, [file, onCloseFile])
 
+  // 正在预览的文件（或它所在的目录）被拖走：预览跟到新位置，而不是关掉或指向已不存在的路径。
+  const handleFileMoved = useCallback((from: string, to: string) => {
+    if (file && (file.path === from || file.path.startsWith(`${from}/`))) onOpenFile({ ...file, path: `${to}${file.path.slice(from.length)}` })
+  }, [file, onOpenFile])
+
   const isImage = file ? IMAGE_PATH_RE.test(file.path) : false
   const isMarkdown = file ? MARKDOWN_PATH_RE.test(file.path) : false
   const fileName = file ? file.path.split(/[\\/]/).filter(Boolean).pop() || file.path : ''
   // 换行开关对纯预览态的 Markdown 无意义；源码态与代码文件才需要。
   const showWrap = !isImage && !(isMarkdown && viewMode === 'preview')
+
+  // 网页预览：显式打开的预览优先；工作区里点开的 .html 默认也渲染（工具栏里可切源码）。
+  const previewTitle = preview?.title
+  const previewUrl = preview?.url
+  const previewPath = preview ? preview.path : file && isHtmlPath(file.path) ? file.path : null
+  const previewSource = useMemo<PreviewPaneSource | null>(() => {
+    if (previewUrl) return { url: previewUrl, path: previewPath, title: previewTitle || previewUrl }
+    if (previewPath) return { url: null, path: previewPath, title: previewPath.split('/').pop() || previewPath }
+    return null
+  }, [previewUrl, previewPath, previewTitle])
+
+  // 最大化：面板盖住整个主区（CSS 用 :has 让外层成为定位容器）。离开预览就还原，Esc 同样还原。
+  const [maximized, setMaximized] = useState(false)
+  const previewOpen = previewSource !== null
+  useEffect(() => { if (!previewOpen) setMaximized(false) }, [previewOpen])
+  useEffect(() => {
+    if (!maximized) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      event.preventDefault()
+      setMaximized(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [maximized])
+  const toggleMaximize = useCallback(() => setMaximized((value) => !value), [])
+
+  if (previewSource) {
+    return <aside className={`artifact-panel resource-panel preview-panel${maximized ? ' maximized' : ''}`} style={maximized ? undefined : { width: panelState.width, flexBasis: panelState.width }}>
+      <PreviewPane source={previewSource} maximized={maximized} onToggleMaximize={toggleMaximize} onBack={preview ? onClosePreview : onCloseFile} onClose={onClose} onNotice={onNotice} />
+      {!maximized && <div className="resource-resizer" onPointerDown={startResize} aria-hidden="true" />}
+    </aside>
+  }
 
   return <aside className="artifact-panel resource-panel" style={{ width: panelState.width, flexBasis: panelState.width }}>
     <header className="artifact-header resource-header">
@@ -141,8 +191,8 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
           {!workspaceRoot
             ? <div className="resource-empty"><Code2 size={23} /><strong>未打开项目</strong><span>打开工作区后在这里管理文件与产物。</span><button className="small-control" onClick={onPickWorkspace}><Code2 size={14} />打开项目</button></div>
             : activeTab === 'workspace'
-              ? <WorkspaceTree workspaceRoot={workspaceRoot} tabState={tabState} onTabStateChange={(patch) => updateTab('workspace', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} />
-              : <ArtifactsTree workspaceRoot={workspaceRoot} conversationId={conversationId} tabState={tabState} onTabStateChange={(patch) => updateTab('artifacts', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} onContinueEdit={onContinueEdit} />}
+              ? <WorkspaceTree workspaceRoot={workspaceRoot} conversationId={conversationId} tabState={tabState} onTabStateChange={(patch) => updateTab('workspace', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} onFileMoved={handleFileMoved} onAddToChat={onAddToChat} />
+              : <ArtifactsTree workspaceRoot={workspaceRoot} conversationId={conversationId} tabState={tabState} onTabStateChange={(patch) => updateTab('artifacts', patch)} onOpenFile={onOpenFile} onNotice={onNotice} onFileDeleted={handleFileDeleted} onContinueEdit={onContinueEdit} onAddToChat={onAddToChat} />}
         </div>
       </>}
     <div className="resource-resizer" onPointerDown={startResize} aria-hidden="true" />

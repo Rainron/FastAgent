@@ -1,8 +1,21 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { containsPath, deleteWorkspaceEntry, listWorkspaceDirectory, matchesFuzzy, normalizeWorkspaceRelative, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles } from './workspace-files'
+import { containsPath, deleteWorkspaceEntry, listWorkspaceDirectory, matchesFuzzy, moveWorkspaceEntry, normalizeWorkspaceRelative, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, splitMentionPath } from './workspace-files'
+
+describe('splitMentionPath', () => {
+  it('没有目录段时返回 null', () => {
+    expect(splitMentionPath('App')).toBeNull()
+    expect(splitMentionPath('/App')).toBeNull()
+  })
+
+  it('按最后一个分隔符切分，反斜杠等价', () => {
+    expect(splitMentionPath('src/App')).toEqual({ directory: 'src', tail: 'App' })
+    expect(splitMentionPath('src/renderer/')).toEqual({ directory: 'src/renderer', tail: '' })
+    expect(splitMentionPath('src\\renderer\\App')).toEqual({ directory: 'src/renderer', tail: 'App' })
+  })
+})
 
 describe('containsPath', () => {
   it('工作区内的路径判为包含', () => {
@@ -30,9 +43,15 @@ describe('resolveWorkspaceFile', () => {
     expect(() => resolveWorkspaceFile('K:/app', 'src/../../secret.ts')).toThrow('只能打开工作区内的文件')
   })
 
-  it('拒绝绝对路径与盘符', () => {
+  it('拒绝工作区外的绝对路径与盘符', () => {
     expect(() => resolveWorkspaceFile('K:/app', '/etc/passwd')).toThrow('只能打开工作区内的文件')
     expect(() => resolveWorkspaceFile('K:/app', 'C:\\Windows\\win.ini')).toThrow('只能打开工作区内的文件')
+    expect(() => resolveWorkspaceFile('K:/app', 'K:\\app-other\\a.ts')).toThrow('只能打开工作区内的文件')
+  })
+
+  it('工作区内的绝对路径放行（Agent 工具参数多是绝对路径）', () => {
+    expect(resolveWorkspaceFile('K:/app', 'K:\\app\\src\\a.ts')).toBe(resolve('K:/app/src/a.ts'))
+    expect(resolveWorkspaceFile('K:/app', 'K:/app/src/../README.md')).toBe(resolve('K:/app/README.md'))
   })
 
   it('拒绝含 NUL 的路径', () => {
@@ -233,15 +252,47 @@ describe('searchWorkspaceFiles', () => {
   })
 
   it('返回绝对路径与大小，供附件通道直接使用', async () => {
-    // 子序列匹配下 src/deep/App.tsx 也命中，浅层优先所以 src/App.tsx 排第一。
+    // 带目录段时只看 src 这一层：src/deep/App.tsx 属于下一层，要再钻一级才出现。
     const matches = await searchWorkspaceFiles(root, 'src/App')
-    expect(matches.map((match) => match.path)).toEqual(['src/App.tsx', 'src/deep/App.tsx'])
+    expect(matches.map((match) => match.path)).toEqual(['src/App.tsx'])
     expect(matches[0]).toMatchObject({ name: 'App.tsx', path: 'src/App.tsx', size: 1 })
     expect(matches[0].absolutePath.endsWith(`${sep}src${sep}App.tsx`)).toBe(true)
   })
 
+  it('目录段为空末段时列出该层全部条目，目录在前', async () => {
+    const matches = await searchWorkspaceFiles(root, 'src/')
+    expect(matches.map((match) => match.path)).toEqual(['src/deep', 'src/App.tsx'])
+    expect(matches[0]).toMatchObject({ isDirectory: true, size: 0 })
+  })
+
+  it('再钻一级列出子目录内容', async () => {
+    const matches = await searchWorkspaceFiles(root, 'src/deep/')
+    expect(matches.map((match) => match.path)).toEqual(['src/deep/App.tsx'])
+  })
+
+  it('目录段不是真实目录时退回全局搜索', async () => {
+    const matches = await searchWorkspaceFiles(root, 'nope/App')
+    expect(matches).toEqual([])
+  })
+
   it('limit 生效', async () => {
     expect(await searchWorkspaceFiles(root, 'App', 2)).toHaveLength(2)
+  })
+
+  it('文件名命中优先于路径子序列命中，截断不会把它挤掉', async () => {
+    const ranked = await mkdtemp(join(tmpdir(), 'fastagent-rank-'))
+    await mkdir(join(ranked, 'a-p-p', 'nested'), { recursive: true })
+    await writeFile(join(ranked, 'a-p-p', 'nested', 'zzz.ts'), '', 'utf8')
+    await mkdir(join(ranked, 'deep', 'deeper'), { recursive: true })
+    await writeFile(join(ranked, 'deep', 'deeper', 'App.tsx'), '', 'utf8')
+    const matches = await searchWorkspaceFiles(ranked, 'app', 1)
+    expect(matches.map((match) => match.path)).toEqual(['deep/deeper/App.tsx'])
+    await rm(ranked, { recursive: true, force: true })
+  })
+
+  it('文件名匹配不区分大小写', async () => {
+    const matches = await searchWorkspaceFiles(root, 'app')
+    expect(matches.map((match) => match.path)).toContain('App.tsx')
   })
 
   it('目录也作为候选返回并标记 isDirectory', async () => {
@@ -328,5 +379,51 @@ describe('readWorkspaceImage', () => {
 
   it('越界路径拒绝', async () => {
     await expect(readWorkspaceImage(root, '../outside.png')).rejects.toThrow('只能打开工作区内的文件')
+  })
+})
+
+describe('moveWorkspaceEntry', () => {
+  let root = ''
+
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), 'fastagent-move-'))
+    await mkdir(join(root, 'src', 'nested'), { recursive: true })
+    await mkdir(join(root, 'docs'), { recursive: true })
+    await writeFile(join(root, 'a.md'), 'A', 'utf8')
+    await writeFile(join(root, 'dup.md'), 'root', 'utf8')
+    await writeFile(join(root, 'docs', 'dup.md'), 'docs', 'utf8')
+  })
+
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+
+  it('把文件移进目录，返回新旧相对路径', async () => {
+    expect(await moveWorkspaceEntry(root, 'a.md', 'docs')).toEqual({ ok: true, from: 'a.md', to: 'docs/a.md' })
+    expect(await readFile(join(root, 'docs', 'a.md'), 'utf8')).toBe('A')
+  })
+
+  it('移回根目录用空串作目标', async () => {
+    expect(await moveWorkspaceEntry(root, 'docs/a.md', '')).toEqual({ ok: true, from: 'docs/a.md', to: 'a.md' })
+  })
+
+  it('目标已有同名项时不覆盖', async () => {
+    const result = await moveWorkspaceEntry(root, 'dup.md', 'docs')
+    expect(result).toMatchObject({ ok: false })
+    expect(await readFile(join(root, 'docs', 'dup.md'), 'utf8')).toBe('docs')
+    expect(await readFile(join(root, 'dup.md'), 'utf8')).toBe('root')
+  })
+
+  it('不能把目录移进自己或子目录，不能移动根目录，不能移出工作区', async () => {
+    expect(await moveWorkspaceEntry(root, 'src', 'src/nested')).toMatchObject({ ok: false, error: '不能把目录移动到它自己或它的子目录里' })
+    expect(await moveWorkspaceEntry(root, 'src', 'src')).toMatchObject({ ok: false })
+    expect(await moveWorkspaceEntry(root, '', 'docs')).toMatchObject({ ok: false })
+    expect(await moveWorkspaceEntry(root, 'a.md', '../')).toMatchObject({ ok: false })
+  })
+
+  it('已在目标目录中、源不存在、目标不是目录都返回错误', async () => {
+    expect(await moveWorkspaceEntry(root, 'docs/dup.md', 'docs')).toMatchObject({ ok: false })
+    expect(await moveWorkspaceEntry(root, 'missing.md', 'docs')).toMatchObject({ ok: false })
+    expect(await moveWorkspaceEntry(root, 'dup.md', 'a.md')).toMatchObject({ ok: false, error: '目标不是目录' })
   })
 })

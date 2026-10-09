@@ -73,6 +73,9 @@ import { createLazyModuleLoader } from './lazy-module'
 import { PauseGate } from './agent/pause-gate'
 import { indexSource } from './knowledge/kb-indexer'
 import { DEFAULT_RECALL } from './agent/memory/memory-rank'
+import { relocateArtifactsUnderPath } from './artifact-registry'
+import { PreviewService, registerPreviewScheme } from './preview/preview-service'
+import { PreviewRootRegistry } from './preview/preview-files'
 
 const loadPiRuntime = createLazyModuleLoader(() => import('./pi-runtime'))
 const loadMcpRuntime = createLazyModuleLoader(() => import('./mcp-manager'))
@@ -142,6 +145,30 @@ let bundledTools: Record<string, string> = {}
 const catalogProvider = new BuiltinCatalogProvider()
 let pluginInstaller: PluginInstaller
 let sandboxManager: SandboxManager
+/**
+ * 页面预览。协议主机名只能反查到这里列出的根：当前工作区、快速对话目录与已登记的项目，
+ * 外加运行时显式登记过的 cwd；渲染进程借协议读不到这些根之外的任何文件。
+ */
+const previewService = new PreviewService({
+  roots: new PreviewRootRegistry(() => {
+    const namespace = preferenceNamespace()
+    let projects: string[] = []
+    try {
+      projects = store && namespace ? store.listProjects(namespace).map((project) => project.path) : []
+    } catch {
+      // 库还没就绪或已关闭：只按当前工作区与快速对话目录反查。
+    }
+    return [workspaceRoot, appPaths?.quickWorkspaceDir, ...projects]
+  }),
+  screenshotDir: (conversationId) => join(appPaths.attachmentsDir, conversationId, 'previews'),
+  // 开发态界面跑在 Vite 上；那个地址是 FastAgent 自己，不许被当成预览目标。
+  blockedOrigins: () => process.env.ELECTRON_RENDERER_URL ? [process.env.ELECTRON_RENDERER_URL] : [],
+  send: (channel, payload) => mainWindow?.webContents.send(channel, payload)
+})
+/**
+ * 内嵌终端的 pty 会话。活得比面板长：面板关掉、界面重载都不结束 shell，
+ * 用户再打开时看到的还是原来那个进程和它的历史输出。
+ */
 const terminalManager = new TerminalManager({
   spawn: spawnPty,
   resolveShell: () => defaultShell({
@@ -1416,6 +1443,8 @@ const mainContext: MainContext = {
   get modelConnectionService() { return modelConnectionService },
   get pluginInstaller() { return pluginInstaller },
   get sandboxManager() { return sandboxManager },
+  previewService,
+  relocateArtifactsUnderPath: (namespace, workspaceId, from, to) => relocateArtifactsUnderPath(store, namespace, workspaceId, from, to),
   terminalManager,
   get bundledTools() { return bundledTools },
   get authState() { return authState },
@@ -1546,6 +1575,8 @@ async function restoreSession() {
 }
 
 Menu.setApplicationMenu(null)
+// 自定义协议的特权只能在 ready 之前声明。
+registerPreviewScheme()
 
 const singleInstance = app.requestSingleInstanceLock()
 if (!singleInstance) {
@@ -1649,6 +1680,12 @@ app.whenReady().then(async () => {
     undefined,
     { onNotice: (message) => logStartup('sandbox-runtime', message) }
   ))
+  // 协议处理必须赶在开窗之前挂上，否则界面恢复出来的预览卡片首次加载会 404。
+  try {
+    previewService.install()
+  } catch (error) {
+    logStartup('预览协议安装失败', error)
+  }
   try {
     registerIpc()
   } catch (error) {

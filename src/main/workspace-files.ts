@@ -1,5 +1,5 @@
-import { readFile, readdir, realpath, rm, stat } from 'node:fs/promises'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { readFile, readdir, realpath, rename, rm, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 /** 单次读取上限，避免渲染进程被一个大文件卡死。 */
 export const MAX_WORKSPACE_FILE_BYTES = 2 * 1024 * 1024
@@ -64,8 +64,14 @@ function resolveInside(root: string | null, requested: string): string {
 export function resolveWorkspaceFile(root: string | null, requested: string): string {
   if (!root) throw new Error('尚未打开工作区')
   if (!requested) throw new Error('文件路径无效')
-  // 归一化会吃掉开头的斜杠，绝对路径必须在这之前拦下，否则 /etc/passwd 会变成工作区内的相对路径。
-  if (isAbsolute(requested) || /^[A-Za-z]:[\\/]/.test(requested)) throw new Error('只能打开工作区内的文件')
+  // 归一化会吃掉开头的斜杠，绝对路径必须在这之前单独处理，否则 /etc/passwd 会变成工作区内的相对路径。
+  // Agent 的工具参数多是绝对路径：落在工作区内的照常放行，越界仍拒绝；符号链接逃逸由读取时的 realpath 再查。
+  if (isAbsolute(requested) || /^[A-Za-z]:[\\/]/.test(requested)) {
+    if (requested.includes('\0')) throw new Error('文件路径无效')
+    const absolute = resolve(requested)
+    if (!containsPath(root, absolute)) throw new Error('只能打开工作区内的文件')
+    return absolute
+  }
   // 回答里的路径写法不统一（`src\a.ts`、`./src/a.ts`），先归一成和目录列表一致的形式。
   const normalized = normalizeWorkspaceRelative(requested)
   if (!normalized) throw new Error('文件路径无效')
@@ -323,6 +329,49 @@ export async function deleteWorkspaceEntry(root: string | null, requested: strin
   }
 }
 
+export type WorkspaceMoveResult = { ok: true; from: string; to: string } | { ok: false; error: string }
+
+/**
+ * 资源树拖放：把文件 / 目录移进工作区内的另一个目录，保留原名。
+ *
+ * 不覆盖同名项：拖放是一个很轻的手势，静默替换掉目标目录里的文件代价太大。
+ * 源与目标都按真实路径再判一次越界，符号链接不能把东西搬出工作区，也不能从外面搬进来。
+ */
+export async function moveWorkspaceEntry(root: string | null, requested: string, targetDir: string): Promise<WorkspaceMoveResult> {
+  if (!root) return { ok: false, error: '尚未打开工作区' }
+  const from = normalizeWorkspaceRelative(requested)
+  if (!from) return { ok: false, error: '不能移动工作区根目录' }
+  let source: string
+  let target: string
+  try {
+    source = resolveWorkspaceFile(root, from)
+    const targetRelative = normalizeWorkspaceRelative(targetDir)
+    target = targetRelative ? resolveWorkspaceDirectory(root, targetRelative) : resolve(root)
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : '路径无效' }
+  }
+  try {
+    const realRoot = await realpath(root)
+    const realSource = await realpath(source)
+    const realTarget = await realpath(target)
+    if (realSource === realRoot || !containsPath(realRoot, realSource)) return { ok: false, error: '只能移动工作区内的文件' }
+    if (!containsPath(realRoot, realTarget)) return { ok: false, error: '只能移动到工作区内的目录' }
+    if (!(await stat(realTarget)).isDirectory()) return { ok: false, error: '目标不是目录' }
+    if (containsPath(realSource, realTarget)) return { ok: false, error: '不能把目录移动到它自己或它的子目录里' }
+    if (dirname(realSource) === realTarget) return { ok: false, error: `${basename(realSource)} 已在目标目录中` }
+    const destination = join(realTarget, basename(realSource))
+    const occupied = await stat(destination).then(() => true, () => false)
+    if (occupied) return { ok: false, error: `目标目录已有同名项：${basename(realSource)}` }
+    await rename(realSource, destination)
+    return { ok: true, from, to: normalizeWorkspaceRelative(relative(realRoot, destination)) }
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code
+    if (code === 'ENOENT') return { ok: false, error: `文件或目录不存在：${from}` }
+    if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') return { ok: false, error: `没有移动权限或文件被占用：${from}` }
+    return { ok: false, error: error instanceof Error ? error.message : '移动失败' }
+  }
+}
+
 /**
  * 工作区内是否存在这个文件。
  * 回答里的 `a/b.ts:42` 只有确认存在才渲染成可点的引用——模型经常把主机、命令、
@@ -362,10 +411,72 @@ export function matchesFuzzy(candidate: string, query: string): boolean {
   return true
 }
 
+/** 目录段与末段的切分：`src/renderer/comp` → 在 `src/renderer` 这一层里找 `comp`。 */
+export function splitMentionPath(query: string): { directory: string; tail: string } | null {
+  const normalized = query.replace(/\\/g, '/')
+  const cut = normalized.lastIndexOf('/')
+  if (cut < 0) return null
+  const directory = normalized.slice(0, cut).replace(/^\/+|\/+$/g, '')
+  if (!directory) return null
+  return { directory, tail: normalized.slice(cut + 1) }
+}
+
+/**
+ * 浏览某一层目录：目录在前、文件在后，末段仍走子序列匹配。
+ * 返回 null 表示这不是一次目录浏览（没有目录段，或那一段不是工作区内的真实目录），由调用方退回全局搜索。
+ */
+async function browseWorkspaceDirectory(realRoot: string, query: string, limit: number): Promise<WorkspaceFileMatch[] | null> {
+  const split = splitMentionPath(query)
+  if (!split) return null
+  let absoluteDirectory: string
+  try {
+    absoluteDirectory = resolveWorkspaceDirectory(realRoot, split.directory)
+  } catch {
+    return null
+  }
+  let dirents
+  try {
+    dirents = await readdir(absoluteDirectory, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  const entries = dirents
+    .filter((dirent) => !dirent.name.startsWith('.') && (dirent.isFile() || (dirent.isDirectory() && !IGNORED_DIRECTORIES.has(dirent.name))))
+    .filter((dirent) => matchesFuzzy(dirent.name, split.tail))
+    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+    .slice(0, limit)
+  return Promise.all(entries.map(async (dirent) => {
+    const path = `${split.directory}/${dirent.name}`
+    const absolutePath = resolve(absoluteDirectory, dirent.name)
+    let size = 0
+    if (!dirent.isDirectory()) {
+      try { size = (await stat(absolutePath)).size } catch { size = 0 }
+    }
+    return { name: dirent.name, path, absolutePath, size, isDirectory: dirent.isDirectory() }
+  }))
+}
+
 /** 浅层、短路径优先：@ 补全里 `src/App.tsx` 几乎总比深层同名文件更可能是目标。 */
 function compareMatches(a: string, b: string): number {
   const depth = a.split('/').length - b.split('/').length
   return depth !== 0 ? depth : a.length - b.length || a.localeCompare(b)
+}
+
+/**
+ * 文件名与查询的贴合度，数字越小越靠前。
+ *
+ * 路径用的是子序列匹配，两三个字母几乎能在任何深层路径里凑出来。
+ * 只按深度排序的话，文件名正好就是查询词的那个文件会被一堆「路径里碰巧有这几个字母」
+ * 的条目挤出候选数。
+ */
+function nameMatchRank(path: string, keyword: string): number {
+  if (!keyword) return 3
+  const name = (path.split('/').at(-1) ?? '').toLowerCase()
+  const query = keyword.toLowerCase()
+  if (name === query) return 0
+  if (name.startsWith(query)) return 1
+  if (name.includes(query)) return 2
+  return 3
 }
 
 /**
@@ -377,12 +488,19 @@ export async function searchWorkspaceFiles(root: string | null, query: string, l
   if (!root) throw new Error('尚未打开工作区')
   const realRoot = await realpath(root)
   const keyword = query.trim()
+  // 查询里带目录段时先按「浏览这一层」处理：@ 补全要能一级级钻进子目录，
+  // 全局子序列匹配在这种意图下只会把无关的深层同名项混进来。
+  const browsed = await browseWorkspaceDirectory(realRoot, keyword, limit)
+  if (browsed) return browsed
   const found: string[] = []
   const directories = new Set<string>()
   const queue: string[] = ['']
   let visits = 0
+  // 先多收一些再按贴合度排序截断：够数就停的话，名字正好匹配但埋得深的文件永远轮不到。
+  // 上限仍由 MAX_SEARCH_VISITS 兜底，遍历量不会因此失控。
+  const pool = limit * 5
 
-  while (queue.length > 0 && found.length < limit && visits < MAX_SEARCH_VISITS) {
+  while (queue.length > 0 && found.length < pool && visits < MAX_SEARCH_VISITS) {
     const current = queue.shift() as string
     let dirents
     try {
@@ -392,7 +510,7 @@ export async function searchWorkspaceFiles(root: string | null, query: string, l
       continue
     }
     for (const dirent of dirents) {
-      if (visits >= MAX_SEARCH_VISITS || found.length >= limit) break
+      if (visits >= MAX_SEARCH_VISITS || found.length >= pool) break
       visits += 1
       if (dirent.name.startsWith('.')) continue
       const relativePath = current ? `${current}/${dirent.name}` : dirent.name
@@ -412,8 +530,10 @@ export async function searchWorkspaceFiles(root: string | null, query: string, l
     }
   }
 
-  found.sort(compareMatches)
-  return Promise.all(found.map(async (path) => {
+  const ranked = found
+    .sort((a, b) => nameMatchRank(a, keyword) - nameMatchRank(b, keyword) || compareMatches(a, b))
+    .slice(0, limit)
+  return Promise.all(ranked.map(async (path) => {
     const isDirectory = directories.has(path)
     const absolutePath = resolve(realRoot, path)
     let size = 0
