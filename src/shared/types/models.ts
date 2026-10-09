@@ -3,6 +3,14 @@ import type { ThinkingLevelMap } from './common'
 /** 本地添加模型的接口协议：与 pi 运行时的 Api 类型对应。 */
 export type LocalModelApi = 'openai' | 'anthropic' | 'openai-responses'
 
+/** 模型输入能力。protocol 只决定传输协议，不代表模型一定支持这些输入。 */
+export type ModelInputCapability = 'text' | 'image' | 'audio' | 'file'
+
+export interface ModelCapabilities {
+  input: ModelInputCapability[]
+  thinking?: boolean
+}
+
 export interface ModelOption {
   connectionId?: string
   authMode?: 'api-key' | 'oauth'
@@ -10,6 +18,8 @@ export interface ModelOption {
   name: string
   model_name: string
   model_kind: 'chat' | 'multimodal'
+  /** 新模型能力声明；旧服务端数据仍由 model_kind 兼容推导。 */
+  capabilities?: ModelCapabilities
   /** 模型提供商，用于分组和展示。 */
   provider: string
   /** 调用协议；旧缓存缺失时由运行时按兼容规则回退。 */
@@ -38,6 +48,7 @@ export interface ModelCredentials {
   protocol?: LocalModelApi
   model_name: string
   model_kind?: 'chat' | 'multimodal'
+  capabilities?: ModelCapabilities
   base_url: string | null
   api_key: string
   headers?: Record<string, string>
@@ -66,6 +77,7 @@ export interface LocalModelInput {
   protocol?: LocalModelApi
   model_name: string
   model_kind: 'chat' | 'multimodal'
+  capabilities?: ModelCapabilities
   base_url: string
   /** 编辑时留空或省略表示保留原值；显式传空字符串表示清空。 */
   api_key?: string
@@ -97,6 +109,7 @@ export interface LocalModelSummary {
   protocol?: LocalModelApi
   model_name: string
   model_kind: 'chat' | 'multimodal'
+  capabilities?: ModelCapabilities
   base_url: string
   hasApiKey: boolean
   temperature?: number
