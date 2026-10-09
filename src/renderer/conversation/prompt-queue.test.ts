@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { dropNextQueuedPrompt, enqueuePrompt, removeQueuedPrompt, takeNextQueuedPrompt } from './prompt-queue'
+import { dropNextQueuedPrompt, enqueuePrompt, markSteerDelivered, removeQueuedPrompt, syncSteerQueue, takeNextQueuedPrompt } from './prompt-queue'
 
 vi.stubGlobal('crypto', { randomUUID: () => `id-${Math.random().toString(36).slice(2)}` })
 
@@ -35,5 +35,30 @@ describe('prompt-queue', () => {
 
   it('空队列取队首返回 null', () => {
     expect(takeNextQueuedPrompt([])).toBeNull()
+  })
+
+  it('入队默认是本地排队，插队项显式标记', () => {
+    const queue = enqueuePrompt(enqueuePrompt([], 'A', []), 'B', [], 'steer')
+    expect(queue.map((item) => item.kind)).toEqual(['queued', 'steer'])
+  })
+
+  it('对齐待投递列表时只摘掉已送达的插队项', () => {
+    let queue = enqueuePrompt([], '本地排队', [])
+    queue = enqueuePrompt(queue, '已送达', [], 'steer')
+    queue = enqueuePrompt(queue, '还在等', [], 'steer')
+    const next = syncSteerQueue(queue, ['还在等'])
+    expect(next.map((item) => item.text)).toEqual(['本地排队', '还在等'])
+  })
+
+  it('同一句话插队两次时，一次送达只摘掉一条', () => {
+    let queue = enqueuePrompt([], '继续', [], 'steer')
+    queue = enqueuePrompt(queue, '继续', [], 'steer')
+    expect(syncSteerQueue(queue, ['继续'])).toHaveLength(1)
+    expect(markSteerDelivered(queue, '继续')).toHaveLength(1)
+  })
+
+  it('送达事件不动本地排队项', () => {
+    const queue = enqueuePrompt([], '继续', [])
+    expect(markSteerDelivered(queue, '继续')).toHaveLength(1)
   })
 })

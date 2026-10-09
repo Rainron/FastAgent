@@ -42,6 +42,11 @@ export interface ComposerRunProps {
   runId: string | null
   queue: QueuedPrompt[]
   onEnqueue: (text: string, attachments: Attachment[]) => void
+  /**
+   * 插进当前这一轮：主进程接住返回 true（下一次调模型前进上下文），
+   * 拿不到运行时返回 false，调用方退回 onEnqueue。
+   */
+  onSteer: (text: string, attachments: Attachment[]) => Promise<boolean>
   onRemoveQueued: (id: string) => void
   onSend: (text: string, attachments: Attachment[]) => Promise<void>
   onCancel: () => void

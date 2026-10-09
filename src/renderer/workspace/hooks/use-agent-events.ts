@@ -5,6 +5,7 @@ import { nextActivityRunStatus, resolveEventTurnId } from '../../activity'
 import { hasUnreadResultFor } from '../../run-status'
 import type { StreamBuffer } from '../../ai-response/stream-buffer'
 import { beginCompaction, clearAutoCompaction, completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
+import { markSteerDelivered, syncSteerQueue, type QueuedPrompt } from '../../conversation/prompt-queue'
 import type { ContextHealthData } from '../../conversation/ContextHealth'
 import type { PendingApproval, WorkspaceConversation } from '../workspace-types'
 
@@ -16,6 +17,8 @@ export interface AgentEventSinks {
   /** 思考正文的独立缓冲：与回答正文分开累积，冲刷频率也更低。 */
   thinkingBuffer: StreamBuffer
   refreshGitState: () => void
+  /** 插队队列（等待送达标记）：由外壳持有的按会话队列。 */
+  setQueuedPromptsByConversation: React.Dispatch<React.SetStateAction<Record<string, QueuedPrompt[]>>>
   /** 事件回调里查 turn 归属的会话，避免订阅随列表变化反复重建。 */
   conversationItemsRef: React.RefObject<WorkspaceConversation[]>
   runTurnRef: React.RefObject<Map<string, string>>
@@ -39,7 +42,7 @@ export function useAgentEvents(sinks: AgentEventSinks) {
   const {
     selectedConversationId, visibleConversationId, streamBuffer, thinkingBuffer, refreshGitState,
     conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef,
-    setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
+    setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice, setQueuedPromptsByConversation
   } = sinks
 
   useEffect(() => window.fastAgent.chat.onEvent((event) => {
@@ -48,6 +51,17 @@ export function useAgentEvents(sinks: AgentEventSinks) {
     if (event.sequence !== undefined) eventSequenceRef.current.set(event.runId, event.sequence)
     // Agent 任何工具执行结束都可能改变工作区文件或分支，统一触发 Git 状态刷新（防抖合并）。
     if (event.type === 'tool_result') refreshGitState()
+    // 插队队列快照只对齐界面上的「等待送达」标记，不落进回合活动——主进程也没存它。
+    if (event.type === 'steer_update') {
+      const conversationId = event.conversationId
+      if (conversationId) setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: syncSteerQueue(current[conversationId] ?? [], event.pending) }))
+      return
+    }
+    // 已送达：从队列摘掉，同时继续往下走，让这条补充进入回合活动与执行轨迹。
+    if (event.type === 'user_steer' && event.conversationId && event.text) {
+      const conversationId = event.conversationId
+      setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: markSteerDelivered(current[conversationId] ?? [], event.text!) }))
+    }
     if (event.conversationId && (event.type === 'run_started' || event.type === 'approval_required' || event.type === 'approval_resolved' || event.type === 'question_required' || event.type === 'completed' || event.type === 'failed' || event.type === 'cancelled' || event.type === 'interrupted')) {
       const status = event.type === 'approval_required' || event.type === 'question_required' ? 'waiting_user' : event.type === 'completed' ? 'completed' : event.type === 'failed' ? 'failed' : event.type === 'cancelled' || event.type === 'interrupted' ? 'cancelled' : 'running'
       // 结果落在用户正看着的会话里就不算未读，否则侧栏会给眼前这条亮一个要点掉的点；

@@ -11,8 +11,17 @@ export type TraceTimerPlacement = 'bottom' | 'top' | 'both'
  */
 export type TraceLabelStyle = 'zh' | 'en' | 'compact'
 
+/**
+ * 执行过程的默认展开状态。用户手动点开/收起只在当前 run 状态内生效，这里决定没点过时的样子。
+ * - `collapsed`：始终收起，过程头一行实时说明当前动作
+ * - `running`：执行中展开跟进，结束后收起
+ * - `always`：始终展开
+ */
+export type TraceDefaultExpand = 'collapsed' | 'running' | 'always'
+
 export interface TraceDisplaySettings {
   timerPlacement: TraceTimerPlacement
+  defaultExpand: TraceDefaultExpand
   labelStyle: TraceLabelStyle
   /** 用时那一行是否带本轮 token 用量 */
   showTokens: boolean
@@ -28,4 +37,6 @@ export interface TraceDisplaySettings {
   textExcerptLines: number
   /** 轨迹里的文件名可点击，点了在右侧资源面板打开 */
   openFileFromTrace: boolean
+  /** Agent 调用 preview_show 后自动在右侧面板打开网页预览 */
+  autoOpenPreview: boolean
 }

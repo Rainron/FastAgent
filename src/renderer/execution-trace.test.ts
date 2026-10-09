@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildExecutionTrace, formatElapsed, hasToolAction, isDelegationToolAction, subAgentActivityLabel, thinkingTextByGroup, traceFinalAnswerLength, traceGroupLabel, traceGroupLiveLabel, traceTextBoundary } from './execution-trace'
+import { buildExecutionTrace, formatElapsed, hasToolAction, isDelegationToolAction, liveTarget, subAgentActivityLabel, thinkingTextByGroup, traceAnswerStart, traceFinalAnswerLength, traceGroupDiff, traceGroupLabel, traceGroupLiveLabel, traceRunStatusText, traceOutcomeLabel, traceSummary, traceSummaryLabel, traceTextBoundary, traceTokenTotal } from './execution-trace'
 import type { AgentEvent } from '../shared/types'
 
 function event(patch: Partial<AgentEvent>): AgentEvent {
@@ -25,6 +25,14 @@ function grepResult(textLength: number): AgentEvent {
 const thinkingOn = event({ type: 'thinking_started' })
 const thinkingOff = event({ type: 'thinking_ended' })
 const completed = event({ type: 'completed', text: '...', status: 'completed', textLength: 90 })
+
+describe('正文切片起点', () => {
+  it('执行中只取未归档的尾部，终态取整条最终回答', () => {
+    expect(traceAnswerStart('working', 12)).toBe(12)
+    expect(traceAnswerStart('done', 12)).toBe(0)
+    expect(traceAnswerStart('interrupted', 12)).toBe(0)
+  })
+})
 
 describe('buildExecutionTrace', () => {
   it('纯问答（无工具）把整段正文留给正文区，不产生轨迹', () => {
@@ -248,6 +256,45 @@ describe('traceGroupLabel', () => {
   })
 })
 
+describe('traceGroupLabel 文案风格', () => {
+  const group = (actions: NonNullable<ReturnType<typeof buildExecutionTrace>['pendingGroup']>['actions']) => ({ actions, status: 'done' as const })
+  const tool = (name: string, id: string, input: string | null = null) => ({ kind: 'tool' as const, tool: name, toolCallId: id, input, status: 'done' as const, durationMs: null })
+
+  it('中文风格折成自然语句', () => {
+    expect(traceGroupLabel(group([tool('read', 'c1'), tool('read', 'c2'), tool('bash', 'c3')]), 'zh')).toBe('读取 2 个文件，运行 1 条命令')
+  })
+
+  it('英文风格折成自然语句且首字母大写', () => {
+    expect(traceGroupLabel(group([tool('bash', 'c1'), tool('bash', 'c2')]), 'en')).toBe('Ran 2 commands')
+    expect(traceGroupLabel(group([tool('bash', 'c1')]), 'en')).toBe('Ran a command')
+  })
+
+  it('只调用一次且入参是路径时直接说文件名', () => {
+    expect(traceGroupLabel(group([tool('read', 'c1', 'src/main/index.ts')]), 'zh')).toBe('读取 index.ts')
+    expect(traceGroupLabel(group([tool('write', 'c1', 'docs/plan.md')]), 'en')).toBe('Created plan.md')
+  })
+
+  it('同一动词命中多个文件时改说个数，不挑其中一个冒充全部', () => {
+    expect(traceGroupLabel(group([tool('read', 'c1', 'a.ts'), tool('read', 'c2', 'b.ts')]), 'zh')).toBe('读取 2 个文件')
+  })
+
+  it('命令与搜索不把入参当文件名', () => {
+    expect(traceGroupLabel(group([tool('bash', 'c1', 'npm run build')]), 'zh')).toBe('运行 1 条命令')
+    expect(traceGroupLabel(group([tool('grep', 'c1', 'TODO')]), 'zh')).toBe('搜索 1 次')
+  })
+
+  it('思考在中英文下都有对应说法', () => {
+    expect(traceGroupLabel(group([{ kind: 'thinking', status: 'done' }, tool('read', 'c1')]), 'zh')).toBe('思考，读取 1 个文件')
+    expect(traceGroupLabel(group([{ kind: 'thinking', status: 'done' }]), 'en')).toBe('Thought')
+  })
+
+  it('compact 仍是既有形态，缺省参数不改变旧行为', () => {
+    const actions = [tool('read', 'c1'), tool('read', 'c2')]
+    expect(traceGroupLabel(group(actions), 'compact')).toBe('Read ×2')
+    expect(traceGroupLabel(group(actions))).toBe('Read ×2')
+  })
+})
+
 describe('traceGroupLiveLabel', () => {
   it('未完成动作显示实时动词', () => {
     expect(traceGroupLiveLabel({ actions: [{ kind: 'tool', tool: 'read', toolCallId: 'c1', input: null, status: 'running', durationMs: null }], status: 'running' })).toBe('Reading…')
@@ -259,6 +306,39 @@ describe('traceGroupLiveLabel', () => {
   it('已完成组返回 null 走静态摘要', () => {
     expect(traceGroupLiveLabel({ actions: [{ kind: 'tool', tool: 'read', toolCallId: 'c1', input: null, status: 'done', durationMs: null }], status: 'done' })).toBeNull()
   })
+
+  it('带上动作对象：路径只留文件名，命令取首行', () => {
+    expect(traceGroupLiveLabel({ actions: [{ kind: 'tool', tool: 'read', toolCallId: 'c1', input: 'src/renderer/App.tsx', status: 'running', durationMs: null }], status: 'running' }, 'zh')).toBe('正在读取 App.tsx')
+    expect(traceGroupLiveLabel({ actions: [{ kind: 'tool', tool: 'bash', toolCallId: 'c1', input: 'npm test', status: 'running', durationMs: null }], status: 'running' }, 'zh')).toBe('正在运行命令 npm test')
+    expect(traceGroupLiveLabel({ actions: [{ kind: 'tool', tool: 'edit', toolCallId: 'c1', input: 'a/b.ts', status: 'running', durationMs: null }], status: 'running' }, 'en')).toBe('Editing b.ts')
+  })
+
+  it('并行的子代理全部点名', () => {
+    const sub = (taskId: string, agentName: string) => ({ kind: 'subagent' as const, taskId, agentName, task: null, status: 'running' as const, activity: null, toolCount: 0 })
+    expect(traceGroupLiveLabel({ actions: [sub('t1', 'scout'), sub('t2', 'reviewer')], status: 'running' }, 'zh')).toBe('正在运行 scout、reviewer…')
+  })
+})
+
+describe('liveTarget', () => {
+  it('路径类动作只留文件名', () => {
+    expect(liveTarget('Read', 'K:/proj/src/a.ts')).toBe('a.ts')
+  })
+
+  it('命令截断到一行内', () => {
+    const target = liveTarget('Command', `echo ${'x'.repeat(100)}\nsecond line`) ?? ''
+    expect(target.endsWith('…')).toBe(true)
+    expect(target).not.toContain('second')
+  })
+
+  it('搜索的 JSON 入参取关键字', () => {
+    expect(liveTarget('Search', '{"pattern":"TODO","path":"src"}')).toBe('TODO')
+    expect(liveTarget('Search', '{"path":"src"}')).toBeNull()
+  })
+
+  it('MCP 等无法解读的入参不给对象', () => {
+    expect(liveTarget('Tool', '{"url":"x"}')).toBeNull()
+    expect(liveTarget('Read', null)).toBeNull()
+  })
 })
 
 describe('formatElapsed', () => {
@@ -267,6 +347,106 @@ describe('formatElapsed', () => {
     expect(formatElapsed(45_000)).toBe('45秒')
     expect(formatElapsed(118_000)).toBe('1分58秒')
     expect(formatElapsed(136_000)).toBe('2分16秒')
+  })
+
+  it('英文风格用 m / s', () => {
+    expect(formatElapsed(45_000, 'en')).toBe('45s')
+    expect(formatElapsed(326_000, 'en')).toBe('5m 26s')
+  })
+})
+
+describe('traceRunStatusText', () => {
+  it('执行中优先显示当前动作，没有动作时给通用文案', () => {
+    expect(traceRunStatusText('working', '正在读取…', 'zh')).toBe('正在读取…')
+    expect(traceRunStatusText('working', null, 'zh')).toBe('正在执行…')
+    expect(traceRunStatusText('working', null, 'en')).toBe('Running…')
+  })
+
+  it('终态按结果给词，不再显示动作', () => {
+    expect(traceRunStatusText('cancelled', '正在读取…', 'zh')).toBe('已取消')
+    expect(traceRunStatusText('failed', null, 'en')).toBe('Failed')
+  })
+})
+
+describe('traceSummary 过程头摘要', () => {
+  it('跨动作组累计调用数、子代理数与增删行数', () => {
+    const trace = buildExecutionTrace([
+      readStarted(0),
+      readResult(0),
+      grepStarted(30),
+      grepResult(30),
+      event({ type: 'tool_started', tool: 'edit', toolCallId: 'c3', input: 'src/a.ts' }),
+      event({ type: 'file_changed', path: 'src/a.ts', additions: 9, deletions: 2 }),
+      event({ type: 'tool_result', tool: 'edit', toolCallId: 'c3', status: 'completed' }),
+      completed
+    ])
+    expect(traceSummary(trace)).toEqual({ calls: 3, subagents: 0, diff: { additions: 9, deletions: 2 } })
+    expect(traceSummaryLabel(traceSummary(trace), 'zh')).toBe('执行过程 · 3 次调用')
+  })
+
+  it('委派工具本身不计入调用数，只算它下面的子代理', () => {
+    const trace = buildExecutionTrace([
+      event({ type: 'tool_started', tool: 'subagent', toolCallId: 'c1', input: '调查调用链' }),
+      event({ type: 'subagent_started', subAgent: { taskId: 't1', agentId: 'scout', agentName: 'scout', status: 'running' } }),
+      event({ type: 'subagent_result', subAgent: { taskId: 't1', agentId: 'scout', agentName: 'scout', status: 'completed' } }),
+      completed
+    ])
+    expect(traceSummary(trace)).toMatchObject({ calls: 0, subagents: 1 })
+    expect(traceSummaryLabel(traceSummary(trace), 'zh')).toBe('执行过程 · 1 个子代理')
+  })
+
+  it('没有任何调用时只留标题，不写 0 次调用', () => {
+    const trace = buildExecutionTrace([thinkingOn, thinkingOff, completed])
+    expect(traceSummary(trace)).toEqual({ calls: 0, subagents: 0, diff: null })
+    expect(traceSummaryLabel(traceSummary(trace), 'zh')).toBe('执行过程')
+    expect(traceSummaryLabel(traceSummary(trace), 'en')).toBe('Execution')
+  })
+})
+
+describe('traceGroupDiff 与 file_changed 归并', () => {
+  it('按入参里的文件名把增删行数挂回对应工具动作', () => {
+    const trace = buildExecutionTrace([
+      event({ type: 'tool_started', tool: 'edit', toolCallId: 'c1', input: 'src/a.ts' }),
+      event({ type: 'tool_started', tool: 'edit', toolCallId: 'c2', input: 'src/b.ts' }),
+      event({ type: 'file_changed', path: 'src/b.ts', additions: 10, deletions: 4 }),
+      event({ type: 'file_changed', path: 'src/a.ts', additions: 1, deletions: 0 })
+    ])
+    const actions = trace.pendingGroup!.actions
+    expect(actions[0]).toMatchObject({ toolCallId: 'c1', diff: { additions: 1, deletions: 0 } })
+    expect(actions[1]).toMatchObject({ toolCallId: 'c2', diff: { additions: 10, deletions: 4 } })
+    expect(traceGroupDiff(trace.pendingGroup!)).toEqual({ additions: 11, deletions: 4 })
+  })
+
+  it('对不上文件名时落到组内最后一个工具动作，不丢统计', () => {
+    const trace = buildExecutionTrace([
+      event({ type: 'tool_started', tool: 'bash', toolCallId: 'c1', input: 'npm run codegen' }),
+      event({ type: 'file_changed', path: 'src/generated.ts', additions: 120, deletions: 0 })
+    ])
+    expect(traceGroupDiff(trace.pendingGroup!)).toEqual({ additions: 120, deletions: 0 })
+  })
+
+  it('没有任何改动统计时返回 null，界面据此不画这段', () => {
+    const trace = buildExecutionTrace([event({ type: 'tool_started', tool: 'read', toolCallId: 'c1', input: 'src/a.ts' })])
+    expect(traceGroupDiff(trace.pendingGroup!)).toBeNull()
+  })
+})
+
+describe('traceTokenTotal', () => {
+  const usage = (input: number, output: number) => ({ latest: null, turn: { requestCount: 1, reportedReadRequests: 0, reportedWriteRequests: 0, inputTokens: input, outputTokens: output, readInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, session: { requestCount: 1, reportedReadRequests: 0, reportedWriteRequests: 0, inputTokens: input, outputTokens: output, readInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 } })
+
+  it('取最后一条回合聚合', () => {
+    expect(traceTokenTotal([
+      event({ type: 'usageUpdated', usage: usage(100, 20) }),
+      event({ type: 'usageUpdated', usage: usage(4000, 243) })
+    ])).toBe(4243)
+  })
+
+  it('没有聚合数据时返回 null，而不是假的 0', () => {
+    expect(traceTokenTotal([event({ type: 'tool_started', tool: 'read', toolCallId: 'c1' })])).toBeNull()
+  })
+
+  it('合计为 0（请求没回来就取消）时返回 null，不显示 0 tokens', () => {
+    expect(traceTokenTotal([event({ type: 'usageUpdated', usage: usage(0, 0) })])).toBeNull()
   })
 })
 describe('Sub-agent 动态', () => {
@@ -298,7 +478,29 @@ describe('Sub-agent 动态', () => {
     ])
     expect(action.activity).toBe('Search')
     expect(action.toolCount).toBe(1)
-    expect(subAgentActivityLabel(action)).toBe('Searching… · 已完成 1 个动作')
+    expect(subAgentActivityLabel(action)).toBe('正在搜索… · 已完成 1 个动作')
+  })
+
+  it('进度事件带入参时显示动作对象，且不会被当成任务描述', () => {
+    const action = pick([
+      started,
+      sub({ type: 'subagent_update', tool: 'read', status: 'running', input: 'src/main/index.ts' })
+    ])
+    expect(action.task).toBe('调查调用链')
+    expect(subAgentActivityLabel(action)).toBe('正在读取 index.ts')
+  })
+
+  it('记录起止时间，终态后清空动作对象', () => {
+    const trace = buildExecutionTrace([
+      sub({ type: 'subagent_started', input: '调查', timestamp: 1000 }),
+      sub({ type: 'subagent_update', tool: 'read', status: 'running', input: 'a.ts', timestamp: 2000 }),
+      sub({ type: 'subagent_result', timestamp: 5000, subAgent: { taskId: 't1', agentId: 'scout', agentName: 'scout', status: 'completed' } })
+    ])
+    const action = trace.pendingGroup?.actions.find((item) => item.kind === 'subagent')
+    if (action?.kind !== 'subagent') throw new Error('缺少 subagent 动作')
+    expect(action.startedAt).toBe(1000)
+    expect(action.finishedAt).toBe(5000)
+    expect(action.activityTarget).toBeNull()
   })
 
   it('失败的工具同样计入已完成动作数', () => {
@@ -360,6 +562,7 @@ describe('委派工具本身不重复出现在摘要里', () => {
   it('实时状态行显示在跑的子 Agent，而不是委派工具', () => {
     const trace = buildExecutionTrace([delegation, subStarted('t1')])
     expect(traceGroupLiveLabel(trace.pendingGroup!)).toBe('Running scout…')
+    expect(traceGroupLiveLabel(trace.pendingGroup!, 'zh')).toBe('正在运行 scout…')
   })
 
   it('组内只有委派工具在跑时不再输出 subagent…', () => {
@@ -436,25 +639,140 @@ describe('hasToolAction', () => {
   })
 })
 
-describe('最终回答不在轨迹里重复', () => {
-  const ev = (type: AgentEvent['type'], textLength: number, extra: Partial<AgentEvent> = {}) => ({ runId: 'r', type, textLength, ...extra }) as AgentEvent
-  // 说明文本 10 字 → 调工具 → 最终回答 20 字；usageUpdated 在回答写完后才带上完整长度
-  const events = [
-    ev('tool_started', 10, { tool: 'ls', toolCallId: 't1' }),
-    ev('tool_result', 10, { tool: 'ls', toolCallId: 't1', status: 'completed' }),
-    ev('usageUpdated', 30),
-    ev('completed', 30)
-  ]
-
-  it('终态时文本段止步于最终回答起点', () => {
-    expect(traceTextBoundary(events, 20)).toBe(10)
-    const trace = buildExecutionTrace(events, traceFinalAnswerLength('done', 20))
-    const texts = trace.segments.filter((segment) => segment.kind === 'text')
-    expect(texts.every((segment) => segment.kind === 'text' && segment.end <= 10)).toBe(true)
+describe('正文边界', () => {
+  it('记账事件带完整正文长度时，文本段仍止步于最终回答起点', () => {
+    // usageUpdated 在消息结束时带上整段 transcript 长度，直接切分会把最终回答也归档进轨迹，
+    // 正文区再渲染一次同一段文字就成了两遍。
+    const trace = buildExecutionTrace([
+      readStarted(0),
+      readResult(12),
+      event({ type: 'usageUpdated', textLength: 42 }),
+      event({ type: 'completed', text: '最终回答', status: 'completed', textLength: 42 })
+    ], 30)
+    expect(trace.segments).toEqual([
+      { kind: 'group', group: expect.objectContaining({ status: 'done' }) },
+      { kind: 'text', start: 0, end: 12 }
+    ])
+    expect(trace.answerStart).toBe(12)
   })
 
-  it('执行中不夹取，拿不到回答长度时也不夹取', () => {
-    expect(traceFinalAnswerLength('working', 20)).toBe(0)
-    expect(traceTextBoundary(events, 0)).toBe(Number.POSITIVE_INFINITY)
+  it('只保留夹取后的说明文本，正文起点跟着走到边界', () => {
+    const trace = buildExecutionTrace([
+      readStarted(0),
+      readResult(20),
+      event({ type: 'completed', text: '最终回答', status: 'completed', textLength: 50 })
+    ], 40)
+    expect(trace.segments).toEqual([
+      { kind: 'group', group: expect.objectContaining({ status: 'done' }) },
+      { kind: 'text', start: 0, end: 10 }
+    ])
+    expect(trace.answerStart).toBe(10)
+  })
+
+  it('夹取只砍掉越过边界的部分，边界之前的说明文本保留', () => {
+    const trace = buildExecutionTrace([
+      readStarted(0),
+      readResult(40),
+      event({ type: 'usageUpdated', textLength: 50 }),
+      event({ type: 'completed', text: '最终回答', status: 'completed', textLength: 50 })
+    ], 10)
+    expect(trace.segments).toEqual([
+      { kind: 'group', group: expect.objectContaining({ status: 'done' }) },
+      { kind: 'text', start: 0, end: 40 }
+    ])
+    expect(trace.answerStart).toBe(40)
+  })
+
+  it('夹取只在终态生效，执行中传 0 不夹取', () => {
+    expect(traceFinalAnswerLength('working', 120)).toBe(0)
+    expect(traceFinalAnswerLength('done', 120)).toBe(120)
+    // 取消/失败没有最终回答时长度为 0，同样不夹取
+    expect(traceFinalAnswerLength('cancelled', 0)).toBe(0)
+  })
+
+  it('拿不到最终回答长度或终态长度时不夹取', () => {
+    expect(traceTextBoundary([completed], 30)).toBe(60)
+    expect(traceTextBoundary([completed], 0)).toBe(Number.POSITIVE_INFINITY)
+    expect(traceTextBoundary([readStarted(0)], 30)).toBe(Number.POSITIVE_INFINITY)
+    expect(traceTextBoundary([event({ type: 'completed', status: 'completed' })], 30)).toBe(Number.POSITIVE_INFINITY)
+    // 回答比 transcript 还长（旧回合只有 assistantMessage）时收到 0，不出现负边界
+    expect(traceTextBoundary([event({ type: 'completed', textLength: 10 })], 30)).toBe(0)
+  })
+
+  it('整轮回放：轨迹文本段与正文区合起来正好是整段正文，既不重叠也不丢字', () => {
+    const narration1 = '先确认工作区。\n'
+    const narration2 = '再看一眼配置。\n'
+    const answer = '结论如下：最终回答。'
+    const transcript = `${narration1}${narration2}${answer}`
+    const trace = buildExecutionTrace([
+      thinkingOn, thinkingOff,
+      readStarted(0), readResult(narration1.length),
+      // 每条助手消息结束时上报 usage，带上当时的完整正文长度
+      event({ type: 'usageUpdated', textLength: narration1.length }),
+      grepStarted(narration1.length), grepResult(narration1.length + narration2.length),
+      event({ type: 'usageUpdated', textLength: narration1.length + narration2.length }),
+      // 最终回答写完后、终态事件之前还会来一条 usage，它带的长度已经是整段 transcript
+      event({ type: 'usageUpdated', textLength: transcript.length }),
+      event({ type: 'completed', text: answer, status: 'completed', textLength: transcript.length })
+    ], answer.length)
+    const rendered = trace.segments.filter((segment) => segment.kind === 'text').map((segment) => transcript.slice(segment.start, segment.end))
+    expect(rendered).toEqual([narration1, narration2])
+    // 正文区渲染的是 transcript 尾部那一段；两段拼起来就是完整正文，没有重复也没有空档
+    expect(rendered.join('') + transcript.slice(transcript.length - answer.length)).toBe(transcript)
+    expect(trace.answerStart).toBe(transcript.length - answer.length)
+  })
+})
+
+describe('插队消息', () => {
+  it('按发生顺序成为动作组的同级节点，不嵌套进组', () => {
+    const trace = buildExecutionTrace([
+      readStarted(0),
+      event({ type: 'user_steer', text: '先看配置文件' }),
+      readResult(0),
+      completed
+    ])
+    const [first, inserted] = trace.segments
+    expect(first.kind).toBe('group')
+    expect(inserted).toMatchObject({ kind: 'steer', text: '先看配置文件' })
+    if (first.kind !== 'group') return
+    expect(first.group.actions.map((action) => action.kind)).toEqual(['tool'])
+    expect(traceGroupLabel(first.group)).toBe('Read ×1')
+  })
+
+  it('只有补充没有工具时不算有工具动作', () => {
+    const trace = buildExecutionTrace([event({ type: 'user_steer', text: '补充一句' }), completed])
+    expect(hasToolAction(trace)).toBe(false)
+  })
+
+  it('没有正文也没有附件的补充事件不产生动作', () => {
+    const trace = buildExecutionTrace([event({ type: 'user_steer' }), completed])
+    expect(hasToolAction(trace)).toBe(false)
+    expect(trace.segments).toHaveLength(0)
+  })
+
+  it('补充带的附件挂在同一个节点上', () => {
+    const attachment = { id: 'a1', name: '截图.png', type: 'image/png', size: 2048, localPath: 'C:/att/a1.png' }
+    const trace = buildExecutionTrace([event({ type: 'user_steer', text: '照着这张图改', attachments: [attachment] }), completed])
+    expect(trace.segments).toEqual([{ kind: 'steer', text: '照着这张图改', attachments: [attachment] }])
+  })
+
+  it('只带附件不带正文的补充照样出节点', () => {
+    const attachment = { id: 'a2', name: '日志.txt', type: 'text/plain', size: 120 }
+    const trace = buildExecutionTrace([event({ type: 'user_steer', attachments: [attachment] }), completed])
+    expect(trace.segments).toEqual([{ kind: 'steer', text: '', attachments: [attachment] }])
+  })
+
+  it('旧记录没有附件字段时补空数组', () => {
+    const trace = buildExecutionTrace([event({ type: 'user_steer', text: '补充一句' }), completed])
+    expect(trace.segments).toEqual([{ kind: 'steer', text: '补充一句', attachments: [] }])
+  })
+})
+
+describe('traceOutcomeLabel', () => {
+  it('终态过程头只说一次结果，并带上本轮做了多少事', () => {
+    const trace = buildExecutionTrace([readStarted(0), readResult(0), grepStarted(0), grepResult(0), completed])
+    expect(traceOutcomeLabel('done', traceSummary(trace), 'zh')).toBe('已完成 · 2 次调用')
+    expect(traceOutcomeLabel('cancelled', traceSummary(buildExecutionTrace([])), 'zh')).toBe('已取消')
+    expect(traceOutcomeLabel('failed', traceSummary(trace), 'en')).toBe('Failed · 2 calls')
   })
 })

@@ -603,6 +603,14 @@ export interface PiSessionRuntime {
   session: AgentSession
   toolRuntimeRef: ToolRuntimeContextRef | null
   run(options: RuntimeRunOptions): Promise<void>
+  /**
+   * 运行中插队：消息在当前这一步工具跑完、下一次调模型之前进入同一轮上下文。
+   * 会话不在流式状态时返回 false（run 刚起还没跑起来、或正在重试间隙），
+   * 此时不入队——排在一个不会被消费的队列里，等于把这句话悄悄吞掉。
+   */
+  steer(text: string, attachments: Attachment[]): Promise<boolean>
+  /** 取回未投递的插队消息并清空队列；用户点停止时把字还给输入框。 */
+  clearQueue(): { steering: string[]; followUp: string[] }
   getContextMeasurement(): ContextMeasurement
   /**
    * 手动压缩当前会话；活跃运行时优先走这条，状态与 session 文件天然一致。
@@ -702,6 +710,17 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
         ...runOptions,
         thinkingEnabled: Boolean(runOptions.credentials.supports_thinking && nextThinkingLevel !== 'off')
       }, settingsManager)
+    },
+    async steer(text, attachments) {
+      if (!session.isStreaming) return false
+      const images = await Promise.all(imageParts(attachments))
+      const attachmentContext = await textAttachmentContext(attachments)
+      // 附件正文拼进插队文本，与首轮 prompt 的处理保持同一套预算与截断规则。
+      await session.steer(`${text}${attachmentContext}`, images.length ? images : undefined)
+      return true
+    },
+    clearQueue() {
+      return session.clearQueue()
     },
     getContextMeasurement() {
       return measureRuntimeContext(session, options.credentials)
@@ -935,6 +954,21 @@ export function mapAssistantStreamEvent(
   return { events, thinkingActive: active }
 }
 
+/**
+ * 对比两次 queue_update，找出已经投递进上下文的插队消息。
+ * 按出现次数逐条抵消，同一句话连发两次时只判定投递了一条。
+ */
+export function deliveredSteerMessages(previous: string[], next: readonly string[]): string[] {
+  const remaining = [...next]
+  const delivered: string[] = []
+  for (const text of previous) {
+    const at = remaining.indexOf(text)
+    if (at === -1) delivered.push(text)
+    else remaining.splice(at, 1)
+  }
+  return delivered
+}
+
 async function consumeSession(session: AgentSession, options: RuntimeRunOptions, settingsManager?: SettingsManager) {
   let thinkingActive = Boolean(options.thinkingEnabled)
   if (thinkingActive) options.onEvent({ type: 'thinking_started' })
@@ -993,10 +1027,20 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions,
     baseUrl: options.credentials.base_url || (protocolForCredentials(options.credentials) === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'),
     subAgent: Boolean(options.subAgentMetadata)
   }, (usageRecord) => options.onEvent({ type: 'usageUpdated', usageRecord }))
+  // 上一次看到的插队队列：queue_update 只报当前待投递的，投递本身没有单独事件。
+  let pendingSteering: string[] = []
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     // 取消也可能已经计费，必须先保存已返回的 usage，再执行中断分支。
     if (event.type === 'message_end') collectUsage(event.message)
     ensureAborted()
+    if (event.type === 'queue_update') {
+      for (const text of deliveredSteerMessages(pendingSteering, event.steering)) {
+        options.onEvent({ type: 'user_steer', text })
+      }
+      pendingSteering = [...event.steering]
+      options.onEvent({ type: 'steer_update', pending: pendingSteering })
+      return
+    }
     if (event.type === 'compaction_start') {
       sawCompaction = true
       compactionStartedAt = Date.now()

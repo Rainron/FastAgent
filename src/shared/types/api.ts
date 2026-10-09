@@ -218,7 +218,14 @@ export interface FastAgentApi {
      * mode 传 agent 时改走与主窗口相同的运行时（工具、沙箱、审批齐全），未绑定项目则用快速工作区。
      */
     quickSend(input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: ThinkingLevel; mode?: ConversationMode; permission?: PermissionPreset | null }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
-    cancel(runId: string): Promise<void>
+    /** 取消当前 run；返回未投递的插队消息，渲染层据此把文字还给输入框。 */
+    cancel(runId: string): Promise<{ pending: string[] }>
+    /**
+     * 运行中插队：消息在当前这一步工具跑完、下一次调模型之前进入同一轮上下文。
+     * delivered=false 表示这一轮拿不到会话运行时（还在初始化或走直连快问通道），
+     * 调用方要退回本地排队。
+     */
+    steer(input: { runId: string; conversationId: string; text: string; attachments: Attachment[] }): Promise<{ delivered: boolean }>
     /**
      * 暂停：在下一次工具调用前停住。已经发出的模型请求与正在执行的工具不受影响，
      * 因此按下之后可能还会看到当前这一步跑完。run 已结束时返回 false。
@@ -286,6 +293,7 @@ export interface FastAgentApi {
     export(conversationId: string): Promise<string | null>
     archive(conversationId: string): Promise<void>
     remove(conversationId: string): Promise<void>
+    /** 清空会话全部消息与运行时状态，保留会话条目并重置标题。 */
     /**
      * 彻底清空一个会话：消息、上下文、运行台账、成果登记、附件副本、Agent session 文件，
      * 以及由这个会话抽出的记忆。会话条目保留并把标题重置为「新对话」。不可撤销。

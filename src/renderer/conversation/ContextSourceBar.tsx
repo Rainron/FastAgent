@@ -59,17 +59,23 @@ function ContextSourceGroupView({ group, onNotice }: { group: ContextSourceGroup
       <span>{group.label} {group.items.length}</span>
       {group.note && <em>{group.note}</em>}
     </div>
-    {items.map((item) => item.kind === 'skill'
-      // Skill 正文不在这里展开：整行是跳转入口，正文与版本去能力页看。
-      ? <button type="button" className="context-source-item context-source-link" key={`${item.kind}:${item.refId}`} onClick={() => openSkill(item.refId)} title="在能力页查看这个 Skill">
-        <span className="context-source-title">{item.title}</span>
-        <ChevronRight size={12} className="context-source-go" />
-      </button>
-      : <div className="context-source-item" key={`${item.kind}:${item.refId}`}>
-        <span className="context-source-title">{item.title}</span>
-        {item.detail && <span className="context-source-detail">{item.detail}</span>}
-        {canOpenSource(item) && <button className="context-source-open" title={item.locator ?? ''} onClick={() => void openSource(item)}><ExternalLink size={12} /></button>}
-      </div>)}
-    {overflow > 0 && <button type="button" className="context-source-more" onClick={() => setShowAll((value) => !value)}>{showAll ? '收起这一组' : `展开其余 ${overflow} 条`}</button>}
+    {/* 整组一张列表卡，行间只有一条分隔线：逐条独立描边时几十条 Skill 会散成一屏白条 */}
+    <div className="context-source-items">
+      {items.map((item) => item.kind === 'skill'
+        // Skill 正文不在这里展开：整行是跳转入口，正文与版本去能力页看。
+        ? <button type="button" className="context-source-item context-source-link" key={`${item.kind}:${item.refId}`} onClick={() => openSkill(item.refId)} title="在能力页查看这个 Skill">
+          <span className="context-source-title">{item.title}</span>
+          <ChevronRight size={12} className="context-source-go" />
+        </button>
+        : <div className="context-source-item" key={`${item.kind}:${item.refId}`}>
+          <span className="context-source-title">{item.title}</span>
+          {item.detail && <span className="context-source-detail">{item.detail}</span>}
+          {canOpenSource(item) && <button className="context-source-open" title={item.locator ?? ''} onClick={() => void openSource(item)}><ExternalLink size={12} /></button>}
+        </div>)}
+      {overflow > 0 && <button type="button" className="context-source-more" onClick={() => setShowAll((value) => !value)}>
+        <ChevronRight size={11} className={showAll ? 'context-source-more-icon open' : 'context-source-more-icon'} />
+        {showAll ? '收起这一组' : `展开其余 ${overflow} 条`}
+      </button>}
+    </div>
   </div>
 }

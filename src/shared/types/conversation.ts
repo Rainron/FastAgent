@@ -13,6 +13,14 @@ export interface Attachment {
   status?: 'queued' | 'uploaded' | 'failed'
 }
 
+/** 已交给当前 Pi 会话、但尚未进入模型上下文的补充消息。 */
+export interface PendingSteerSnapshot {
+  queueId: string
+  text: string
+  attachments: Attachment[]
+  createdAt: number
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant' | 'system'

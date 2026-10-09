@@ -429,3 +429,21 @@ describe('助手流事件映射（思考边界）', () => {
     expect(piRuntime.mapAssistantStreamEvent({ type: 'thinking_end' }, false, repair).events).toEqual([])
   })
 })
+
+describe('deliveredSteerMessages', () => {
+  it('队列里消失的那条算已投递', () => {
+    expect(piRuntime.deliveredSteerMessages(['A', 'B'], ['B'])).toEqual(['A'])
+  })
+
+  it('同一句话排两次时一次只判定投递一条', () => {
+    expect(piRuntime.deliveredSteerMessages(['继续', '继续'], ['继续'])).toEqual(['继续'])
+  })
+
+  it('队列没变化时不产生投递', () => {
+    expect(piRuntime.deliveredSteerMessages(['A'], ['A'])).toEqual([])
+  })
+
+  it('新入队不算投递', () => {
+    expect(piRuntime.deliveredSteerMessages([], ['A'])).toEqual([])
+  })
+})

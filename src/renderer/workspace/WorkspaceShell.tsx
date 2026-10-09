@@ -25,7 +25,7 @@ import { LightboxLayer } from '../conversation/Lightbox'
 import { FindBar } from '../conversation/FindBar'
 import { MessageContextMenu, selectionText, type ContextMenuItem } from '../conversation/message-context-menu'
 import type { ScrollNavAction } from '../conversation/auto-scroll'
-import { dropNextQueuedPrompt, enqueuePrompt, removeQueuedPrompt, takeNextQueuedPrompt, type QueuedPrompt } from '../conversation/prompt-queue'
+import { dropNextQueuedPrompt, enqueuePrompt, markSteerDelivered, removeQueuedPrompt, takeNextQueuedPrompt, type QueuedPrompt } from '../conversation/prompt-queue'
 import { isRunConflictError } from '../../shared/active-runs'
 import { cleanIpcError } from '../ipc-error'
 import { conversationModelId, defaultThinkingLevel, initialSelectedModelId, mergeModelOptions, normalizeThinkingLevel, pendingBoundModelId } from '../model-picker'
@@ -230,6 +230,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   /** 换会话与 /clear 都必须整份丢掉上一条会话的压缩记录与策略覆盖，否则会画出不属于它的分隔卡。 */
   const resetConversationContext = useCallback(() => { setCompactionHistory([]); setConversationPolicy(null) }, [])
   const [compactionStates, setCompactionStates] = useState<CompactionStates>({})
+  // /clear 的确认弹层：清空不可撤销，还会删掉 session 文件、附件与这个会话产生的记忆。
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
   const conversationLoadRef = useRef(0)
   const permissionChangeRef = useRef(0)
   const runTurnRef = useRef(new Map<string, string>())
@@ -404,7 +406,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   useAgentEvents({
     selectedConversationId, visibleConversationId: section === 'chats' && batchKind !== 'conversations' ? selectedConversationId : null, streamBuffer, thinkingBuffer, refreshGitState,
     conversationItemsRef, runTurnRef, activeTurnRef, streamedTextRef, eventSequenceRef,
-    setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setNotice
+    setRunStates, setCompactionStates, setContextHealth, setCompactionHistory, setApprovals, setTodosByTurn, setTurns, setRunIdsByConversation, setQueuedPromptsByConversation, setNotice
   })
 
   async function respondApproval(id: string, decision: ApprovalDecision, answer?: string) {
@@ -1454,6 +1456,23 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     if (!selectedConversationId) return
     setQueuedPromptsByConversation((current) => ({ ...current, [selectedConversationId]: enqueuePrompt(current[selectedConversationId] ?? [], text, attachments) }))
   })
+  /**
+   * 插进当前这一轮。先乐观入队再发 IPC：主进程可能在 await 返回前就报回「已送达」，
+   * 反过来写会让那条消息在界面上永远挂着「等待送达」。没送达时按同一条路径回滚。
+   */
+  const handleSteer = useEventCallback(async (text: string, attachments: Attachment[]) => {
+    const conversationId = selectedConversationId
+    const activeRunId = runId
+    if (!conversationId || !activeRunId) return false
+    setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: enqueuePrompt(current[conversationId] ?? [], text, attachments, 'steer') }))
+    const delivered = await window.fastAgent.chat.steer({ runId: activeRunId, conversationId, text, attachments })
+      .then((result) => result.delivered)
+      .catch(() => false)
+    if (!delivered) {
+      setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: markSteerDelivered(current[conversationId] ?? [], text) }))
+    }
+    return delivered
+  })
   const handleRemoveQueued = useEventCallback((id: string) => {
     // 按 id 清全部会话的队列：撤销排队有退场动画窗口，期间切换会话也不至于漏删
     setQueuedPromptsByConversation((current) => {
@@ -1466,7 +1485,14 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     if (!runId) return
     const stoppedRunId = runId
     const conversationId = selectedConversationId
-    void window.fastAgent.chat.cancel(stoppedRunId)
+    // 停止会连带清空引擎里还没投递的插队消息，主进程把它们退回来，原样放回输入框。
+    void window.fastAgent.chat.cancel(stoppedRunId).then((result) => {
+      const pending = result?.pending ?? []
+      if (!pending.length || !conversationId) return
+      setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: (current[conversationId] ?? []).filter((item) => item.kind !== 'steer') }))
+      setPrefillRequest({ text: pending.join('\n'), nonce: Date.now() })
+      setNotice('已停止生成，未发出的插队消息已放回输入框')
+    }).catch(() => undefined)
     setNotice('已停止生成')
     if (!conversationId) return
     // 取消只是发出 abort：正在执行的工具、已发出的模型请求都可能还要一会儿才回来，
@@ -1545,7 +1571,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             {pressure && <ContextPressureBar pressure={pressure} onCompact={handleCompact} onOpenSettings={handleOpenContextSettings} />}
-            <Composer workspace={composerWorkspace} onRunShellCommand={handleRunShellCommand} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
+            <Composer workspace={composerWorkspace} onRunShellCommand={handleRunShellCommand} onSteer={handleSteer} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />
           </> : <SectionView key={section} onInsertComposer={handleInsertMcpPrompt} section={section} auth={auth} bootstrap={bootstrap} projects={projectItems} conversations={batchKind === 'conversations' ? batchConversationItems : scopedConversations} allConversations={conversationItems} conversationPage={batchConversationPage} conversationPageSize={batchConversationPageSize} conversationTotal={batchConversationTotal} onConversationPageChange={handleBatchConversationPageChange} onConversationPageSizeChange={handleBatchConversationPageSizeChange} batchConversationQuery={batchConversationQuery} batchConversationScope={batchConversationScope} onBatchConversationQueryChange={handleBatchConversationQueryChange} onBatchConversationScopeChange={handleBatchConversationScopeChange} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} batchKind={batchKind} batchSelectedIds={batchSelectedIds} onToggleBatch={handleToggleBatch} onToggleAllBatch={handleToggleAllBatch} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onExitBatch={handleExitBatch} onFinishBatch={handleFinishBatch} onNavigate={handleNavigate} onPickWorkspace={handlePickWorkspace} onNewChat={handleNewChat} onSelectProject={handleSelectProject} onSelectConversation={handleSelectConversation} onNotice={handleNotice} onLock={handleLock} modePrompts={modePrompts} onModePromptChange={handleModePromptChange} onResetModePrompts={handleResetModePrompts} settings={settings} theme={theme} onSettingsChange={onSettingsChange} onThemeChange={onThemeChange} onOpenInspector={handleOpenInspector} onOpenSearchResult={handleOpenSearchResult} settingsCategory={settingsCategory} settingsRequest={settingsRequest} abilityRequest={abilityRequest} selectedModelId={selectedModelId} defaultModelId={bootstrap?.default_model_id ?? null} favoriteModelIds={favoriteModelIds} localModels={localModels} onSelectModel={handleSelectModel} onTestDialogue={handleTestDialogueModel} onToggleFavoriteModel={handleToggleFavoriteModel} />}
         </main>
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}
@@ -1562,6 +1588,18 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       {pendingConfirm && <ConfirmDialog title={pendingConfirm.title} lines={pendingConfirm.lines} confirmLabel={pendingConfirm.confirmLabel} danger onConfirm={() => { const action = pendingConfirm.onConfirm; setPendingConfirm(null); action() }} onCancel={() => setPendingConfirm(null)} />}
       {approvals.filter((item) => item.conversationId === selectedConversationId).map((item) => <ApprovalDialog key={item.request.id} request={item.request} onRespond={(decision, answer) => void respondApproval(item.request.id, decision, answer)} />)}
       {skillDraft && <SkillDistillDialog draft={skillDraft} onClose={() => setSkillDraft(null)} onSaved={(name) => { setSkillDraft(null); setNotice(`技能 ${name} 已保存，默认停用`) }} />}
+      {clearConfirmOpen && <ConfirmDialog
+        title="清空这个会话？"
+        lines={[
+          '会删除：全部消息与执行记录、上下文与压缩摘要、运行台账与成果登记、这个会话的附件副本与 Agent 会话文件，以及由这个会话抽出的记忆。',
+          '工作区里已经改过的文件不会被还原，其它会话不受影响。',
+          '清空后无法恢复。'
+        ]}
+        confirmLabel="清空"
+        danger
+        onConfirm={() => { setClearConfirmOpen(false); void clearConversationAction() }}
+        onCancel={() => setClearConfirmOpen(false)}
+      />}
     </div>
     </ResponseActionsContext.Provider>
   )

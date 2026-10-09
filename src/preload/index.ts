@@ -194,6 +194,7 @@ const api: FastAgentApi = {
     send: (input) => ipcRenderer.invoke('chat:send', input),
     quickSend: (input) => ipcRenderer.invoke('chat:quick-send', input),
     cancel: (runId: string) => ipcRenderer.invoke('chat:cancel', runId),
+    steer: (input) => ipcRenderer.invoke('chat:steer', input),
     pause: (runId: string): Promise<boolean> => ipcRenderer.invoke('chat:pause', runId),
     resume: (runId: string): Promise<boolean> => ipcRenderer.invoke('chat:resume', runId),
     setPermission: (runId: string, preset: PermissionPreset | null) => ipcRenderer.invoke('chat:set-permission', runId, preset),

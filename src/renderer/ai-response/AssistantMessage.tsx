@@ -27,12 +27,14 @@ function useSampledText(text: string, turnId: string, streaming: boolean, interv
  * 助手消息的唯一入口：turn 先归一化成 blocks，再逐块分发。
  * 旧会话里 assistantMessage 只有字符串，归一化时自动变成 MarkdownBlock。
  */
-export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, modelName, textStart = 0, onRegenerate, onDelete, onCopyPair }: {
+export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, modelName, textStart = 0, showActions = true, onRegenerate, onDelete, onCopyPair }: {
   turn: ConversationTurn
   /** 头部徽章显示的模型名；模型已删除时由调用方省略，不编造型号。 */
   modelName?: string
   /** 执行轨迹已归档正文前段，正文区只渲染从这里开始的最终回答。 */
   textStart?: number
+  /** 有执行轨迹时操作条挪到轨迹底栏下方，由调用方自己渲染，这里就不再出一份。 */
+  showActions?: boolean
   onRegenerate: () => void
   onDelete: () => void
   onCopyPair: () => void
@@ -79,13 +81,18 @@ export const AssistantMessageView = React.memo(function AssistantMessageView({ t
       <div className="assistant-blocks">
         {message.blocks.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
       </div>
-      <MessageActions
+      {showActions && <MessageActions
         markdown={turn.assistantMessage?.text ?? ''}
         plainText={plainText}
         onRegenerate={onRegenerate}
         onDelete={onDelete}
         onCopyPair={onCopyPair}
-      />
+      />}
     </div>
   )
 })
+
+/** 「复制为纯文本」用的正文；与 AssistantMessageView 内部同源，轨迹回合把操作条挪出去后照样能用。 */
+export function assistantPlainText(turn: ConversationTurn): string {
+  return blocksToPlainText(parseBlocks(turn.assistantMessage?.text ?? '', turn.id))
+}

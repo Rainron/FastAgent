@@ -1,5 +1,5 @@
 import { RUN_CONFLICT_MESSAGE } from '../../shared/active-runs'
-import type { AgentEvent, ApprovalDecision } from '../../shared/types'
+import type { AgentEvent, ApprovalDecision, Attachment } from '../../shared/types'
 import { PauseGate } from '../agent/pause-gate'
 import { checkConversationBudget } from '../agent/run-budget'
 import { buildResumePrompt, isResumable } from '../agent/run-resume'
@@ -143,8 +143,30 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
     console.info('[run-timing]', { runId, conversationId: input.conversationId, turnId: turn.id, phase: 'ack', sendMs: acceptedAt - sendStartedAt })
     return { runId, turnId: turn.id, turn }
   })
+  /**
+   * 运行中插队：消息在当前这一步工具跑完、下一次调模型之前进入同一轮上下文。
+   *
+   * 拿不到会话运行时（还在初始化、或走的是直连快问通道）时不报错，返回 delivered=false，
+   * 由渲染层退回本地排队——那条路仍会在整轮结束后把消息发出去。
+   */
+  handle('chat:steer', async (_event, input: { runId: string; conversationId: string; text: string; attachments?: Attachment[] }) => {
+    const namespace = ctx.requireNamespace()
+    const run = ctx.activeRuns.get(input.runId)
+    if (!run || run.namespace !== namespace || run.conversationId !== input.conversationId) return { delivered: false }
+    const runtime = ctx.conversationRuntimeCache.peek(ctx.conversationRuntimeKey(namespace, input.conversationId))
+    if (!runtime) return { delivered: false }
+    const attachments = archiveAttachments(ctx.appPaths.attachmentsDir, input.conversationId, input.attachments || [], ctx.settings)
+    const delivered = await runtime.pi.steer(input.text, attachments)
+    if (delivered) breadcrumb('run', `steer ${input.runId}`)
+    return { delivered }
+  })
   handle('chat:cancel', (_event, runId: string) => {
     breadcrumb('run', `cancel ${runId}`)
+    // 未投递的插队消息随取消一并退还，交给渲染层回填输入框：用户的字不能因为点停止就没了。
+    const run = ctx.activeRuns.get(runId)
+    const pending = run
+      ? ctx.conversationRuntimeCache.peek(ctx.conversationRuntimeKey(run.namespace, run.conversationId))?.pi.clearQueue()
+      : undefined
     ctx.activeRunCancels.get(runId)?.()
     ctx.activeRunCancels.delete(runId)
     // 暂停中的运行也要能取消：先放行闸门，abort 之后的收尾才跑得下去。
@@ -152,6 +174,7 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
     ctx.runPauseGates.delete(runId)
     ctx.activeRuns.get(runId)?.controller.abort()
     ctx.activeRuns.delete(runId)
+    return { pending: [...(pending?.steering ?? []), ...(pending?.followUp ?? [])] }
   })
   /**
    * 暂停 / 继续。

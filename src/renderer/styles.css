@@ -8,50 +8,50 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   /* ===== 原型设计令牌（暖纸色体系）===== */
-  --bg: #faf8f3;
-  --bg-side: #f3f0e8;
-  --bg-side-2: #efebe1;
-  --surface-2: #fbfaf6;
-  --surface-3: #f5f2ea;
-  --accent-2: #326b53;
-  --accent-soft: #e7f0eb;
-  --accent-line: #cbdfd4;
-  --shadow-1: 0 1px 2px rgba(48, 40, 26, .04), 0 1px 3px rgba(48, 40, 26, .05);
-  --shadow-2: 0 2px 4px rgba(48, 40, 26, .04), 0 6px 16px -6px rgba(48, 40, 26, .1);
-  --shadow-3: 0 8px 24px -8px rgba(48, 40, 26, .18), 0 2px 6px rgba(48, 40, 26, .06);
+  --bg: #ffffff;
+  --bg-side: #f3f3f6;
+  --bg-side-2: #e7e8ea;
+  --surface-2: #f9f9fa;
+  --surface-3: #f3f3f6;
+  --accent-2: #5a9af8;
+  --accent-soft: #e9eff9;
+  --accent-line: #c7dafb;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .04), 0 1px 3px rgba(0, 0, 0, .05);
+  --shadow-2: 0 1px 2px rgba(0, 0, 0, .04), 0 6px 16px -6px rgba(0, 0, 0, .1);
+  --shadow-3: 0 8px 24px -8px rgba(0, 0, 0, .16), 0 2px 6px rgba(0, 0, 0, .05);
   --r-sm: 6px; --r-md: 9px; --r-lg: 13px; --r-xl: 18px;
   --ease: cubic-bezier(.2, .8, .2, 1);
   /* ===== 旧变量名别名映射：未逐一改造的样式先吃到新色 ===== */
-  --canvas: #faf8f3;
-  --sidebar: #f3f0e8;
+  --canvas: #ffffff;
+  --sidebar: #f3f3f6;
   --surface: #ffffff;
-  --surface-soft: #f5f2ea;
-  --hover: #efebe1;
-  --text-primary: #22201c;
+  --surface-soft: #f3f3f6;
+  --hover: #e7e8ea;
+  --text-primary: #1a1c1f;
   /* 对话主区正文单独一档：深色下比 UI 文字再暗一点，长文才不刺眼 */
   --text-body: var(--text-primary);
-  --text-secondary: #6d665a;
-  --text-tertiary: #9c9486;
-  --border: #e7e2d5;
-  --border-strong: #dad3c2;
+  --text-secondary: #55575b;
+  --text-tertiary: #8e8e90;
+  --border: #e5e5e7;
+  --border-strong: #dadadd;
   /* 窗口外沿两层：edge 是贴住系统圆角的收边暗线，highlight 是顶面反光，缺一层就变成一条死板的描边 */
-  --frame-edge: rgba(48, 40, 26, .16);
+  --frame-edge: rgba(0, 0, 0, .14);
   --frame-highlight: rgba(255, 255, 255, .75);
-  --accent-tech: #3e7f63;
-  --accent-calm: #326b53;
-  --success: #3e7f63;
-  --warning: #b87333;
-  --danger: #b4453a;
-  --info: #3c6fa8;
-  --shadow-popover: 0 8px 24px -8px rgba(48, 40, 26, .18), 0 2px 6px rgba(48, 40, 26, .06);
+  --accent-tech: #3b86f7;
+  --accent-calm: #2c67c5;
+  --success: #2f9e6e;
+  --warning: #e25507;
+  --danger: #d14343;
+  --info: #3b86f7;
+  --shadow-popover: 0 8px 24px -8px rgba(0, 0, 0, .16), 0 2px 6px rgba(0, 0, 0, .05);
   /* 输入框专用材质：接触阴影撞住体积，环境阴影撞出悬浮，内高光补顶面反光 */
-  --shadow-composer: 0 2px 4px rgba(48, 40, 26, .04), 0 6px 16px -6px rgba(48, 40, 26, .1);
-  --shadow-composer-held: 0 1px 2px rgba(48, 40, 26, .04), 0 4px 12px -4px rgba(48, 40, 26, .08);
-  --brand: #3e7f63;
-  --brand-hover: #326b53;
-  --brand-active: #2c6049;
-  --auth-canvas: #faf8f3;
-  --auth-border: #e7e2d5;
+  --shadow-composer: 0 1px 2px rgba(0, 0, 0, .04), 0 6px 20px -8px rgba(0, 0, 0, .1);
+  --shadow-composer-held: 0 1px 2px rgba(0, 0, 0, .04), 0 4px 12px -4px rgba(0, 0, 0, .08);
+  --brand: #3b86f7;
+  --brand-hover: #2c67c5;
+  --brand-active: #2558ad;
+  --auth-canvas: #ffffff;
+  --auth-border: #e5e5e7;
   /* 能力 / 插件共用的状态色 token：同一语义状态全应用只允许一种颜色 */
   --status-ok: var(--success);
   --status-warn: var(--warning);
@@ -64,44 +64,44 @@
 :root[data-theme="dark"] {
   color: #edeae2;
   background: #201f1d;
-  --bg: #201f1d;
-  --bg-side: #252421;
-  --bg-side-2: #2b2925;
-  --surface-2: #2f2d2a;
-  --surface-3: #35332f;
-  --accent-2: #7abf9c;
-  --accent-soft: #263931;
-  --accent-line: #344c40;
+  --bg: #1f1f21;
+  --bg-side: #171719;
+  --bg-side-2: #2a2a2d;
+  --surface-2: #2a2a2d;
+  --surface-3: #303033;
+  --accent-2: #7fb0fa;
+  --accent-soft: #1c2a42;
+  --accent-line: #2a3f63;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, .3);
   --shadow-2: 0 2px 4px rgba(0, 0, 0, .25), 0 8px 20px -8px rgba(0, 0, 0, .5);
   --shadow-3: 0 10px 30px -10px rgba(0, 0, 0, .7), 0 2px 6px rgba(0, 0, 0, .4);
-  --canvas: #201f1d;
-  --sidebar: #252421;
-  --surface: #292824;
-  --surface-soft: #2f2d2a;
-  --hover: #35332f;
-  --text-primary: #edeae2;
-  --text-body: #b6b0a4;
-  --text-secondary: #a39b8d;
-  --text-tertiary: #77705f;
-  --border: #3d3933;
-  --border-strong: #4b463e;
+  --canvas: #1f1f21;
+  --sidebar: #171719;
+  --surface: #262629;
+  --surface-soft: #303033;
+  --hover: #2a2a2d;
+  --text-primary: #ececee;
+  --text-body: #b4b4b8;
+  --text-secondary: #a0a0a5;
+  --text-tertiary: #75757a;
+  --border: #333336;
+  --border-strong: #404044;
   --frame-edge: rgba(0, 0, 0, .55);
-  --frame-highlight: rgba(255, 255, 255, .07);
-  --accent-tech: #63ac88;
-  --accent-calm: #63ac88;
-  --success: #63ac88;
-  --warning: #d9964f;
-  --danger: #d46b5f;
-  --info: #78aee0;
+  --frame-highlight: rgba(255, 255, 255, .06);
+  --accent-tech: #4a90f7;
+  --accent-calm: #7fb0fa;
+  --success: #4fbf8b;
+  --warning: #f07a2e;
+  --danger: #e5675c;
+  --info: #4a90f7;
   --shadow-popover: 0 10px 30px -10px rgba(0, 0, 0, .7), 0 2px 6px rgba(0, 0, 0, .4);
   --shadow-composer: 0 2px 4px rgba(0, 0, 0, .25), 0 8px 20px -8px rgba(0, 0, 0, .5);
   --shadow-composer-held: 0 1px 2px rgba(0, 0, 0, .2), 0 6px 16px -6px rgba(0, 0, 0, .4);
-  --brand: #63ac88;
-  --brand-hover: #7abf9c;
-  --brand-active: #63ac88;
-  --auth-canvas: #201f1d;
-  --auth-border: #3d3933;
+  --brand: #4a90f7;
+  --brand-hover: #7fb0fa;
+  --brand-active: #4a90f7;
+  --auth-canvas: #1f1f21;
+  --auth-border: #333336;
 }
 
 /*
@@ -111,31 +111,31 @@
  */
 html[data-theme="light"][data-surface-level="dim"] {
   background: #f4f2ed;
-  --bg: #f4f2ed; --bg-side: #edeae2; --bg-side-2: #e9e5db; --surface-2: #f5f4f0; --surface-3: #efece4;
-  --canvas: #f4f2ed; --sidebar: #edeae2; --surface: #faf9f5; --surface-soft: #efece4; --hover: #e9e5db;
-  --border: #e1dccf; --border-strong: #d4cdbc; --accent-soft: #e1eae5; --accent-line: #c5d9ce;
-  --auth-canvas: #f4f2ed; --auth-border: #e1dccf;
+  --bg: #fafafa; --bg-side: #ededf0; --bg-side-2: #e2e3e5; --surface-2: #f5f5f6; --surface-3: #ededf0;
+  --canvas: #fafafa; --sidebar: #ededf0; --surface: #fdfdfd; --surface-soft: #ededf0; --hover: #e2e3e5;
+  --border: #e2e2e4; --border-strong: #d5d5d8;
+  --auth-canvas: #fafafa; --auth-border: #e2e2e4;
 }
 html[data-theme="light"][data-surface-level="bright"] {
   background: #fffdf8;
-  --bg: #fffdf8; --bg-side: #f8f5ed; --bg-side-2: #f4f0e6; --surface-2: #fffffb; --surface-3: #faf7ef;
-  --canvas: #fffdf8; --sidebar: #f8f5ed; --surface: #ffffff; --surface-soft: #faf7ef; --hover: #f4f0e6;
-  --border: #ece7da; --border-strong: #dfd8c7; --accent-soft: #ecf5f0; --accent-line: #d0e4d9;
-  --auth-canvas: #fffdf8; --auth-border: #ece7da;
+  --bg: #ffffff; --bg-side: #f8f8fa; --bg-side-2: #ececee; --surface-2: #fbfbfc; --surface-3: #f7f7f8;
+  --canvas: #ffffff; --sidebar: #f8f8fa; --surface: #ffffff; --surface-soft: #f7f7f8; --hover: #ececee;
+  --border: #ebebed; --border-strong: #e0e0e3;
+  --auth-canvas: #ffffff; --auth-border: #ebebed;
 }
 html[data-theme="dark"][data-surface-level="dim"] {
   background: #161513;
-  --bg: #161513; --bg-side: #1b1a17; --bg-side-2: #211f1b; --surface-2: #252320; --surface-3: #2b2925;
-  --canvas: #161513; --sidebar: #1b1a17; --surface: #1f1e1a; --surface-soft: #252320; --hover: #2b2925;
-  --border: #332f29; --border-strong: #413c34; --accent-soft: #1e3129; --accent-line: #2c4438;
-  --auth-canvas: #161513; --auth-border: #332f29;
+  --bg: #19191b; --bg-side: #121214; --bg-side-2: #262629; --surface-2: #232326; --surface-3: #28282b;
+  --canvas: #19191b; --sidebar: #121214; --surface: #1e1e21; --surface-soft: #28282b; --hover: #262629;
+  --border: #2c2c2f; --border-strong: #38383c;
+  --auth-canvas: #19191b; --auth-border: #2c2c2f;
 }
 html[data-theme="dark"][data-surface-level="bright"] {
   background: #2a2927;
-  --bg: #2a2927; --bg-side: #2f2e2b; --bg-side-2: #35332f; --surface-2: #393734; --surface-3: #3f3d39;
-  --canvas: #2a2927; --sidebar: #2f2e2b; --surface: #33322e; --surface-soft: #393734; --hover: #3f3d39;
-  --border: #47433d; --border-strong: #555048; --accent-soft: #2e4139; --accent-line: #3c5448;
-  --auth-canvas: #2a2927; --auth-border: #47433d;
+  --bg: #28282b; --bg-side: #1f1f22; --bg-side-2: #37373a; --surface-2: #333336; --surface-3: #39393c;
+  --canvas: #28282b; --sidebar: #1f1f22; --surface: #2e2e31; --surface-soft: #39393c; --hover: #37373a;
+  --border: #404044; --border-strong: #4c4c50;
+  --auth-canvas: #28282b; --auth-border: #404044;
 }
 /* 对话正文与底色的对比强度；standard 已写在各自主题的 :root 块里。深色下更亮即更强，浅色下更暗才更强 */
 html[data-theme="light"][data-body-contrast="soft"] { --text-body: #4a463d; }

@@ -105,6 +105,11 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     // 终态带上思考全文：渲染进程的实时 turn 是自己拼的，拿不到主进程累积值，靠这个补齐
     if (thinkingText && projection.terminal) fullEvent.thinkingText = thinkingText
     if (thinkingSegments.length && projection.terminal) fullEvent.thinkingSegments = [...thinkingSegments]
+    // 插队队列快照只服务界面上的「插队中」标记，落库没有价值：投递结果由 user_steer 记录。
+    if (event.type === 'steer_update') {
+      eventBatcher.emit(fullEvent)
+      return
+    }
     // 流式增量只推给渲染进程：逐 token 落库既是每字一次写盘，又让助手文本在
     // messageTokens 之外被 toolTokens 重复计一遍。完整文本由终态事件收尾。
     if (event.type === 'token' || event.type === 'thinking') {

@@ -1,7 +1,7 @@
 import type { ExecutionEventState, ExecutionNodeStatus, ExecutionSnapshot, ExecutionStepState, TodoItem, TodoStatus } from '../../shared/types'
 
 export type { ExecutionNodeStatus } from '../../shared/types'
-export type ExecutionEventType = 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'assistant_content_started' | 'run_completed' | 'run_failed' | 'run_cancelled'
+export type ExecutionEventType = 'thinking_started' | 'thinking_ended' | 'tool_started' | 'tool_result' | 'assistant_content_started' | 'user_steer' | 'run_completed' | 'run_failed' | 'run_cancelled'
 
 export type ExecutionStep = ExecutionStepState
 

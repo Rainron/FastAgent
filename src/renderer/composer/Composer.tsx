@@ -30,7 +30,7 @@ import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidat
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
-export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, onRunShellCommand, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
+export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onSteer, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, onRunShellCommand, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout }: ComposerProps) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentPolicy, setAttachmentPolicy] = useState<AttachmentPolicy>(DEFAULT_ATTACHMENT_POLICY)
@@ -242,11 +242,17 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     }
     // `!!` 是「我就是要发一条 ! 开头的消息」，发出前去掉转义用的那个感叹号。
     const outgoing = unescapeShellCommandInput(value, Boolean(onRunShellCommand))
-    // 运行中不再拦截发送：问题进队列，回合结束后自动发出。
+    // 运行中不拦截发送：优先插进当前这一轮（下一次调模型前生效），插不进去才退回本地排队。
     if (runId) {
       promptHistoryRef.current.record(value)
-      onEnqueue(outgoing, attachments)
+      const outgoingAttachments = attachments
       setEditorText(''); setMention(null); setAttachments([])
+      const steered = await onSteer(outgoing, outgoingAttachments)
+      if (steered) {
+        onNotice('已插入当前任务，下一步开始前生效')
+        return
+      }
+      onEnqueue(outgoing, outgoingAttachments)
       onNotice('已加入排队，当前回复完成后自动发送')
       return
     }
@@ -613,9 +619,12 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     <div className="composer-top">
       {queue.length > 0 && <div className="composer-queue">
         {queue.map((item, index) => <div className={`queue-item${removingQueueIds.includes(item.id) ? ' removing' : ''}`} key={item.id}>
-          <span className="queue-index">排队 {index + 1}</span>
+          <span className="queue-index">{item.kind === 'steer' ? '插队' : '排队'} {index + 1}</span>
           <span className="queue-text" title={item.text}>{item.text}{item.attachments.length > 0 ? `（${item.attachments.length} 个附件）` : ''}</span>
-          <button onClick={() => requestRemoveQueued(item.id)} aria-label="撤销排队" title="撤销排队"><X size={12} /></button>
+          {/* 插队项已经交给主进程，撤不回来：投递时机由引擎决定，这里只能等它送达。 */}
+          {item.kind === 'steer'
+            ? <span className="queue-hint" title="已交给当前任务，下一步开始前生效">等待送达</span>
+            : <button onClick={() => requestRemoveQueued(item.id)} aria-label="撤销排队" title="撤销排队"><X size={12} /></button>}
         </div>)}
       </div>}
       {attachments.length > 0 && <div className="attach-strip">

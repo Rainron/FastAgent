@@ -1,5 +1,5 @@
 import { MAX_TRACE_EXCERPT_LINES, MIN_TRACE_EXCERPT_LINES, normalizeTraceDisplay } from '../../shared/trace-display'
-import type { AppSettings, TraceDisplaySettings as TraceSettings, TraceLabelStyle, TraceTimerPlacement } from '../../shared/types'
+import type { AppSettings, TraceDefaultExpand, TraceDisplaySettings as TraceSettings, TraceLabelStyle, TraceTimerPlacement } from '../../shared/types'
 
 /** 执行轨迹的展示偏好：只影响对话区怎么画轨迹，不改变 Agent 的执行与记录。 */
 export function TraceDisplaySettings({ settings, onChange }: {
@@ -15,11 +15,19 @@ export function TraceDisplaySettings({ settings, onChange }: {
   return <section className="settings-panel" aria-labelledby="settings-trace-display">
     <div className="settings-section-heading"><div><h2 id="settings-trace-display">执行轨迹</h2><p>Agent 回合里动作摘要、用时与工具详情的展示方式。</p></div></div>
     <div className="settings-row">
-      <div><strong>用时与 token 位置</strong><span>默认放在轨迹底部一行（用时 · token · 当前动作）。选顶部则回到状态行形态，两处都要会重复显示用时。</span></div>
+      <div><strong>执行过程默认状态</strong><span>收起时过程头一行实时显示当前动作（如「正在读取 App.tsx」），子代理始终列在过程头下方。点过程头可随时展开或收起。</span></div>
+      <select value={trace.defaultExpand} onChange={(event) => patch({ defaultExpand: event.target.value as TraceDefaultExpand })} aria-label="执行过程默认状态">
+        <option value="collapsed">始终收起</option>
+        <option value="running">执行中展开，完成后收起</option>
+        <option value="always">始终展开</option>
+      </select>
+    </div>
+    <div className="settings-row">
+      <div><strong>用时与 token 位置</strong><span>默认放在回答下方的收尾行（用时 · token · 结果）。选顶部则跟在过程头那一行后面，两处都要会重复显示用时。展开执行过程的入口始终在过程头，不受这项影响。</span></div>
       <select value={trace.timerPlacement} onChange={(event) => patch({ timerPlacement: event.target.value as TraceTimerPlacement })} aria-label="用时与 token 位置">
-        <option value="bottom">底部一行</option>
-        <option value="top">顶部状态行</option>
-        <option value="both">顶部与底部都显示</option>
+        <option value="bottom">回答下方的收尾行</option>
+        <option value="top">顶部过程头</option>
+        <option value="both">两处都显示</option>
       </select>
     </div>
     <div className="settings-row">
@@ -73,6 +81,13 @@ export function TraceDisplaySettings({ settings, onChange }: {
       <div><strong>轨迹里的文件可点开</strong><span>在读取预览上给一个「打开」入口，点了在右侧资源面板预览该文件。默认关闭，避免顶掉正在看的内容。</span></div>
       <label className="switch-row">
         <input type="checkbox" checked={trace.openFileFromTrace} onChange={(event) => patch({ openFileFromTrace: event.target.checked })} aria-label="轨迹里的文件可点开" />
+        <span className="switch-visual" />
+      </label>
+    </div>
+    <div className="settings-row">
+      <div><strong>自动打开网页预览</strong><span>Agent 生成网页并调用预览后，右侧面板直接打开渲染结果。关闭后只在对话里显示预览卡片，点了再看。</span></div>
+      <label className="switch-row">
+        <input type="checkbox" checked={trace.autoOpenPreview} onChange={(event) => patch({ autoOpenPreview: event.target.checked })} aria-label="自动打开网页预览" />
         <span className="switch-visual" />
       </label>
     </div>

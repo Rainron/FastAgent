@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import type { ToolCallRecord } from '../../shared/types'
+import type { ToolCallRecord, TraceLabelStyle } from '../../shared/types'
 import type { ToolCallGroup } from '../activity'
 import { toolCallBlocks } from '../ai-response/message-normalizer'
 import { MessageBlockRenderer } from '../ai-response/MessageBlockRenderer'
 import { ToolCallBlockRenderer } from '../ai-response/blocks/ToolCallBlock'
 import type { ToolCallBlock } from '../ai-response/blocks'
 import { displayPathValue } from '../ai-response/path-display'
-import type { TraceToolStatus } from '../execution-trace'
+import type { TraceDiffStat, TraceToolStatus } from '../execution-trace'
+import { useTraceDisplay } from './trace-display-context'
+import { ToolReadPreview } from './ToolReadPreview'
 
 const toolTitles: Record<string, string> = {
   read: '读取文件',
@@ -21,6 +23,27 @@ const toolTitles: Record<string, string> = {
   powershell: '运行命令',
   question: '提问',
   todowrite: '更新待办'
+}
+
+/** 英文文案下的工具标题；与执行轨迹摘要里的动词同源，一眼能对上是哪一步。 */
+const toolTitlesEn: Record<string, string> = {
+  read: 'Read',
+  grep: 'Search',
+  find: 'Find',
+  ls: 'List',
+  edit: 'Updated',
+  write: 'Created',
+  patch: 'Patched',
+  bash: 'Ran',
+  powershell: 'Ran',
+  question: 'Asked',
+  todowrite: 'Planned'
+}
+
+/** compact 是既有形态，沿用中文标题；只有显式选英文时才换。 */
+function toolTitle(toolName: string, style: TraceLabelStyle): string {
+  if (style === 'en') return toolTitlesEn[toolName] ?? toolName
+  return toolTitles[toolName] ?? toolName
 }
 
 /** 正文已经把这些字段排好版了，入参里再列一遍只是噪音。 */
@@ -42,8 +65,12 @@ function formatArgValue(value: unknown, workspaceRoot: string | null): string {
   return JSON.stringify(value, null, 2) ?? ''
 }
 
-/** 入参按键值表排版；默认收起，需要核对时再展开，长值靠换行与局部滚动撑住。 */
-function ToolArguments({ toolName, args, workspaceRoot }: { toolName: string; args: unknown; workspaceRoot: string | null }) {
+/**
+ * 入参按键值表排版。
+ * `flat` 时直接平铺：卡片本身已经是展开态，再嵌一层折叠等于要点两次才看得到路径。
+ * 关掉平铺则保留旧的二级折叠，长值靠换行与局部滚动撑住。
+ */
+function ToolArguments({ toolName, args, workspaceRoot, flat }: { toolName: string; args: unknown; workspaceRoot: string | null; flat: boolean }) {
   const [open, setOpen] = useState(false)
   const entries = useMemo(() => {
     if (!args || typeof args !== 'object' || Array.isArray(args)) return []
@@ -52,14 +79,16 @@ function ToolArguments({ toolName, args, workspaceRoot }: { toolName: string; ar
   }, [toolName, args])
 
   if (!entries.length) return null
+  const list = <dl className="tool-args-list">
+    {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{formatArgValue(value, workspaceRoot)}</dd></div>)}
+  </dl>
+  if (flat) return <div className="tool-args flat open">{list}</div>
   return (
     <div className={`tool-args ${open ? 'open' : ''}`}>
       <button type="button" className="tool-args-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <ChevronDown size={12} />入参 {entries.length} 项
       </button>
-      {open && <dl className="tool-args-list">
-        {entries.map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{formatArgValue(value, workspaceRoot)}</dd></div>)}
-      </dl>}
+      {open && list}
     </div>
   )
 }
@@ -69,6 +98,20 @@ export interface ToolCallCardSummary {
   input?: string | null
   status?: TraceToolStatus
   durationMs?: number | null
+  /** 本次调用改动的行数；来自轨迹聚合的 file_changed，没有改动时为 null。 */
+  diff?: TraceDiffStat | null
+}
+
+/**
+ * read 的目标路径：优先取已落库的入参，拿不到（记录还没写完）时退回摘要里的入参。
+ * 摘要入参已经过 displayPathValue 收敛，主进程读文件时按工作区相对路径解析，两者都能用。
+ */
+function readTargetPath(args: unknown, fallback: string | null): string | null {
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const value = (args as Record<string, unknown>).path
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return fallback && fallback.trim() ? fallback : null
 }
 
 function statusToBlockStatus(status: TraceToolStatus): NonNullable<ToolCallBlock['status']> {
@@ -89,6 +132,7 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
   const [record, setRecord] = useState<ToolCallRecord | null>(null)
   const [childCalls, setChildCalls] = useState<ToolCallRecord[]>([])
   const [lookupFailed, setLookupFailed] = useState(false)
+  const display = useTraceDisplay()
 
   useEffect(() => {
     if (!open || record || lookupFailed) return
@@ -99,7 +143,7 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
     return () => { alive = false }
   }, [open, record, lookupFailed, turnId, group.toolCallId])
 
-  const title = toolTitles[group.toolName] ?? group.toolName
+  const title = toolTitle(group.toolName, display.labelStyle)
   const root = workspaceRoot ?? null
   const blocks = useMemo(() => toolCallBlocks(group, record, title, root), [group, record, title, root])
   const rawInput = summary?.input !== undefined ? summary.input : (blocks[0] as ToolCallBlock).input
@@ -113,16 +157,22 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
     ? summary.durationMs
     : group.events.find((event) => event.type === 'tool_result')?.durationMs ?? record?.durationMs ?? null
 
+  // 读文件/读图的展开区由 ToolReadPreview 承担；它已经把内容画出来了，再叠一份结果 block 就是重复。
+  const readPath = group.toolName === 'read' ? readTargetPath(record?.arguments, summary?.input ?? null) : null
+  const readPreviewOn = Boolean(readPath) && (display.inlineImagePreview || display.textExcerpt)
+  const detailBlocks = readPreviewOn ? body.filter((block) => block.type !== 'code') : body
+
   return (
     <div className={`tool-call-card ${head.status ?? 'completed'} ${open ? 'open' : ''}`}>
       <button type="button" className="tool-call-summary" onClick={() => setOpen((value) => !value)} aria-expanded={open} title={open ? '收起' : '展开'}>
-        <ToolCallBlockRenderer block={head} durationMs={durationMs} />
+        <ToolCallBlockRenderer block={head} durationMs={durationMs} diff={display.showDiffStats ? summary?.diff ?? null : null} />
       </button>
       {open && (
         <div className="tool-call-detail">
-          {body.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
-          {!record && !body.length && (lookupFailed ? <div className="tool-call-empty">工具调用记录不可用</div> : <div className="tool-call-empty">记录尚未落库，稍后自动加载…</div>)}
-          {record && <ToolArguments toolName={group.toolName} args={record.arguments} workspaceRoot={root} />}
+          {readPath && readPreviewOn && <ToolReadPreview path={readPath} workspaceRoot={root} />}
+          {detailBlocks.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
+          {!record && !body.length && !readPreviewOn && (lookupFailed ? <div className="tool-call-empty">工具调用记录不可用</div> : <div className="tool-call-empty">记录尚未落库，稍后自动加载…</div>)}
+          {record && <ToolArguments toolName={group.toolName} args={record.arguments} workspaceRoot={root} flat={display.flatToolArgs} />}
           {childCalls.length > 0 && <div className="tool-call-children"><div className="tool-call-children-title">Sub-agent 工具调用</div>{childCalls.map((child) => <ToolCallCard key={child.id} turnId={turnId} group={{ toolCallId: child.id, toolName: child.toolName, events: [] }} summary={{ input: null, status: child.status === 'success' ? 'done' : child.status === 'running' || child.status === 'waiting_permission' ? 'running' : 'failed', durationMs: child.durationMs }} workspaceRoot={root} />)}</div>}
         </div>
       )}

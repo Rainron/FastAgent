@@ -38,8 +38,8 @@ function StatusIcon({ status }: { status: ToolCallBlockData['status'] }) {
   return <Check size={13} className="tool-call-ok" />
 }
 
-/** 单条工具调用的摘要行：图标 + 标题 + 入参 + 来源；展开/收起由外层把整行包成按钮实现。 */
-function ToolCallBlockView({ block, durationMs }: { block: ToolCallBlockData; durationMs?: number | null }) {
+/** 单条工具调用的摘要行：图标 + 标题 + 入参 + 增删行数 + 来源；展开/收起由外层把整行包成按钮实现。 */
+function ToolCallBlockView({ block, durationMs, diff }: { block: ToolCallBlockData; durationMs?: number | null; diff?: { additions: number; deletions: number } | null }) {
   const Icon = toolIcons[block.toolName] ?? Wrench
   const source = sourceLabels[block.source]
   return (
@@ -47,6 +47,7 @@ function ToolCallBlockView({ block, durationMs }: { block: ToolCallBlockData; du
       <span className={`tool-call-icon ${block.status ?? 'completed'}`}><Icon size={13} /></span>
       <span className="tool-call-title" title={block.title}>{block.title}</span>
       {block.input && <span className="tool-call-input" title={block.input}>{block.input}</span>}
+      {diff && <span className="trace-diff-stat"><span className="trace-diff-add">+{diff.additions}</span><span className="trace-diff-del">-{diff.deletions}</span></span>}
       {source && <span className="tool-call-source">{source}</span>}
       {durationMs !== undefined && durationMs !== null && <span className="tool-call-duration"><Clock3 size={10} />{durationMs}ms</span>}
       {block.permissionResult && <span className="tool-call-permission">{permissionLabel(block.permissionResult)}</span>}
