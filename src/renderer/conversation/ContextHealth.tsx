@@ -7,6 +7,7 @@ import type { CompactionState } from './compaction-state'
 import type { ContextPolicy, ModelUsageSummary } from '../../shared/types'
 import { compactionSummaryLabel, contextHealthView } from './context-health-view'
 import { ModelCacheUsage } from './ModelCacheUsage'
+import { SubscriptionLimits, useSubscriptionLimits } from './SubscriptionLimits'
 import './context-usage.css'
 
 export interface ContextHealthData {
@@ -60,6 +61,7 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
 }) {
   const [open, setOpen] = useState(false)
   const [detailOpen, setDetailOpen] = useState(false)
+  const limits = useSubscriptionLimits()
   const ref = useRef<HTMLDivElement>(null)
   // 触发器可能落在很窄的输入框左端，280px 的浮层右对齐后会整个长到窗口外
   const popoverRef = useRef<HTMLDivElement>(null)
@@ -100,6 +102,7 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
         {Boolean(data.compactionCount) && onOpenHistory && <ChevronRight size={12} />}
       </button>
 
+      <SubscriptionLimits snapshots={limits} />
       <ModelCacheUsage usage={data.usage} pending={data.usagePending} />
       <button className={`context-health-detail-toggle${detailOpen ? ' open' : ''}`} onClick={() => setDetailOpen((value) => !value)} aria-expanded={detailOpen}>
         <ChevronRight size={12} />占用明细

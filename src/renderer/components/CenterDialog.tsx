@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { useEventCallback } from '../use-event-callback'
 
@@ -46,16 +47,21 @@ export function CenterDialog({ title, subtitle, icon, busy = false, onClose, chi
     }
   }, [close])
 
-  return <div ref={overlayRef} tabIndex={-1} className="approval-overlay" role="dialog" aria-modal="true" aria-label={title}
-    onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <div className="approval-dialog center-dialog">
-      <div className="approval-header">
-        {icon && <span className="approval-icon">{icon}</span>}
-        <div className="approval-heading"><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div>
-        <button type="button" className="icon-button" aria-label="关闭" title="关闭（Esc）" onClick={onClose} disabled={busy}><X size={14} /></button>
+  return createPortal(
+    <div className="settings-redesign settings-dialog-portal">
+      <div ref={overlayRef} tabIndex={-1} className="approval-overlay" role="dialog" aria-modal="true" aria-label={title}
+        onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
+        <div className="approval-dialog center-dialog">
+          <div className="approval-header">
+            {icon && <span className="approval-icon">{icon}</span>}
+            <div className="approval-heading"><strong>{title}</strong>{subtitle && <small>{subtitle}</small>}</div>
+            <button type="button" className="icon-button" aria-label="关闭" title="关闭（Esc）" onClick={onClose} disabled={busy}><X size={14} /></button>
+          </div>
+          <div className="approval-body center-dialog-body">{children}</div>
+          {footer && <div className="approval-actions">{footer}</div>}
+        </div>
       </div>
-      <div className="approval-body center-dialog-body">{children}</div>
-      {footer && <div className="approval-actions">{footer}</div>}
-    </div>
-  </div>
+    </div>,
+    document.body
+  )
 }

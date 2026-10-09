@@ -2,10 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { CredentialSynchronizationError, ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { Api, CredentialStore, Model } from '@earendil-works/pi-ai'
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai'
-import type { DiscoveredConnectionModel, ModelConnectionDraft, ModelConnectionInput, ModelConnectionsApi, ModelLoginState } from '../shared/types'
+import type { DiscoveredConnectionModel, ModelConnectionArchiveSecret, ModelConnectionDraft, ModelConnectionInput, ModelConnectionsCoreApi, ModelConnectionsExportOptions, ModelConnectionsImportPlan, ModelLoginState } from '../shared/types'
 import { MODEL_PROVIDERS, modelProvider } from '../shared/model-providers'
 import type { ModelConnectionStore } from './local-store/model-connections'
 import { modelLoginError, modelLoginErrorDetail } from './model-login-error'
+import { modelBaseUrl, modelProtocolAdapter } from '../shared/model-protocols'
+import { archiveSecretAt, buildConnectionsArchive, connectionsArchiveNeedsPassphrase, readConnectionsArchive } from './model-connections-archive'
+import { uniqueConnectionName } from './model-connections-names'
 
 type LoginSession = { providerId: string; state: ModelLoginState; abort: AbortController; timer: ReturnType<typeof setTimeout>; ephemeral: boolean; openedUrl?: string; answer?: (value: string) => void; reject?: (error: Error) => void }
 
@@ -13,12 +16,12 @@ type LoginSession = { providerId: string; state: ModelLoginState; abort: AbortCo
 const LOGIN_DEFAULT_TIMEOUT_MS = 10 * 60_000
 const LOGIN_VENDOR_MAX_TIMEOUT_MS = 15 * 60_000
 const LOGIN_VENDOR_GRACE_MS = 30_000
-type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void; /** 登录失败的上游原文出口：界面只拿分类文案，排查要靠日志 */ onLoginFailed?: (input: { providerId: string; message: string; status?: number }) => void }
+type Dependencies = { fetch?: typeof fetch; createRuntime?: (credentials: CredentialStore) => Promise<ModelRuntime>; openExternal?: (url: string) => unknown; onChanged?: () => void; appVersion?: string; /** 登录失败的上游原文出口：界面只拿分类文案，排查要靠日志 */ onLoginFailed?: (input: { providerId: string; message: string; status?: number }) => void }
 type RuntimeModelCapabilities = Model<Api> & { thinkingDefault?: string; thinkingProfiles?: Record<string, unknown> | null }
 /** pi 静态目录里一个模型的规格，只取自动压缩与输出预算要用的两项。 */
 type ModelSpec = { contextWindow?: number; maxTokens?: number }
 
-export class ModelConnectionService implements ModelConnectionsApi {
+export class ModelConnectionService implements ModelConnectionsCoreApi {
   private readonly sessions = new Map<string, LoginSession>()
   private readonly runtimes = new Map<string, Promise<ModelRuntime>>()
   private catalogRuntime?: Promise<ModelRuntime>
@@ -27,12 +30,14 @@ export class ModelConnectionService implements ModelConnectionsApi {
   private readonly buildRuntime: (credentials: CredentialStore) => Promise<ModelRuntime>
   private readonly openExternal: (url: string) => unknown
   private readonly onChanged: () => void
+  private readonly appVersion?: string
   private readonly onLoginFailed: (input: { providerId: string; message: string; status?: number }) => void
 
   constructor(private readonly store: ModelConnectionStore, dependencies: Dependencies = {}) {
     this.fetch = dependencies.fetch ?? globalThis.fetch
     this.openExternal = dependencies.openExternal ?? (() => {})
     this.onChanged = dependencies.onChanged ?? (() => {})
+    this.appVersion = dependencies.appVersion
     this.onLoginFailed = dependencies.onLoginFailed ?? (() => {})
     this.buildRuntime = dependencies.createRuntime ?? ((credentials) => ModelRuntime.create({ credentials, modelsPath: null, refreshOnCreate: false, allowModelNetwork: false }))
   }
@@ -45,6 +50,70 @@ export class ModelConnectionService implements ModelConnectionsApi {
     this.runtimes.delete(id)
     this.store.remove(id)
     this.onChanged()
+  }
+
+  /**
+   * 导出勾选的连接。密钥只有在 secrets 不是 omit 时才从 store 解出来，
+   * 账号连接无论哪一档都不带凭据——刷新令牌泄露的代价高于重新登录一次。
+   */
+  exportConnections(options: ModelConnectionsExportOptions): string {
+    const selected = this.store.list().filter((connection) => options.ids.includes(connection.id))
+    if (!selected.length) throw new Error('请至少勾选一个模型服务')
+    const secretsByIndex: Record<string, ModelConnectionArchiveSecret> = {}
+    const connections = selected.map((connection, index) => {
+      if (options.secrets !== 'omit' && connection.authMode === 'api-key') {
+        const secret = this.store.apiKeySecrets(connection.id)
+        if (secret.apiKey || secret.headers) secretsByIndex[String(index)] = secret
+      }
+      const picked = options.modelIds?.[connection.id]
+      return {
+        providerId: connection.providerId,
+        name: connection.name,
+        authMode: connection.authMode,
+        baseUrl: connection.baseUrl,
+        protocol: connection.protocol,
+        models: this.store.connectionModels(connection.id).filter((model) => !picked || picked.includes(model.modelId)),
+        hasSecrets: false
+      }
+    })
+    return buildConnectionsArchive({ connections, secretsByIndex, secrets: options.secrets, passphrase: options.passphrase, appVersion: this.appVersion })
+  }
+
+  previewArchive(text: string, passphrase?: string) { return readConnectionsArchive(text, passphrase) }
+  archiveNeedsPassphrase(text: string) { return connectionsArchiveNeedsPassphrase(text) }
+
+  /** 按勾选落地。同名连接另存为副本，本地已有连接不受影响。 */
+  importConnections(text: string, plan: ModelConnectionsImportPlan): number {
+    const archive = readConnectionsArchive(text, plan.passphrase)
+    const taken = new Set(this.store.list().map((connection) => connection.name))
+    let saved = 0
+    for (const index of plan.indexes) {
+      const entry = archive.connections[index]
+      if (!entry) continue
+      const secret = archiveSecretAt(archive, index)
+      const name = uniqueConnectionName(entry.name, taken)
+      const picked = plan.modelIds?.[String(index)]
+      taken.add(name)
+      this.store.save({
+        providerId: entry.providerId,
+        name,
+        authMode: entry.authMode,
+        baseUrl: entry.baseUrl,
+        protocol: entry.protocol,
+        ...(secret.apiKey ? { apiKey: secret.apiKey } : {}),
+        ...(secret.headers ? { headers: secret.headers } : {}),
+        models: entry.models.filter((model) => !picked || picked.includes(model.modelId))
+      })
+      saved += 1
+    }
+    if (saved) this.onChanged()
+    return saved
+  }
+
+  /** 供界面回显已保存的 API Key；账号连接没有可回显的密钥。 */
+  revealApiKey(id: string): string {
+    if (this.store.metadata(id).authMode !== 'api-key') throw new Error('账号连接没有可查看的 API Key')
+    return this.store.apiKeySecrets(id).apiKey ?? ''
   }
 
   private runtime(id: string): Promise<ModelRuntime> {
@@ -84,7 +153,8 @@ export class ModelConnectionService implements ModelConnectionsApi {
     }
     const { metadata, secrets } = this.store.resolve(input)
     const headers = this.headers(metadata.protocol, secrets)
-    const url = metadata.protocol === 'anthropic' ? `${metadata.baseUrl.replace(/\/v1$/, '')}/v1/models` : `${metadata.baseUrl}/models`
+    const adapter = modelProtocolAdapter(metadata.protocol)
+    const url = adapter.modelsUrl(modelBaseUrl(metadata.protocol, metadata.providerId, metadata.baseUrl))
     try {
       const response = await this.fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(20_000) })
       if (!response.ok) throw new Error('request failed')
@@ -226,9 +296,9 @@ export class ModelConnectionService implements ModelConnectionsApi {
         if (result.stopReason === 'error' || result.stopReason === 'aborted') throw new Error('request failed')
       } else {
         const { metadata, secrets } = this.store.resolve(input)
-        const anthropic = metadata.protocol === 'anthropic'
+        const adapter = modelProtocolAdapter(metadata.protocol)
         const responses = metadata.protocol === 'openai-responses'
-        const url = anthropic ? `${metadata.baseUrl.replace(/\/v1$/, '')}/v1/messages` : `${metadata.baseUrl}/${responses ? 'responses' : 'chat/completions'}`
+        const url = adapter.chatUrl(modelBaseUrl(metadata.protocol, metadata.providerId, metadata.baseUrl))
         const body = responses ? { model: input.modelId, input: 'Reply OK.', max_output_tokens: 64 } : { model: input.modelId, messages: [{ role: 'user', content: 'Reply OK.' }], max_tokens: 64 }
         const response = await this.fetch(url, { method: 'POST', headers: this.headers(metadata.protocol, secrets), body: JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(30_000) })
         if (!response.ok) return { ok: false, error: `连接测试失败（HTTP ${response.status}），请检查模型、凭据和服务地址`, latencyMs: Date.now() - started }

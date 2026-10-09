@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent, RateLimitSnapshot } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -114,7 +114,12 @@ const api: FastAgentApi = {
     authState: (sessionId: string) => ipcRenderer.invoke('model-connections:auth-state', sessionId),
     answerLogin: (sessionId: string, value: string) => ipcRenderer.invoke('model-connections:answer-login', sessionId, value),
     cancelLogin: (sessionId: string) => ipcRenderer.invoke('model-connections:cancel-login', sessionId),
-    logout: (id: string) => ipcRenderer.invoke('model-connections:logout', id)
+    logout: (id: string) => ipcRenderer.invoke('model-connections:logout', id),
+    exportConnections: (options) => ipcRenderer.invoke('model-connections:export', options),
+    previewArchive: (passphrase?: string) => ipcRenderer.invoke('model-connections:import-preview', passphrase),
+    previewArchivePath: (path: string, passphrase?: string) => ipcRenderer.invoke('model-connections:import-preview-path', path, passphrase),
+    importConnections: (path: string, plan) => ipcRenderer.invoke('model-connections:import', path, plan),
+    revealApiKey: (id: string) => ipcRenderer.invoke('model-connections:reveal-key', id)
   },
   doctor: {
     run: () => ipcRenderer.invoke('doctor:run'),
@@ -212,7 +217,13 @@ const api: FastAgentApi = {
     markRead: (conversationId: string) => ipcRenderer.invoke('run-states:read', conversationId)
   },
   usage: {
-    overview: (window: ModelUsageWindow): Promise<ModelUsageOverview> => ipcRenderer.invoke('usage:overview', window)
+    overview: (window: ModelUsageWindow): Promise<ModelUsageOverview> => ipcRenderer.invoke('usage:overview', window),
+    limits: (): Promise<RateLimitSnapshot[]> => ipcRenderer.invoke('usage:limits'),
+    onLimitsChanged: (listener: (snapshots: RateLimitSnapshot[]) => void) => {
+      const handler = (_event: unknown, snapshots: RateLimitSnapshot[]) => listener(snapshots)
+      ipcRenderer.on('usage:limits-changed', handler)
+      return () => ipcRenderer.removeListener('usage:limits-changed', handler)
+    }
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),

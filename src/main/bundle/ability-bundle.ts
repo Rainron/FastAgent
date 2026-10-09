@@ -1,7 +1,7 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import { unzipSync, zipSync } from 'fflate'
 import type { BundleCli, BundleContents, BundleEntryMeta, BundleMcp, BundleSecretMode, BundleSkill, LocalMcpServerInput } from '../../shared/types'
 import { assertSafeSkillPath } from '../skill-registry'
+import { decryptSecret, encryptSecret, type EncryptedBlob } from './secret-box'
 
 export type { BundleCli, BundleContents, BundleEntryMeta, BundleMcp, BundleSecretMode, BundleSkill }
 
@@ -24,44 +24,8 @@ interface BundleManifest {
   cliTools: BundleCli[]
 }
 
-interface EncryptedBlob {
-  algorithm: 'aes-256-gcm'
-  kdf: 'scrypt'
-  salt: string
-  iv: string
-  tag: string
-  data: string
-}
-
 const encoder = new TextEncoder()
 const decoder = new TextDecoder('utf8')
-
-function encrypt(plaintext: string, passphrase: string): EncryptedBlob {
-  const salt = randomBytes(16)
-  const iv = randomBytes(12)
-  const key = scryptSync(passphrase, salt, 32)
-  const cipher = createCipheriv('aes-256-gcm', key, iv)
-  const data = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()])
-  return {
-    algorithm: 'aes-256-gcm',
-    kdf: 'scrypt',
-    salt: salt.toString('base64'),
-    iv: iv.toString('base64'),
-    tag: cipher.getAuthTag().toString('base64'),
-    data: data.toString('base64')
-  }
-}
-
-function decrypt(blob: EncryptedBlob, passphrase: string): string {
-  const decipher = createDecipheriv('aes-256-gcm', scryptSync(passphrase, Buffer.from(blob.salt, 'base64'), 32), Buffer.from(blob.iv, 'base64'))
-  decipher.setAuthTag(Buffer.from(blob.tag, 'base64'))
-  try {
-    return Buffer.concat([decipher.update(Buffer.from(blob.data, 'base64')), decipher.final()]).toString('utf8')
-  } catch {
-    // GCM 校验失败只可能是口令错或包被改过，两者都不该继续解析。
-    throw new Error('口令不正确，或整包已被篡改')
-  }
-}
 
 type ServerSecrets = Record<string, { env?: Record<string, string>; headers?: Record<string, string> }>
 
@@ -111,7 +75,7 @@ export function buildBundle(input: BuildBundleInput): Uint8Array {
     if (Object.keys(secrets).length) {
       const serialized = JSON.stringify(secrets)
       files['mcp/secrets.json'] = encoder.encode(
-        input.secrets === 'encrypted' ? JSON.stringify(encrypt(serialized, input.passphrase as string)) : serialized
+        input.secrets === 'encrypted' ? JSON.stringify(encryptSecret(serialized, input.passphrase as string)) : serialized
       )
     }
   }
@@ -139,7 +103,7 @@ export function readBundle(archive: Uint8Array, passphrase?: string): BundleCont
     if (!raw || manifest.secrets === 'omit') return {}
     if (manifest.secrets !== 'encrypted') return parseJson<ServerSecrets>(raw, 'mcp/secrets.json')
     if (!passphrase?.trim()) return {}
-    return JSON.parse(decrypt(parseJson<EncryptedBlob>(raw, 'mcp/secrets.json'), passphrase)) as ServerSecrets
+    return JSON.parse(decryptSecret(parseJson<EncryptedBlob>(raw, 'mcp/secrets.json'), passphrase)) as ServerSecrets
   })()
 
   const skills = manifest.skills.map((entry) => {

@@ -16,6 +16,7 @@ import type { LocalModelSummary, LocalModelTestResult } from './models'
 import type { ModelConnectionsApi } from './model-connections'
 import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, PluginQuery } from './plugins'
 import type { PreviewProbeResult, PreviewReadyEvent } from './preview'
+import type { RateLimitSnapshot } from './rate-limit'
 import type { RuntimeReport } from './runtime'
 import type { SandboxCapabilities, SandboxSessionInfo } from './sandbox'
 import type { SearchQuery, SearchResponse } from './search'
@@ -251,6 +252,10 @@ export interface FastAgentApi {
   usage: {
     /** 跨会话用量聚合；给天数时主进程夹到 1..365，给日期区间时按本地日期闭区间统计。 */
     overview(window: ModelUsageWindow): Promise<ModelUsageOverview>
+    /** 订阅连接的额度快照；厂商没在响应头里报额度时返回空数组。 */
+    limits(): Promise<RateLimitSnapshot[]>
+    /** 额度数字变化时推送；同一份数据重复到达不会触发。 */
+    onLimitsChanged(listener: (snapshots: RateLimitSnapshot[]) => void): () => void
   },
   conversations: {
     list(): Promise<ConversationRecord[]>
@@ -401,6 +406,8 @@ export interface FastAgentApi {
     absolutePath(path: string): Promise<string>
     /** 用系统默认应用打开工作区内文件/目录；成功返回空串，失败返回错误信息。 */
     openExternal(path: string): Promise<string>
+    /** 在项目根目录起一个系统终端窗口；成功返回空串，失败返回错误信息。 */
+    openTerminal(): Promise<string>
     /** 删除工作区内文件/目录（目录递归）；成功返回 { ok: true }，失败返回错误信息。 */
     delete(path: string): Promise<{ ok: boolean; error?: string }>
     /** 把文件 / 目录移进工作区内的目录（保留原名、不覆盖同名项），逐项返回结果。 */

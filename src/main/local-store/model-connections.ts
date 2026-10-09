@@ -2,7 +2,7 @@ import type Database from 'better-sqlite3'
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { Credential, CredentialStore } from '@earendil-works/pi-ai'
-import type { LocalModelSummary, ModelConnectionDraft, ModelConnectionInput, ModelConnectionSummary, ModelCredentials } from '../../shared/types'
+import type { DiscoveredConnectionModel, LocalModelSummary, ModelConnectionDraft, ModelConnectionInput, ModelConnectionSummary, ModelCredentials } from '../../shared/types'
 import { modelProvider, normalizeConnectionEndpoint } from '../../shared/model-providers'
 
 export const MODEL_CONNECTIONS_SQL = `CREATE TABLE IF NOT EXISTS model_connections (
@@ -149,6 +149,41 @@ export class ModelConnectionStore {
       this.db.prepare("DELETE FROM local_models WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,'$.connectionId') END = ?").run(id)
       this.db.prepare('DELETE FROM model_connections WHERE id = ?').run(id)
     })()
+  }
+
+  /**
+   * 导出与密钥回显用的窄接口：只交出 API Key 与自定义请求头。
+   * 账号连接返回空对象——OAuth 凭据不经此出口，也不进任何导出产物。
+   */
+  apiKeySecrets(id: string): { apiKey?: string; headers?: Record<string, string> } {
+    if (this.metadata(id).authMode !== 'api-key') return {}
+    const secrets = this.secrets(id)
+    return { ...(secrets.api_key ? { apiKey: secrets.api_key } : {}), ...(secrets.headers ? { headers: secrets.headers } : {}) }
+  }
+
+  /** 连接内模型的导出形态：把落库 payload 反向映射回 DiscoveredConnectionModel。 */
+  connectionModels(id: string): DiscoveredConnectionModel[] {
+    const rows = this.db.prepare("SELECT payload FROM local_models WHERE CASE WHEN json_valid(payload) THEN json_extract(payload,'$.connectionId') END = ? ORDER BY id").all(id) as { payload: string }[]
+    return rows.map((row) => {
+      const payload = JSON.parse(row.payload) as Record<string, unknown>
+      const value = <T>(key: string): T | undefined => (payload[key] ?? undefined) as T | undefined
+      return {
+        modelId: String(payload.model_name ?? ''),
+        name: typeof payload.name === 'string' ? payload.name : undefined,
+        contextWindow: value<number>('context_window'),
+        maxTokens: value<number>('max_tokens'),
+        reasoning: value<boolean>('supports_thinking'),
+        vision: payload.model_kind === 'multimodal',
+        thinkingLevelMap: value<DiscoveredConnectionModel['thinkingLevelMap']>('thinking_level_map'),
+        thinkingDefault: value<string>('thinking_default'),
+        thinkingProfiles: value<Record<string, unknown>>('thinking_profiles') ?? null,
+        temperature: value<number>('temperature'),
+        timeout: value<number>('timeout'),
+        maxRetries: value<number>('max_retries'),
+        extraBody: value<Record<string, unknown>>('extra_body') ?? null,
+        compat: value<Record<string, unknown>>('compat') ?? null
+      }
+    }).filter((model) => model.modelId)
   }
 
   /** 单独改 model_kind：能力标记要能在不重新保存整条连接的前提下补齐。 */

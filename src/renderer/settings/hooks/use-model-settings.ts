@@ -5,6 +5,7 @@ import { overrideKey, type ModelParameterOverride } from '../../../shared/model-
 export function useModelSettings(models: ModelOption[], localModels: LocalModelSummary[], onTestDialogue: (id: number) => Promise<{ ok: boolean; error?: string; latencyMs?: number }>, onNotice: (notice: string) => void) {
   const [overrides, setOverrides] = useState<Map<string, ModelParameterOverride>>(new Map())
   const [testingId, setTestingId] = useState<number | null>(null)
+  const [testStatus, setTestStatus] = useState<{ modelId: number; state: 'running' | 'ok' | 'fail'; message: string } | null>(null)
   // 覆盖表与云端清单分开取：清单来自 bootstrap（已套过覆盖），这份是给编辑器回填草稿用的原始值。
   async function loadOverrides() {
     const items = await window.fastAgent.models.listOverrides().catch(() => { onNotice('模型参数加载失败'); return [] as Array<{ key: string; override: ModelParameterOverride }> })
@@ -30,13 +31,18 @@ export function useModelSettings(models: ModelOption[], localModels: LocalModelS
 
   async function handleTestOne(modelId: number, label: string) {
     setTestingId(modelId)
+    setTestStatus({ modelId, state: 'running', message: '正在发送测试消息…' })
     try {
       const result = await onTestDialogue(modelId)
-      onNotice(result.ok
-        ? `${label}：对话测试通过（${result.latencyMs ?? '—'} ms）`
-        : `${label}：对话测试失败（${result.error ?? '未知错误'}）`)
+      const message = result.ok
+        ? `测试通过 · ${result.latencyMs ?? '—'} ms`
+        : `测试失败：${result.error ?? '未知错误'}`
+      setTestStatus({ modelId, state: result.ok ? 'ok' : 'fail', message })
+      onNotice(`${label}：${message}`)
     } catch (error) {
-      onNotice(error instanceof Error ? error.message : '模型测试失败')
+      const message = error instanceof Error ? error.message : '模型测试失败'
+      setTestStatus({ modelId, state: 'fail', message: `测试失败：${message}` })
+      onNotice(`${label}：测试失败（${message}）`)
     } finally {
       setTestingId(null)
     }
@@ -75,5 +81,5 @@ export function useModelSettings(models: ModelOption[], localModels: LocalModelS
     setBulkResults(results.filter((item): item is BulkResult => Boolean(item)))
   }
 
-  return { overrides, testingId, saveOverride, handleTestOne, bulkRunning, bulkResults, bulkTargets, runBulkTest }
+  return { overrides, testingId, testStatus, saveOverride, handleTestOne, bulkRunning, bulkResults, bulkTargets, runBulkTest }
 }

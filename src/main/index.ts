@@ -69,6 +69,9 @@ import { installBundledRuntime, prependPathEntries, resolveBundledRuntimeSource,
 import type { SandboxSession } from './agent/sandbox/sandbox-types'
 import { ConversationRunCoordinator, ConversationRuntimeCache } from './conversation-runtime-cache'
 import { RunScheduler } from './run-scheduler'
+import { RateLimitMonitor } from './rate-limit-monitor'
+import { installRateLimitTap, withRateLimitTap } from './rate-limit-dispatcher'
+import { attributeRateLimits } from './rate-limit-attribution'
 import { createLazyModuleLoader } from './lazy-module'
 import { PauseGate } from './agent/pause-gate'
 import { indexSource } from './knowledge/kb-indexer'
@@ -84,6 +87,24 @@ const loadPdfText = createLazyModuleLoader(() => import('./knowledge/pdf-text'))
 
 /** Artifact 登记的依赖注入点：面板刷新广播只有主窗口知道。 */
 const artifactRegistry = { get store() { return store }, notifyChanged: () => mainWindow?.webContents.send('artifacts:changed') }
+
+/**
+ * 订阅额度监听。包一层全局 fetch 只读响应头，不额外发请求——多打一次厂商接口就多扣一次额度。
+ * 安装放在模块级：pi 运行时是懒加载的，等它加载完再装会漏掉第一次模型调用。
+ */
+const rateLimitMonitor = new RateLimitMonitor()
+rateLimitMonitor.install()
+installRateLimitTap(rateLimitMonitor)
+rateLimitMonitor.onChange(() => {
+  // 连接服务尚未就绪（启动早期）时静默跳过，下一次模型请求会再推一遍
+  void Promise.resolve()
+    .then(() => modelConnectionService?.list())
+    .then((connections) => {
+      if (!connections) return
+      mainWindow?.webContents.send('usage:limits-changed', attributeRateLimits(rateLimitMonitor.list(), connections))
+    })
+    .catch(() => undefined)
+})
 
 function removeArtifactsUnderPath(namespace: string, workspaceId: string, relative: string): boolean {
   return removeArtifacts(store, namespace, workspaceId, relative)
@@ -1470,6 +1491,7 @@ const mainContext: MainContext = {
   runPermissionOverrides,
   modelContextWindows,
   startupWarnings,
+  rateLimitMonitor,
 
   loadPiRuntime,
   loadMcpRuntime,
@@ -1621,8 +1643,8 @@ app.whenReady().then(async () => {
   await applyOutboundProxy({
     env: process.env,
     resolveSystemProxy: () => session.defaultSession.resolveProxy('https://api.openai.com'),
-    applyEnvProxy: () => setGlobalDispatcher(new EnvHttpProxyAgent()),
-    applyProxy: (url) => setGlobalDispatcher(new ProxyAgent(url)),
+    applyEnvProxy: () => setGlobalDispatcher(withRateLimitTap(new EnvHttpProxyAgent(), rateLimitMonitor)),
+    applyProxy: (url) => setGlobalDispatcher(withRateLimitTap(new ProxyAgent(url), rateLimitMonitor)),
     log: (message) => breadcrumb('network', message)
   })
   pushStartupPhase('config')

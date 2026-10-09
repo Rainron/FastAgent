@@ -1,9 +1,10 @@
-import { dialog, type BrowserWindow } from 'electron'
-import { readFileSync, writeFileSync } from 'node:fs'
+import type { BrowserWindow } from 'electron'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { createBundleService, BundleExportOptions, BundleImportPlan } from '../bundle/bundle-service'
 import { bundleNeedsPassphrase } from '../bundle/ability-bundle'
 import type { IpcRegistrar } from '../app-context'
+import { fileStamp, pickFile, saveToFile } from './file-dialogs'
 
 export interface BundleIpcDeps {
   bundles: ReturnType<typeof createBundleService>
@@ -12,30 +13,14 @@ export interface BundleIpcDeps {
   exportsDir(): string
 }
 
-function stamp() {
-  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-}
-
 export function registerBundleIpc(handle: IpcRegistrar, deps: BundleIpcDeps) {
-  async function saveArchive(defaultName: string, data: Uint8Array, filters: Electron.FileFilter[]) {
-    const window = deps.mainWindow()
-    const options: Electron.SaveDialogOptions = { defaultPath: join(deps.exportsDir(), defaultName), filters }
-    const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options)
-    if (result.canceled || !result.filePath) return null
-    writeFileSync(result.filePath, data)
-    return result.filePath
-  }
+  const saveArchive = (defaultName: string, data: Uint8Array, filters: Electron.FileFilter[]) =>
+    saveToFile(deps.mainWindow(), join(deps.exportsDir(), defaultName), data, filters)
 
-  async function pickArchive(filters: Electron.FileFilter[]) {
-    const window = deps.mainWindow()
-    const options: Electron.OpenDialogOptions = { properties: ['openFile'], filters }
-    const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || !result.filePaths.length) return null
-    return result.filePaths[0]
-  }
+  const pickArchive = (filters: Electron.FileFilter[]) => pickFile(deps.mainWindow(), filters)
 
   handle('bundle:export', async (_event, options: BundleExportOptions) =>
-    saveArchive(`fastagent-abilities-${stamp()}.fabundle`, deps.bundles.exportBundle(options), [{ name: 'FastAgent 能力整包', extensions: ['fabundle'] }]))
+    saveArchive(`fastagent-abilities-${fileStamp()}.fabundle`, deps.bundles.exportBundle(options), [{ name: 'FastAgent 能力整包', extensions: ['fabundle'] }]))
 
   handle('bundle:export-skill', async (_event, name: string) =>
     saveArchive(`${name}.zip`, deps.bundles.exportSkill(name), [{ name: 'Skill 压缩包', extensions: ['zip'] }]))

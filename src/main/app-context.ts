@@ -22,6 +22,7 @@ import type { createBundleService } from './bundle/bundle-service'
 import type { ContextMeasurement } from './context-meter'
 import type { CrashKind } from './logging/logger'
 import type { createModelRuntime } from './pi-runtime'
+import type { RateLimitMonitor } from './rate-limit-monitor'
 import type {
   AppRuntimeInfo, AppSettings, AuthSnapshot, ApprovalDecision, CompactionHistory,
   Attachment, ContextState, ContextSummary, ConversationMode, DoctorCheck, ThinkingLevel,
@@ -103,6 +104,8 @@ export interface MainContext {
   readonly runPermissionOverrides: Map<string, PermissionPreset | null>
   readonly modelContextWindows: Map<number, number>
   readonly startupWarnings: StartupWarning[]
+  /** 订阅额度监听：从模型响应头顺手读到的窗口用量，读不到就是空。 */
+  readonly rateLimitMonitor: RateLimitMonitor
 
   loadPiRuntime(): Promise<typeof import('./pi-runtime')>
   loadMcpRuntime(): Promise<typeof import('./mcp-manager')>
