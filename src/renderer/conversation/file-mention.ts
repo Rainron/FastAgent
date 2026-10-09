@@ -36,13 +36,6 @@ export function applySlashCommand(text: string, mention: MentionQuery, name: str
   return replaceMentionFragment(text, mention, `/${name} `)
 }
 
-function replaceMentionFragment(text: string, mention: MentionQuery, inserted: string): { text: string; caret: number } {
-  const end = mention.start + 1 + mention.query.length
-  return {
-    text: `${text.slice(0, mention.start)}${inserted}${text.slice(end)}`,
-    caret: mention.start + inserted.length
-  }
-}
 
 export interface SkillCandidate {
   name: string
@@ -93,4 +86,19 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   const keyword = query.trim().toLowerCase()
   return commands.filter((command) => !keyword || command.name.startsWith(keyword))
+}
+
+/** 目录候选按 Tab 进入下一层：查询变成 `目录/`，菜单留着继续列子目录与子文件。 */
+export function enterMentionDirectory(text: string, mention: MentionQuery, path: string): { text: string; caret: number; mention: MentionQuery } {
+  const query = `${path.replace(/\/+$/, '')}/`
+  const result = replaceMentionFragment(text, mention, `@${query}`)
+  return { ...result, mention: { trigger: '@', start: mention.start, query } }
+}
+
+function replaceMentionFragment(text: string, mention: MentionQuery, inserted: string): { text: string; caret: number } {
+  const end = mention.start + 1 + mention.query.length
+  return {
+    text: `${text.slice(0, mention.start)}${inserted}${text.slice(end)}`,
+    caret: mention.start + inserted.length
+  }
 }

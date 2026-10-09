@@ -5,7 +5,7 @@ import { findProfile } from '../../shared/permission-profiles'
 import { parseShellCommandInput, unescapeShellCommandInput } from '../../shared/shell-command'
 import { ContextHealth } from '../conversation/ContextHealth'
 import { AttachmentImage, formatAttachmentSize, isImageAttachment } from '../conversation/AttachmentImage'
-import { activeMentionQuery, applyMention, applySlashCommand, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
+import { activeMentionQuery, applyMention, applySlashCommand, enterMentionDirectory, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
 import { FileMentionMenu } from '../conversation/FileMentionMenu'
 import { GitBranchTrigger } from '../conversation/GitBranchMenu'
 import { WorkspaceMenu } from './WorkspaceMenu'
@@ -408,6 +408,22 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     })
   }
 
+  /** 目录候选按 Tab 进入下一层：查询变成 `目录/`，菜单留着继续列子目录与子文件。 */
+  function enterDirectory(match: WorkspaceFileMatch) {
+    if (!mention) return
+    const next = enterMentionDirectory(text, mention, match.path)
+    setEditorText(next.text, next.caret)
+    setMention(next.mention)
+    setMentionMatches([])
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      const area = textareaRef.current
+      if (!area) return
+      area.focus()
+      area.selectionStart = area.selectionEnd = next.caret
+    })
+  }
+
   function chooseSkill(item: { name: string; description: string }) {
     if (!mention) return
     // 内置命令保留斜杠前缀，submit 才能识别拦截；skill 只插入名称。
@@ -508,8 +524,11 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       }
       if ((event.key === 'Enter' && !event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) || event.key === 'Tab') {
         event.preventDefault()
-        if (mention.trigger === '/') chooseSkill(slashCandidates[mentionIndex] ?? slashCandidates[0])
-        else chooseMention(mentionMatches[mentionIndex] ?? mentionMatches[0])
+        if (mention.trigger === '/') { chooseSkill(slashCandidates[mentionIndex] ?? slashCandidates[0]); return }
+        const match = mentionMatches[mentionIndex] ?? mentionMatches[0]
+        // Tab 落在目录上是「进入」而不是「选定」，和 shell 的路径补全一致；要把目录本身作为引用就按 Enter。
+        if (event.key === 'Tab' && match?.isDirectory) enterDirectory(match)
+        else chooseMention(match)
         return
       }
     }
@@ -644,7 +663,7 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     {resumeOpen && <ResumeMenu records={resumeList} activeIndex={resumeIndex} onHover={setResumeIndex} onSelect={pickResume} />}
     {mention?.trigger === '/' && slashCandidates.length > 0
       ? <SkillMentionMenu matches={slashCandidates} activeIndex={mentionIndex} onHover={setMentionIndex} onSelect={chooseSkill} />
-      : mentionMatches.length > 0 && <FileMentionMenu matches={mentionMatches} activeIndex={mentionIndex} onHover={setMentionIndex} onSelect={chooseMention} />}
+      : mentionMatches.length > 0 && <FileMentionMenu matches={mentionMatches} activeIndex={mentionIndex} onHover={setMentionIndex} onSelect={(match) => match.isDirectory ? enterDirectory(match) : chooseMention(match)} />}
     <textarea
       ref={textareaRef}
       value={text}

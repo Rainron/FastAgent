@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowDown, ArrowUp, PanelRight, TerminalSquare } from 'lucide-react'
+import { ArrowDown, ArrowUp, Map as MapIcon, PanelRight, TerminalSquare } from 'lucide-react'
 import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, AuthSnapshot, BootstrapData, CompactionHistory, ContextPolicy, ConversationMode, ConversationRunState, ConversationTurn, GitOperationResult,  LocalModelSummary, SearchResult, TodoItem, ToolCallRecord } from '../../shared/types'
 import { resetFileExistsCache } from '../ai-response/file-exists-cache'
 import { formatFileReference, type FileReference } from '../ai-response/file-reference'
@@ -40,7 +40,7 @@ import type { SkillDraft } from '../../shared/types'
 import { SkillDistillDialog } from '../conversation/SkillDistillDialog'
 import { toggleSidebarSection, type SidebarSectionState } from '../sidebar-sections'
 import { buildContinuationPrompt, isContinuationInput, isNewConversationShortcut, pushNavigation, stepNavigation } from '../workspace-actions'
-import { archiveWorkspaceItem, removeWorkspaceItem, renameWorkspaceItem, toggleBatchPageSelection, toggleBatchSelection, upsertRecentWorkspaceItem, type ConversationScope } from '../workspace-data'
+import { archiveWorkspaceItem, findActiveProjectConversation, removeWorkspaceItem, renameWorkspaceItem, toggleBatchPageSelection, toggleBatchSelection, upsertRecentWorkspaceItem, type ConversationScope } from '../workspace-data'
 import { whenFirstScreenReady } from '../startup-ready'
 import { usePagination } from '../use-pagination'
 import { useEventCallback } from '../use-event-callback'
@@ -55,6 +55,8 @@ import { buildInspectorData } from '../conversation/inspector-data'
 import { buildMessageMenuItems } from '../conversation/message-menu-items'
 import { useAgentEvents } from './hooks/use-agent-events'
 import { useConversationScroll } from './hooks/use-conversation-scroll'
+import { useConversationMinimap } from './hooks/use-conversation-minimap'
+import { ConversationMinimap } from '../conversation/ConversationMinimap'
 import { useEffectiveDark } from './hooks/use-effective-dark'
 import { useFindBar } from './hooks/use-find-bar'
 import { useNotice } from './hooks/use-notice'
@@ -401,6 +403,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   }, settings?.shellCommand)
 
   const { scrollRef, followRef, scrollNav, headerStuck, onConversationScroll, jumpConversation } = useConversationScroll(turns, runId, selectedConversationId)
+  const minimap = useConversationMinimap(scrollRef, turns, followRef)
 
   useAgentEvents({
     selectedConversationId, visibleConversationId: section === 'chats' && batchKind !== 'conversations' ? selectedConversationId : null, streamBuffer, thinkingBuffer, refreshGitState,
@@ -832,6 +835,13 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setWorkspaceRoot(item.path)
     // 上一个项目里打开的文件在新项目多半不存在，留着只会让产物面板报错。
     setArtifactFile(null)
+    // 项目里还有没跑完的会话时直接回到它：用户点项目是为了看那次运行，再让他手动翻会话列表是多余一步。
+    const active = findActiveProjectConversation(conversationItems, runStates, item.id)
+    if (active) {
+      setNotice(`已切换项目：${item.name}，回到进行中的会话`)
+      await selectConversation(active)
+      return
+    }
     setMode('agent')
     applyDefaultPermission('workspace')
     setSection('chats')
@@ -1559,12 +1569,16 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
           {section === 'chats' && batchKind !== 'conversations' ? <>
             <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
               <div><span className="status-dot" /> <span>{conversationTitle}</span></div>
-              <div className="header-actions">{selectedConversationId && <ItemActions onDelete={() => handleDeleteConversation(selectedConversationId)} onArchive={() => archiveConversation(selectedConversationId)} onBatch={() => startBatch('conversations')} onInspect={() => void openInspector(selectedConversationId)} onExport={() => void exportConversation(selectedConversationId)} />}<button className={`icon-button${terminalOpen ? ' active' : ''}`} disabled={!workspaceRoot} aria-pressed={terminalOpen} aria-label="终端" title={workspaceRoot ? `在 ${workspaceRoot} 打开终端面板` : '先打开一个项目'} onClick={handleToggleTerminal}><TerminalSquare size={16} /></button><button className="icon-button" aria-label="打开资源面板" title="打开资源面板" onClick={() => { closeInspector(); setArtifactOpen((value) => !value) }}><PanelRight size={16} /></button></div>
+              <div className="header-actions">{selectedConversationId && <ItemActions onDelete={() => handleDeleteConversation(selectedConversationId)} onArchive={() => archiveConversation(selectedConversationId)} onBatch={() => startBatch('conversations')} onInspect={() => void openInspector(selectedConversationId)} onExport={() => void exportConversation(selectedConversationId)} />}<button className={`icon-button${terminalOpen ? ' active' : ''}`} disabled={!workspaceRoot} aria-pressed={terminalOpen} aria-label="终端" title={workspaceRoot ? `在 ${workspaceRoot} 打开终端面板` : '先打开一个项目'} onClick={handleToggleTerminal}><TerminalSquare size={16} /></button><button className={`icon-button${minimap.enabled ? ' active' : ''}`} aria-pressed={minimap.enabled} aria-label="对话缩略图" title="对话缩略图：点击缩略条直接跳到对应位置" onClick={minimap.toggle}><MapIcon size={16} /></button><button className="icon-button" aria-label="打开资源面板" title="打开资源面板" onClick={() => { closeInspector(); setArtifactOpen((value) => !value) }}><PanelRight size={16} /></button></div>
             </div>
             {/* 页内查找条：挂在对话头下沿，搜索范围就是上面的滚动容器 */}
             <FindBar open={findOpen} request={findRequest} containerRef={scrollRef} contentVersion={turns} scopeKey={selectedConversationId} onClose={handleCloseFind} onBeforeJump={handleFindBeforeJump} />
+            {/* 包一层定位容器：缩略图要贴着滚动视口的上下缘，而输入区高度是用户可拖的，写死偏移会错位 */}
+            <div className="conversation-body">
             <div className={`conversation-scroll ${conversationEntering ? 'conversation-entering' : ''}`} ref={scrollRef} onScroll={onConversationScroll}>
               {turns.length === 0 && shellCommands.entries.length === 0 ? <EmptyConversation onPickWorkspace={handlePickWorkspace} onAddAttachment={() => setAttachmentRequest((value) => value + 1)} onRunAgent={agentAvailable ? () => { setMode('agent'); applyDefaultPermission('ask'); setNotice('已切换到智能体模式') } : undefined} /> : <MessageList turns={turns} models={allModels} onCopy={handleCopyText} onDelete={handleDeleteTurn} onRetry={handleRerunTurn} onRegenerate={handleRerunTurn} onEdit={handleEditTurn} onContinue={handleContinueTurn} onShowContextMenu={showMessageContextMenu} todosByTurn={todosByTurn} memoryTurnIds={memoryTurnIds} contextSourceTurnIds={contextSourceTurnIds} shellEntries={shellCommands.entries} onCancelShellCommand={handleCancelShellCommand} onDismissShellCommand={handleDismissShellCommand} compactionHistory={compactionHistory} contextWindow={contextHealth.contextWindow} onNotice={setNotice} />}
+            </div>
+            {minimap.enabled && <ConversationMinimap segments={minimap.segments} metrics={minimap.metrics} onSeek={minimap.seek} />}
             </div>
             <div className="scroll-nav-anchor">{scrollNav !== 'none' && <button className="scroll-nav" onClick={() => jumpConversation(scrollNav === 'top' ? 'top' : 'bottom')} aria-label={scrollNavLabel[scrollNav]} title={scrollNavLabel[scrollNav]}>
               {scrollNav === 'top' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}

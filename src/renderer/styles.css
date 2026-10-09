@@ -175,6 +175,8 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .titlebar-actions { display: flex; align-items: center; gap: 3px; padding: 0 10px; }
 .icon-button { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: transparent; color: var(--text-secondary); transition: background var(--motion-hover) ease-out, color var(--motion-hover) ease-out; }
 .icon-button:hover { background: var(--hover); color: var(--text-primary); }
+/* 开关型图标按钮的按下态：缩略图、自动换行这类 aria-pressed 按钮共用 */
+.icon-button.active { background: color-mix(in srgb, var(--accent-tech) 12%, transparent); color: var(--text-primary); }
 
 .shell-body { min-height: 0; flex: 1; display: flex; }
 .sidebar { width: 240px; flex: 0 0 240px; position: relative; z-index: 20; display: flex; flex-direction: column; padding: 12px 8px 10px; background: var(--sidebar); border-right: 1px solid var(--border); transition: width var(--motion-sidebar) var(--motion-ease), flex-basis var(--motion-sidebar) var(--motion-ease); overflow: hidden; scrollbar-width: thin; }
@@ -550,6 +552,9 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .mention-menu button strong { flex: 0 0 auto; color: var(--text-primary); font-weight: 500; }
 .mention-menu button span { min-width: 0; overflow: hidden; color: var(--text-tertiary); font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
 .mention-menu button.active { background: var(--hover); color: var(--text-primary); }
+/* 目录行右侧的进入标记：路径 span 是 flex 伸缩项，这里靠 margin-left:auto 顶到行尾 */
+.mention-menu button .mention-enter { margin-left: auto; opacity: .55; }
+.mention-menu button.active .mention-enter { opacity: 1; color: var(--text-secondary); }
 .composer-toolbar { min-height: 36px; flex: 0 0 auto; display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; padding: 0 10px 8px 10px; }
 .toolbar-icon { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 12px; transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), transform var(--motion-press) var(--motion-ease); }
 .toolbar-icon:hover { background: var(--hover); color: var(--text-primary); }
@@ -977,7 +982,9 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 .trace-text { min-width: 0; display: grid; gap: 10px; padding: 6px 0 10px; }
 .trace-empty { min-height: 22px; display: flex; align-items: center; color: var(--text-tertiary); font-size: 11px; }
 
-.artifact-panel { width: 480px; min-width: 320px; flex: 0 0 480px; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); position: relative; }
+.artifact-panel { width: 480px; min-width: 320px; flex: 0 0 480px; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); position: relative; animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) both; }
+/* 面板是 flex 兄弟，宽度占位只能瞬时生效；靠自身右滑淡入把这一下切换带过去 */
+@keyframes motion-resource-enter { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 .inspector-panel { position: relative; z-index: 24; }
 .inspector-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 24px; }
 .inspector-title { display: grid; gap: 4px; padding: 2px 2px 14px; border-bottom: 1px solid var(--border); }
@@ -1904,6 +1911,94 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 /* AI 回答的结构化 block 渲染 */
 .conversation { position: relative; }
 /* 零高度锚点：按钮悬浮在输入框上方，不参与列布局，输入框拉高也不会错位。 */
+/* 对话缩略图：贴在滚动视口右缘的竖轨，上下缘跟着 .conversation-body 走，
+   这样输入区被拖高拖低都不会错位。 */
+.conversation-body { min-height: 0; flex: 1; position: relative; display: flex; flex-direction: column; container: conversation-body / inline-size; }
+.conversation-minimap {
+  /* 轨道宽与缩放比成对分档，由下方的容器查询按对话区实际宽度切换。
+     两个值必须一起改：轨道变宽而缩放比不变，只会让行更长、字还是那么小。
+     基础档是「刚好放得下」的最窄形态。 */
+  --minimap-track: 52px;
+  --minimap-scale: .18;
+  position: absolute; top: 10px; bottom: 10px; right: calc(var(--scrollbar-size, 8px) + 4px);
+  width: var(--minimap-track); z-index: 9; cursor: pointer; padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 13px;
+  /* 背景要够实：轨道虽然落在正文留白里，但宽表格、长代码块会横向溢出到这块区域，
+     半透明会让正文的字透上来，跟缩影的小字糊在一起。 */
+  background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-1);
+  opacity: .55; transition: opacity var(--motion-hover) var(--motion-ease), box-shadow var(--motion-hover) var(--motion-ease), border-color var(--motion-hover) var(--motion-ease);
+  animation: motion-minimap-enter var(--motion-popover) var(--motion-ease) both;
+}
+.conversation-minimap:hover { opacity: 1; border-color: var(--border-strong); box-shadow: var(--shadow-2); }
+@keyframes motion-minimap-enter { from { opacity: 0; transform: translateX(10px); } to { opacity: .55; transform: none; } }
+
+/* 每段一块：只用背景深浅区分提问 / 执行 / 回答，不画卡片边框，免得盖过文字缩影本身 */
+.minimap-pages { position: absolute; inset: 0; }
+.minimap-seg { position: absolute; left: 5px; right: 5px; min-height: 3px; border-radius: 3px; overflow: hidden; }
+.minimap-seg.user { background: color-mix(in srgb, var(--text-primary) 14%, transparent); }
+.minimap-seg.assistant { background: transparent; }
+.minimap-seg.activity { background: color-mix(in srgb, var(--accent-tech) 11%, transparent); }
+.minimap-seg.failed { background: color-mix(in srgb, var(--danger) 13%, transparent); }
+
+/* 缩影内层按正文宽度排版再整体缩放：先有正常的行长与换行，再变小。
+   直接用轨道宽度排会变成每行两三个字，形态全丢。--minimap-scale 同时决定内层宽度与缩放比，
+   改一个数就能整体调，两处不会各说各话。 */
+/* --minimap-fit 由组件量完真实高度写回：缩影的换行位置跟正文不同，
+   等比缩完的高度对不上实测段高，纵向补一个系数才能填满又不溢出。 */
+.minimap-page {
+  width: calc(100% / var(--minimap-scale));
+  transform: scale(var(--minimap-scale), calc(var(--minimap-scale) * var(--minimap-fit, 1)));
+  transform-origin: top left;
+  padding: 3px 4px; box-sizing: border-box;
+  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+  word-break: break-word; overflow-wrap: anywhere;
+}
+/* 提问的字更深更重、回答更浅：跟背景差异叠加，两者在一片小字里才分得开 */
+.minimap-seg.user .minimap-page { color: var(--text-primary); font-weight: 600; }
+.minimap-seg.activity .minimap-page { color: var(--text-tertiary); }
+.minimap-page > * { margin: 0 0 5px; }
+.minimap-page > *:last-child { margin-bottom: 0; }
+.mm-heading { font-weight: 700; font-size: 13px; }
+.mm-list { padding-left: 8px; border-left: 2px solid color-mix(in srgb, var(--text-tertiary) 35%, transparent); white-space: pre-wrap; }
+.mm-quote { padding-left: 8px; border-left: 2px solid color-mix(in srgb, var(--accent-tech) 40%, transparent); opacity: .8; }
+.mm-code {
+  margin: 0 0 5px; padding: 3px 5px; border-radius: 3px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  font-family: ui-monospace, "JetBrains Mono", Consolas, monospace; font-size: 11px; line-height: 1.45;
+  white-space: pre-wrap; overflow: hidden;
+}
+
+/* 取景框：框外轻微淡化、框内淡 accent 填充 + 细描边，底下的文字仍然透得出来 */
+.minimap-shade { position: absolute; left: 1px; right: 1px; background: color-mix(in srgb, var(--bg) 38%, transparent); pointer-events: none; }
+.minimap-lens { position: absolute; left: 1px; right: 1px; min-height: 14px; border: 1px solid color-mix(in srgb, var(--accent-tech) 50%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--accent-tech) 6%, transparent); box-shadow: 0 1px 6px color-mix(in srgb, var(--accent-tech) 16%, transparent); pointer-events: none; }
+
+/* 悬停预览：正常字号，补上缩影里读不清的那部分。
+   渲染在 body 上（见 ConversationMinimap 的注释），所以用 fixed + 视口坐标，
+   层级取 120——高于对话区里的各类浮层，低于右键菜单(1000) 与灯箱(999)。
+   宽度按视口收放；这里已不在 conversation-body 容器内，cqi 不可用。 */
+.minimap-preview {
+  position: fixed; z-index: 120;
+  width: min(260px, max(160px, 19vw));
+  padding: 7px 9px;
+  border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); box-shadow: var(--shadow-popover);
+  color: var(--text-secondary); font-size: 12px; line-height: 1.55;
+  transform: translateY(-50%); pointer-events: none;
+  animation: motion-popover-enter var(--motion-popover) var(--motion-ease) both;
+}
+
+/* 响应式分档。判据必须是对话区自身宽度而不是窗口宽度：开着资源面板时窗口很宽、
+   对话区却很窄，按窗口判会让缩略图压在正文上。
+   档位算法：正文是 min(900px, 100% - 48px) 居中（见 .conversation-content），
+   宽度过 948px 之后右侧留白是 (W - 900) / 2；缩略图占掉
+   滚动条(8) + 偏移(4) + 轨道 + 与正文净空(8)。解 (W - 900) / 2 >= 20 + 轨道 得各档下限：
+   轨道 52 → 1044，68 → 1076，84 → 1108，100 → 1140。
+   放不下最窄档就整个不显示，宁可没有也不要压字。 */
+@container conversation-body (max-width: 1044px) { .conversation-minimap { display: none; } }
+@container conversation-body (min-width: 1076px) { .conversation-minimap { --minimap-track: 68px; --minimap-scale: .21; } }
+@container conversation-body (min-width: 1108px) { .conversation-minimap { --minimap-track: 84px; --minimap-scale: .24; } }
+@container conversation-body (min-width: 1140px) { .conversation-minimap { --minimap-track: 100px; --minimap-scale: .27; } }
+
 .scroll-nav-anchor { position: relative; height: 0; z-index: 8; }
 /* right 跟输入框右边缘对齐：输入框是 min(--conversation-max, 100% - --conversation-gutter) 居中，
    两边留白就是这个值。必须用 token 算而不是写死 900/24——缩略图打开时留白被加宽，
@@ -2667,7 +2762,7 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .thumb.file span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thumb.file svg { color: var(--text-tertiary); }
 .composer-top { padding: 0; border-bottom: 0; margin: 0; }
-.composer-toolbar { gap: 6px; padding-top: 8px; margin-top: 8px; border-top: 1px solid var(--border); }
+.composer-toolbar { gap: 6px; padding-top: 8px; margin-top: 8px; }
 .toolbar-icon { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-tertiary); transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), border-color var(--motion-hover) var(--motion-ease); }
 .toolbar-icon:hover:not(:disabled) { background: var(--surface-2); border-color: var(--border); color: var(--text-primary); }
 .composer-chip { height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text-secondary); font-size: 11.5px; font-weight: 500; }

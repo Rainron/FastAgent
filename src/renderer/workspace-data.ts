@@ -46,3 +46,30 @@ export function toggleBatchPageSelection(selected: Set<string>, ids: string[]): 
   ids.forEach((id) => selectedOnPage ? next.delete(id) : next.add(id))
   return next
 }
+
+/** 运行中的档位：这几种状态下会话还挂着一个未收尾的 run，切到项目时应该直接回到它。 */
+const ACTIVE_RUN_STATUSES = new Set<string>(['running', 'waiting_user', 'paused'])
+
+export type RunStateLike = { status: string; updatedAt: number }
+
+/**
+ * 项目下「正在进行中」的会话：多条同时在跑时取最近有动静的那条。
+ * 只看未归档会话，运行态以 runStates 为准（历史列表里的状态可能已经过期）。
+ */
+export function findActiveProjectConversation<T extends { id: string; projectId: string | null; archived: boolean }>(
+  items: T[],
+  runStates: Record<string, RunStateLike | undefined>,
+  projectId: string
+): T | null {
+  let best: T | null = null
+  let bestUpdatedAt = -Infinity
+  for (const item of items) {
+    if (item.archived || item.projectId !== projectId) continue
+    const state = runStates[item.id]
+    if (!state || !ACTIVE_RUN_STATUSES.has(state.status)) continue
+    if (state.updatedAt <= bestUpdatedAt) continue
+    best = item
+    bestUpdatedAt = state.updatedAt
+  }
+  return best
+}
