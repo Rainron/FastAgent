@@ -1,3 +1,4 @@
+import { DEFAULT_KNOWLEDGE_SETTINGS } from '../shared/knowledge-settings'
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell } from 'electron'
 import { EnvHttpProxyAgent, ProxyAgent, setGlobalDispatcher } from 'undici'
 import { applyOutboundProxy } from './network-proxy'
@@ -312,6 +313,7 @@ function scheduleDeferredStartupTasks() {
 
 const defaultSettings: AppSettings = {
   ...DEFAULT_ATTACHMENT_POLICY,
+  knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
   motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,

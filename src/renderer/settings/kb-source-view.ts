@@ -1,4 +1,4 @@
-import type { KbIndexResult, KbSource, KbSourcePreview } from '../../shared/types'
+import type { KbIndexResult, KbSource, KbSourcePreview, RecallPreview } from '../../shared/types'
 
 const STATUS_LABELS: Record<KbSource['status'], string> = {
   indexing: '索引中',
@@ -51,4 +51,27 @@ export function describeIndexResult(result: KbIndexResult): string {
 export function entryOrigin(entry: { sourcePath?: string | null; locator?: string | null }): string {
   if (!entry.sourcePath) return ''
   return entry.locator ? `${entry.sourcePath} ${entry.locator}` : entry.sourcePath
+}
+
+/**
+ * 知识库页打开时选哪个项目：已选的还在就不动，否则优先当前打开的项目，最后才是列表第一个。
+ * 知识库按项目隔离，默认落到别的项目上，用户很容易把条目加错地方。
+ */
+export function pickKbProject(projectIds: readonly string[], current: string, preferred: string | null): string {
+  if (projectIds.includes(current)) return current
+  if (preferred && projectIds.includes(preferred)) return preferred
+  return projectIds[0] ?? ''
+}
+
+/** 解绑确认文案：说清会连带删掉多少条，已导入条目不会保留。 */
+export function describeUnlink(source: Pick<KbSource, 'title' | 'entryCount'>): string {
+  return `解绑「${source.title}」会同时删除它导入的 ${source.entryCount} 个条目，手工条目不受影响。之后可以重新绑定再索引。`
+}
+
+/** 召回测试某一路没有命中时的说明：先说开关和项目这类「根本不会查」的原因，最后才是真没匹配上。 */
+export function recallEmptyReason(kind: 'memory' | 'knowledge', preview: Pick<RecallPreview, 'memoryEnabled' | 'knowledgeEnabled'>, projectId: string | null): string {
+  if (kind === 'memory') return preview.memoryEnabled ? '没有命中的记忆' : '跨会话记忆已关闭，不会注入记忆'
+  if (!preview.knowledgeEnabled) return '知识库自动注入已关闭'
+  if (!projectId) return '知识库只在项目会话中注入，请选择项目'
+  return '没有命中的知识条目'
 }

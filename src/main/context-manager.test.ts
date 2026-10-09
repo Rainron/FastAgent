@@ -1,3 +1,4 @@
+import { DEFAULT_KNOWLEDGE_SETTINGS } from '../shared/knowledge-settings'
 import { describe, expect, it } from 'vitest'
 import { buildSummarySourceText, heuristicSummary, piCompactionSettings, projectCompactedState, resolvePolicy, splitTurns } from './context-manager'
 import * as contextManager from './context-manager'
@@ -10,6 +11,7 @@ import { SUBAGENT_DEFAULT_MAX_TOOL_CALLS } from '../shared/subagent'
 
 const settings: AppSettings = {
   ...DEFAULT_ATTACHMENT_POLICY,
+  knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
   motionPreference: 'system',
   startAtLogin: false,
   showOnStartup: true,

@@ -1,5 +1,5 @@
 import type { LocalStore } from '../../local-store'
-import type { MemoryRecallHit, MemoryRecord } from '../../../shared/types'
+import type { KbEntry, MemoryCreateInput, MemoryRecallHit, MemoryRecord, RecallPreview } from '../../../shared/types'
 import { buildMemoryQueryPlan, isEmptyQueryPlan } from './memory-query'
 import { clampRecallLimit, rankMemories } from './memory-rank'
 import { renderMemoryPrompt } from './memory-prompt'
@@ -14,6 +14,8 @@ export interface RecallInput {
   text: string
   maxRecall?: number
   now?: number
+  /** 召回测试只是预览，不能刷新 last_accessed_at，否则会反过来影响真实召回的时新度排序。 */
+  touch?: boolean
 }
 
 export interface RecallResult {
@@ -42,8 +44,35 @@ export function recallMemories(store: LocalStore, input: RecallInput): RecallRes
   if (!found.length) return EMPTY_RECALL
   const hits = rankMemories(found.map((memory, index) => ({ memory, matchPosition: index })), { now, limit })
   if (!hits.length) return EMPTY_RECALL
-  store.touchMemories(input.namespace, hits.map((hit) => hit.memory.id))
+  if (input.touch !== false) store.touchMemories(input.namespace, hits.map((hit) => hit.memory.id))
   return { hits, prompt: renderMemoryPrompt(hits) }
+}
+
+/** 项目知识库检索：查询计划复用记忆的同一套分词，对话注入与召回测试走同一条链路。 */
+export function recallKnowledge(store: LocalStore, input: { namespace: string; projectId: string; text: string; limit: number }): KbEntry[] {
+  const plan = buildMemoryQueryPlan(input.text)
+  if (isEmptyQueryPlan(plan)) return []
+  return store.searchKbEntries(input.namespace, input.projectId, plan, input.limit)
+}
+
+/**
+ * 召回测试：按当前设置模拟一轮对话会注入什么。与真实召回的区别只有两点——
+ * 不刷新记忆访问时间、不写召回日志；开关关着时如实返回空并标出原因，而不是偷偷按开着算。
+ */
+export function previewRecall(store: LocalStore, input: {
+  namespace: string
+  projectId: string | null
+  text: string
+  memory: { enabled: boolean; maxRecall: number }
+  knowledge: { enabled: boolean; maxRecall: number }
+}): RecallPreview {
+  const memories = input.memory.enabled
+    ? recallMemories(store, { namespace: input.namespace, workspaceId: input.projectId, text: input.text, maxRecall: input.memory.maxRecall, touch: false }).hits.map((hit) => hit.memory)
+    : []
+  const knowledge = input.knowledge.enabled && input.projectId
+    ? recallKnowledge(store, { namespace: input.namespace, projectId: input.projectId, text: input.text, limit: input.knowledge.maxRecall })
+    : []
+  return { memories, knowledge, memoryEnabled: input.memory.enabled, knowledgeEnabled: input.knowledge.enabled }
 }
 
 export interface ExtractInput {
@@ -109,4 +138,26 @@ export async function extractMemories(
     }
   }
   return result
+}
+
+/** 比自动抽取的 200 字宽松，但单条记忆仍应是一两句可复用的事实，长篇背景该放知识库。 */
+export const MANUAL_MEMORY_MAX_LENGTH = 500
+
+/**
+ * 手动添加记忆。用户亲手写的比模型抽取的更可信，重要性给到 4、置信度给满，
+ * 召回排序里能压过同分的自动记忆。
+ */
+export function createManualMemory(store: LocalStore, namespace: string, input: MemoryCreateInput): MemoryRecord {
+  const content = input.content.trim()
+  if (!content) throw new Error('记忆内容不能为空')
+  if (content.length > MANUAL_MEMORY_MAX_LENGTH) throw new Error(`记忆内容不能超过 ${MANUAL_MEMORY_MAX_LENGTH} 字，长篇背景请放进项目知识库`)
+  if (input.scope === 'workspace' && !input.scopeId) throw new Error('项目记忆需要指定项目')
+  return store.createMemory(namespace, {
+    scope: input.scope,
+    scopeId: input.scope === 'workspace' ? input.scopeId : null,
+    type: input.type,
+    content,
+    importance: 4,
+    confidence: 1
+  })
 }

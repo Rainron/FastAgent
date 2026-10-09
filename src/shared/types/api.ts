@@ -11,7 +11,7 @@ import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
 import type { ApprovalDecision, ApprovalRequest, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
 import type { CompactionHistory, ContextPolicy, ContextState, ContextSummary, ModelUsageOverview, ModelUsageSummary, ModelUsageWindow, TurnContextSource } from './context'
 import type { Attachment, ConversationDetailed, ConversationInspector, ConversationPageQuery, ConversationRecord, ConversationStats, ConversationTurn, ConversationTurnPatch } from './conversation'
-import type { MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, MemoryUpdateInput } from './memory'
+import type { MemoryCreateInput, MemoryListItem, MemoryListQuery, MemoryRecord, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, RecallPreview } from './memory'
 import type { LocalModelSummary, LocalModelTestResult } from './models'
 import type { ModelConnectionsApi } from './model-connections'
 import type { PageQuery, PageResult, Plugin, PluginDetail, PluginInstallResult, PluginQuery } from './plugins'
@@ -486,7 +486,9 @@ export interface FastAgentApi {
   }
   memories: {
     /** 记忆管理页的分页列表；不传 status 时只列 active。 */
-    list(query?: MemoryListQuery): Promise<PageResult<MemoryRecord>>
+    list(query?: MemoryListQuery): Promise<PageResult<MemoryListItem>>
+    /** 手动添加：内容会去首尾空白，空内容或缺项目的 workspace 作用域直接拒绝。 */
+    create(input: MemoryCreateInput): Promise<MemoryRecord>
     update(id: string, patch: MemoryUpdateInput): Promise<MemoryRecord | null>
     /** 软删：记录保留但不再参与召回。 */
     remove(id: string): Promise<void>
@@ -498,6 +500,8 @@ export interface FastAgentApi {
     turnActivity(turnId: string): Promise<MemoryTurnActivity>
     /** 哪些回合有记忆活动（召回命中或提取产出）；会话加载时一次拉全。 */
     conversationActivity(conversationId: string): Promise<string[]>
+    /** 召回测试：按当前设置模拟一轮对话会注入哪些记忆与知识条目；不刷新访问时间、不记日志。 */
+    previewRecall(text: string, projectId: string | null): Promise<RecallPreview>
   }
   changes: {
     /** 某一轮 Agent 对工作区的最终变更聚合；不含 diff 文本。 */

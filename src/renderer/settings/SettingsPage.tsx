@@ -24,7 +24,7 @@ import { ShellCommandSettings } from './ShellCommandSettings'
 import { UsageSettings } from './UsageSettings'
 import { RunLimitSettings } from './RunLimitSettings'
 
-export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onResetModePrompts, onNotice, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue }: SettingsPageProps) {
+export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onResetModePrompts, onNotice, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue, currentProjectId, onOpenConversation }: SettingsPageProps) {
   const { category, setCategory, contentRef } = useSettingsNavigation(requestedCategory, categoryRequest)
   const selectableModels = useMemo(() => mergeModelOptions(models, localModels), [models, localModels])
   const { active, primary, tabs } = settingsNavigation(category)
@@ -57,8 +57,8 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'usage' && <><UsageSettings onNotice={onNotice} /><RunLimitSettings settings={settings} onSettingsChange={onSettingsChange} /></>}
             {category === 'context' && settings && <ContextSettings settings={settings} model={selectableModels.find((item) => item.id === selectedModelId) ?? null} onChange={onSettingsChange} />}
             {category === 'permissions' && settings && <PermissionSettings settings={settings} onChange={onSettingsChange} />}
-            {category === 'memory' && settings && <MemorySettings settings={settings} models={selectableModels} onChange={onSettingsChange} onNotice={onNotice} />}
-            {category === 'knowledge' && <KnowledgeSettings onNotice={onNotice} />}
+            {category === 'memory' && settings && <MemorySettings settings={settings} models={selectableModels} currentProjectId={currentProjectId} onChange={onSettingsChange} onNotice={onNotice} onNavigate={setCategory} onOpenConversation={onOpenConversation} />}
+            {category === 'knowledge' && settings && <KnowledgeSettings settings={settings} currentProjectId={currentProjectId} onChange={onSettingsChange} onNotice={onNotice} onNavigate={setCategory} />}
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'runtime' && settings && <><RuntimeSettings onNotice={onNotice} /><ShellCommandSettings settings={settings} onChange={onSettingsChange} /></>}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}

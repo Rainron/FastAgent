@@ -2,20 +2,50 @@ import { useKnowledgeSettings } from './hooks/use-knowledge-settings'
 import { MarkdownRenderer } from '../resource-panel/MarkdownRenderer'
 import { FileText, FolderPlus, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, Unlink } from 'lucide-react'
 import { CenterDialog } from '../components/CenterDialog'
-import { describePreview, describeSource, entryOrigin, sourceStatusLabel, sourceStatusTone } from './kb-source-view'
+import { describePreview, describeSource, describeUnlink, entryOrigin, sourceStatusLabel, sourceStatusTone } from './kb-source-view'
+import type { AppSettings } from '../../shared/types'
+import { KB_RECALL_LIMITS } from '../../shared/knowledge-settings'
+import { ContextSourcesGuide } from './ContextSourcesGuide'
+import { RecallPreviewPanel } from './RecallPreviewPanel'
+import type { SettingsCategory } from './settings-navigation'
 
 interface Draft { id?: string; title: string; content: string }
 const EMPTY_DRAFT: Draft = { title: '', content: '' }
+const RECALL_OPTIONS = Array.from({ length: KB_RECALL_LIMITS.max - KB_RECALL_LIMITS.min + 1 }, (_, index) => KB_RECALL_LIMITS.min + index)
 
 /**
  * 项目知识库管理：左列表右详情的 master-detail 布局。
  * 编辑态由「编辑 / 新增」显式进入，切换条目即放弃未保存草稿——
  * 知识条目是人工策展内容，静默丢弃前有可见的取消按钮兜底。
  */
-export function KnowledgeSettings({ onNotice }: { onNotice: (notice: string) => void }) {
-  const { loading, error, reload, projects, projectId, setProjectId, entries, selectedId, draft, setDraft, saving, confirmingDelete, setConfirmingDelete, sources, pending, setPending, busy, selected, save, remove, pickSource, confirmImport, refreshSource, removeSource, pick } = useKnowledgeSettings(onNotice)
+export function KnowledgeSettings({ settings, currentProjectId, onChange, onNotice, onNavigate }: {
+  settings: AppSettings
+  currentProjectId: string | null
+  onChange: (patch: Partial<AppSettings>) => void
+  onNotice: (notice: string) => void
+  onNavigate: (category: SettingsCategory) => void
+}) {
+  const { confirmingUnlink, setConfirmingUnlink, loading, error, reload, projects, projectId, setProjectId, entries, selectedId, draft, setDraft, saving, confirmingDelete, setConfirmingDelete, sources, pending, setPending, busy, selected, save, remove, pickSource, confirmImport, refreshSource, removeSource, pick } = useKnowledgeSettings(onNotice, currentProjectId)
 
-  return <section className="settings-panel" aria-labelledby="settings-knowledge">
+  return <>
+  <ContextSourcesGuide active="knowledge" onNavigate={onNavigate} onNotice={onNotice} />
+  <section className="settings-panel" aria-labelledby="settings-knowledge-recall">
+    <div className="settings-section-heading">
+      <div><h2 id="settings-knowledge-recall">检索策略</h2><p>项目会话中，与提问相关的条目会拼在本轮输入前注入；未归属项目的对话不查知识库。</p></div>
+    </div>
+    <label className="switch-row">
+      <input type="checkbox" checked={settings.knowledge.enabled} onChange={(event) => onChange({ knowledge: { ...settings.knowledge, enabled: event.target.checked } })} />
+      <span className="switch-visual" />
+      <span><strong>自动注入知识库</strong><small>关闭后条目仍可管理与全局搜索，只是不再自动带进对话</small></span>
+    </label>
+    <div className="settings-row">
+      <div><strong>单轮注入条数</strong><span>条目是整段原文，比记忆长得多；条数越多占用上下文越多</span></div>
+      <select aria-label="知识库单轮注入条数" value={settings.knowledge.maxRecall} disabled={!settings.knowledge.enabled} onChange={(event) => onChange({ knowledge: { ...settings.knowledge, maxRecall: Number(event.target.value) } })}>
+        {RECALL_OPTIONS.map((count) => <option key={count} value={count}>{count} 条</option>)}
+      </select>
+    </div>
+  </section>
+  <section className="settings-panel" aria-labelledby="settings-knowledge">
     <div className="settings-section-heading">
       <div><h2 id="settings-knowledge">{projects?.find((project) => project.id === projectId)?.name ?? '项目知识库'}</h2><p>{entries.length} 个条目 · {sources.length} 个来源 · 按相关性召回</p></div>
       {projects && projects.length > 0 && <div className="model-settings-actions">
@@ -49,7 +79,7 @@ export function KnowledgeSettings({ onNotice }: { onNotice: (notice: string) => 
         </div>
         <span className="kb-source-status">{sourceStatusLabel(source)}</span>
         <button className="small-control" disabled={busy} onClick={() => void refreshSource(source.id)} title="重新索引"><RefreshCw size={13} /></button>
-        <button className="small-control" onClick={() => void removeSource(source.id)} title="解绑并删除其条目"><Unlink size={13} /></button>
+        <button className="small-control" disabled={busy} onClick={() => setConfirmingUnlink(source)} title="解绑并删除其条目" aria-label={`解绑来源：${source.title}`}><Unlink size={13} /></button>
       </div>)}
     </div>}
     {error ? <div className="section-list-empty" role="alert">{error}<button className="small-control" onClick={reload}>重试</button></div> : !projects || loading ? <div className="section-list-empty"><LoaderCircle size={18} className="spin" /> 加载中</div>
@@ -79,18 +109,21 @@ export function KnowledgeSettings({ onNotice }: { onNotice: (notice: string) => 
             </div>
             <div className="kb-detail-content"><MarkdownRenderer content={selected.content} /></div>
           </>
-          : <div className="kb-detail-empty"><FileText size={22} /><p>{entries.length === 0 ? '把常用约定、架构说明贴进来；检索按标题与正文分词匹配，中文无需手动分词。' : '从左侧选择一个条目查看'}</p></div>}
+          : <div className="kb-detail-empty"><FileText size={22} /><p>{entries.length === 0 ? '把架构说明、接口文档、流程手册贴进来，或绑定文档目录；检索按标题与正文分词匹配，中文无需手动分词。' : '从左侧选择一个条目查看'}</p></div>}
         </div>
       </div>
     }
     {draft && <CenterDialog title={draft.id ? '编辑知识条目' : '新建知识条目'} subtitle="手动维护的内容不会被重新索引覆盖" busy={saving} onClose={() => setDraft(null)}><div className="kb-editor">
             <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="标题，如：发布流程" aria-label="标题" />
-            <textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} placeholder="内容：约定、背景、流程说明……对话相关时会自动注入" aria-label="内容" rows={12} />
+            <textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} placeholder="内容：架构说明、接口细节、流程步骤……提问相关时会自动注入" aria-label="内容" rows={12} />
             <div className="model-settings-actions">
               <button className="small-control" disabled={saving} onClick={() => setDraft(null)}>取消</button>
               <button className="small-control primary" disabled={!draft.title.trim() || !draft.content.trim() || saving} onClick={() => void save()}>{saving ? '保存中' : '保存'}</button>
             </div>
           </div>
     </CenterDialog>}
+    {confirmingUnlink && <CenterDialog title="解绑知识来源？" subtitle="此操作不可撤销" busy={busy} icon={<Unlink size={16} />} onClose={() => setConfirmingUnlink(null)} footer={<><button className="approval-secondary" onClick={() => setConfirmingUnlink(null)}>取消</button><button className="approval-primary" disabled={busy} onClick={() => void removeSource(confirmingUnlink.id)}>解绑并删除条目</button></>}><p>{describeUnlink(confirmingUnlink)}</p></CenterDialog>}
   </section>
+  {projects && projects.length > 0 && <RecallPreviewPanel projects={projects} currentProjectId={projectId || currentProjectId} />}
+  </>
 }

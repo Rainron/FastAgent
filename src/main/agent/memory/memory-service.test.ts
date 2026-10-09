@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LocalStore } from '../../local-store'
-import { extractMemories, recallMemories } from './memory-service'
+import { createManualMemory, extractMemories, previewRecall, recallMemories } from './memory-service'
 
 const defaultRoot = join(tmpdir(), 'fastagent-default')
 mkdirSync(defaultRoot, { recursive: true })
@@ -135,6 +135,57 @@ describe('extractMemories', () => {
     const store = makeStore()
     const result = await extractMemories(store, async () => '- [fact|workspace|3] 团队统一使用 pnpm 管理依赖', { ...input, workspaceId: null })
     expect(result.created[0]).toMatchObject({ scope: 'global', scopeId: null })
+    store.close()
+  })
+})
+
+describe('previewRecall', () => {
+  const on = { enabled: true, maxRecall: 5 }
+
+  it('按当前设置返回会注入的记忆与知识条目，但不刷新记忆访问时间', () => {
+    const store = makeStore()
+    const memory = store.createMemory(namespace, { scope: 'workspace', scopeId: 'p1', type: 'decision', content: '当前项目数据库统一使用 PostgreSQL' })
+    store.saveKbEntry(namespace, 'p1', { title: '数据库约定', content: '数据库迁移脚本放在 migrations 目录' })
+    const result = previewRecall(store, { namespace, projectId: 'p1', text: '这个项目的数据库是什么', memory: on, knowledge: on })
+    expect(result.memories.map((item) => item.id)).toEqual([memory.id])
+    expect(result.knowledge.map((item) => item.title)).toEqual(['数据库约定'])
+    expect(store.getMemory(namespace, memory.id)?.lastAccessedAt).toBeNull()
+    store.close()
+  })
+
+  it('开关关着时如实返回空，并标出是哪一路关了', () => {
+    const store = makeStore()
+    store.createMemory(namespace, { scope: 'global', scopeId: null, type: 'preference', content: '回答使用中文数据库术语' })
+    store.saveKbEntry(namespace, 'p1', { title: '数据库约定', content: '数据库迁移脚本放在 migrations 目录' })
+    const result = previewRecall(store, { namespace, projectId: 'p1', text: '数据库', memory: { enabled: false, maxRecall: 5 }, knowledge: { enabled: false, maxRecall: 3 } })
+    expect(result).toEqual({ memories: [], knowledge: [], memoryEnabled: false, knowledgeEnabled: false })
+    store.close()
+  })
+
+  it('未归属项目时只查全局记忆，不查知识库', () => {
+    const store = makeStore()
+    store.createMemory(namespace, { scope: 'global', scopeId: null, type: 'preference', content: '数据库命名使用蛇形' })
+    store.saveKbEntry(namespace, 'p1', { title: '数据库约定', content: '数据库迁移脚本放在 migrations 目录' })
+    const result = previewRecall(store, { namespace, projectId: null, text: '数据库命名', memory: on, knowledge: on })
+    expect(result.memories).toHaveLength(1)
+    expect(result.knowledge).toEqual([])
+    store.close()
+  })
+})
+
+describe('createManualMemory', () => {
+  it('手动记忆去首尾空白，重要性与置信度高于自动抽取', () => {
+    const store = makeStore()
+    const memory = createManualMemory(store, namespace, { content: '  提交信息用中文  ', type: 'preference', scope: 'global', scopeId: 'ignored' })
+    expect(memory).toMatchObject({ content: '提交信息用中文', scope: 'global', scopeId: null, importance: 4, confidence: 1, sourceConversationId: null })
+    store.close()
+  })
+
+  it('空内容、超长内容与缺项目的项目记忆直接拒绝', () => {
+    const store = makeStore()
+    expect(() => createManualMemory(store, namespace, { content: '   ', type: 'fact', scope: 'global', scopeId: null })).toThrow('不能为空')
+    expect(() => createManualMemory(store, namespace, { content: '长'.repeat(501), type: 'fact', scope: 'global', scopeId: null })).toThrow('不能超过')
+    expect(() => createManualMemory(store, namespace, { content: '用 pnpm', type: 'fact', scope: 'workspace', scopeId: null })).toThrow('需要指定项目')
     store.close()
   })
 })

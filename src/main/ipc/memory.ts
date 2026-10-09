@@ -1,9 +1,16 @@
-import type { MemoryListQuery, MemoryScope, MemoryUpdateInput } from '../../shared/types'
+import type { MemoryCreateInput, MemoryListQuery, MemoryScope, MemoryUpdateInput } from '../../shared/types'
 import type { IpcRegistrar, MainContext } from '../app-context'
+import { createManualMemory, previewRecall } from '../agent/memory/memory-service'
 
-/** 长期记忆的列表、编辑与清空。 */
+/** 长期记忆的列表、手动添加、编辑、清空与召回测试。 */
 export function registerMemoryIpc(handle: IpcRegistrar, ctx: MainContext) {
-  handle('memories:list', (_event, query: MemoryListQuery = {}) => ctx.store.listMemories(ctx.requireNamespace(), query))
+  handle('memories:list', (_event, query: MemoryListQuery = {}) => ctx.store.listMemoriesWithSource(ctx.requireNamespace(), query))
+  handle('memories:create', (_event, input: MemoryCreateInput) => {
+    const created = createManualMemory(ctx.store, ctx.requireNamespace(), input)
+    ctx.mainWindow?.webContents.send('memories:changed')
+    return created
+  })
+  handle('memories:preview-recall', (_event, text: string, projectId: string | null) => previewRecall(ctx.store, { namespace: ctx.requireNamespace(), projectId, text, memory: ctx.settings.memory, knowledge: ctx.settings.knowledge }))
   handle('memories:turn-activity', (_event, turnId: string) => ({
     recalled: ctx.store.listMemoryRecallsForTurn(ctx.requireNamespace(), turnId),
     extracted: ctx.store.listMemories(ctx.requireNamespace(), { sourceTurnId: turnId, status: 'all', pageSize: 50 }).items

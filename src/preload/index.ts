@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent, RateLimitSnapshot } from '../shared/types'
+import type { AuthSnapshot, ArtifactQuery, BootstrapData, CaptchaData, FastAgentApi, AgentEvent, AppRuntimeInfo, ConversationPageQuery, PageQuery, PermissionPreset, ProjectRecord, RendererErrorReport, StartupWarnings, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot, Ability, AbilityType, AppSettings, ApprovalDecision, ClientPreferences, DataStorageInfo, FileVersionRecord, InitProjectResult, KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview, LocalMcpServerInput,  LocalModelSummary, LocalModelTestResult, LocalSkillRecord, McpServerDetail, McpTestStatus, MemoryListQuery, MemoryScope, MemoryTurnActivity, MemoryUpdateInput, ModelUsageOverview, Plugin, PluginDetail, PluginInstallResult, PluginQuery, RuntimeReport, SandboxCapabilities, SandboxSessionInfo, SearchQuery, SearchResponse, SkillCheckResult, SkillDetail, SkillDraft, SkillVersionRecord, BundleExportOptions, BundleImportPlan, BundlePreview, HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult, McpPromptDescriptor, McpPromptResult, McpResourceContent, McpResourceDescriptor, McpResourceTemplateDescriptor, TerminalChunk, TerminalExit, ModelUsageWindow, ShellCommandChunk, PreviewProbeResult, PreviewReadyEvent, RateLimitSnapshot, MemoryCreateInput, RecallPreview } from '../shared/types'
 
 /**
  * 主进程建窗时已经知道主题，用启动参数带过来。
@@ -391,11 +391,13 @@ const api: FastAgentApi = {
   },
   memories: {
     list: (query?: MemoryListQuery) => ipcRenderer.invoke('memories:list', query ?? {}),
+    create: (input: MemoryCreateInput) => ipcRenderer.invoke('memories:create', input),
     update: (id: string, patch: MemoryUpdateInput) => ipcRenderer.invoke('memories:update', id, patch),
     remove: (id: string) => ipcRenderer.invoke('memories:remove', id),
     clear: (scope?: MemoryScope, scopeId?: string | null) => ipcRenderer.invoke('memories:clear', scope, scopeId ?? null),
     turnActivity: (turnId: string): Promise<MemoryTurnActivity> => ipcRenderer.invoke('memories:turn-activity', turnId),
     conversationActivity: (conversationId: string): Promise<string[]> => ipcRenderer.invoke('memories:conversation-activity', conversationId),
+    previewRecall: (text: string, projectId: string | null): Promise<RecallPreview> => ipcRenderer.invoke('memories:preview-recall', text, projectId),
     onChanged: (listener: () => void) => {
       const handler = () => listener()
       ipcRenderer.on('memories:changed', handler)

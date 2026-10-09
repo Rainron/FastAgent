@@ -5,6 +5,7 @@ import { migrateLegacyContextSettings, normalizeContextSettings } from '../../sh
 import { normalizeSandboxSettings } from '../../shared/sandbox'
 import { normalizePageSize } from '../../shared/pagination'
 import { clampSubAgentMaxToolCalls } from '../agent/subagent/subagent-config'
+import { normalizeKnowledgeSettings } from '../../shared/knowledge-settings'
 import { defaultClientPreferences, defaultSettings, normalizeMemorySettings, normalizeRunLimits, parseJson } from './row-mappers'
 
 /** 应用设置与客户端偏好：两者都是 key/scope 单行 JSON，读写规则同源。 */
@@ -17,7 +18,7 @@ export class SettingsStore {
     // sandbox 为嵌套对象，浅合并救不了缺字段的旧记录，单独归一化。
     // 上下文档位读一次收敛一次：旧库里「关了自动摘要但档位还在 auto」的组合会让整组阈值静默失效。
     const merged = { ...defaultSettings, ...stored }
-    return { ...merged, ...normalizeAttachmentPolicy(stored), ...normalizeContextSettings(migrateLegacyContextSettings(merged)), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), limits: normalizeRunLimits(stored.limits), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(stored.subAgentMaxToolCalls) }
+    return { ...merged, ...normalizeAttachmentPolicy(stored), ...normalizeContextSettings(migrateLegacyContextSettings(merged)), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), knowledge: normalizeKnowledgeSettings(stored.knowledge), limits: normalizeRunLimits(stored.limits), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(stored.subAgentMaxToolCalls) }
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {

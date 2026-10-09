@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KbEntry, KbSource, KbSourceKind, KbSourcePreview, ProjectRecord } from '../../../shared/types'
-import { describeIndexResult } from '../kb-source-view'
+import { describeIndexResult, pickKbProject } from '../kb-source-view'
 
 interface Draft { id?: string; title: string; content: string }
 
-export function useKnowledgeSettings(onNotice: (notice: string) => void) {
+export function useKnowledgeSettings(onNotice: (notice: string) => void, currentProjectId: string | null) {
   const [projects, setProjects] = useState<ProjectRecord[] | null>(null)
   const [projectId, setProjectId] = useState('')
   const [entries, setEntries] = useState<KbEntry[]>([])
@@ -16,6 +16,8 @@ export function useKnowledgeSettings(onNotice: (notice: string) => void) {
   // 待确认的导入：选完路径先看范围预览，用户点确认才真正建来源并写库。
   const [pending, setPending] = useState<KbSourcePreview | null>(null)
   const [busy, setBusy] = useState(false)
+  // 解绑会连带删掉该来源导入的全部条目，先确认
+  const [confirmingUnlink, setConfirmingUnlink] = useState<KbSource | null>(null)
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -30,7 +32,7 @@ export function useKnowledgeSettings(onNotice: (notice: string) => void) {
       if (cancelled) return
       const active = list.filter((project) => !project.archived)
       setProjects(active)
-      setProjectId((current) => active.some((project) => project.id === current) ? current : active[0]?.id ?? '')
+      setProjectId((current) => pickKbProject(active.map((project) => project.id), current, currentProjectId))
     }).catch(() => { if (!cancelled) setError('项目列表加载失败，请重试') })
     return () => { cancelled = true }
   }, [revision])
@@ -56,6 +58,7 @@ export function useKnowledgeSettings(onNotice: (notice: string) => void) {
     setSelectedId(null)
     setPending(null)
     setConfirmingDelete(false)
+    setConfirmingUnlink(null)
     void load()
     return () => { requestId.current += 1 }
   }, [load])
@@ -129,6 +132,7 @@ export function useKnowledgeSettings(onNotice: (notice: string) => void) {
     setBusy(true)
     try {
       await window.fastAgent.knowledgeBase.removeSource(sourceId)
+      setConfirmingUnlink(null)
       onNotice('已解绑来源，其条目已删除')
       await load()
     } catch { onNotice('解绑来源失败') } finally { setBusy(false) }
@@ -141,5 +145,5 @@ export function useKnowledgeSettings(onNotice: (notice: string) => void) {
     setSelectedId(entryId)
   }
 
-  return { loading, error, reload, projects, projectId, setProjectId, entries, selectedId, draft, setDraft, saving, confirmingDelete, setConfirmingDelete, sources, pending, setPending, busy, selected, save, remove, pickSource, confirmImport, refreshSource, removeSource, pick }
+  return { confirmingUnlink, setConfirmingUnlink, loading, error, reload, projects, projectId, setProjectId, entries, selectedId, draft, setDraft, saving, confirmingDelete, setConfirmingDelete, sources, pending, setPending, busy, selected, save, remove, pickSource, confirmImport, refreshSource, removeSource, pick }
 }

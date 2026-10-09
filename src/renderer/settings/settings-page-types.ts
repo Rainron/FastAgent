@@ -24,4 +24,7 @@ export interface SettingsPageProps {
   onSelectModel: (modelId: number) => void
   onToggleFavoriteModel: (modelId: number) => void
   onTestDialogue: (id: number) => Promise<LocalModelTestResult>
+  /** 侧栏当前选中的项目；知识库、召回测试、新增记忆默认落到这里。 */
+  currentProjectId: string | null
+  onOpenConversation: (id: string) => void
 }

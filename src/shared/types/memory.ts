@@ -1,3 +1,5 @@
+import type { KbEntry } from './kb'
+
 /** 跨会话长期记忆。会话内历史仍由 conversation_turns 与摘要压缩负责，这里只存值得跨会话复用的信息。 */
 export type MemoryScope = 'global' | 'workspace' | 'agent'
 
@@ -77,4 +79,27 @@ export interface MemoryTurnActivity {
   recalled: Array<MemoryRecord & { recalledAt: number }>
   /** 本轮结束后自动抽取写入的记忆（含被后续替代的，状态见 status）。 */
   extracted: MemoryRecord[]
+}
+
+/** 召回测试的结果：模拟一轮对话按当前设置会注入哪些记忆与知识条目。 */
+export interface RecallPreview {
+  memories: MemoryRecord[]
+  knowledge: KbEntry[]
+  /** 开关关闭时对应列表必为空，界面据此说明「为什么没命中」。 */
+  memoryEnabled: boolean
+  knowledgeEnabled: boolean
+}
+
+/** 管理页列表项：带上来源会话的标题，界面不必再逐条查；会话已删除时为 null。 */
+export interface MemoryListItem extends MemoryRecord {
+  sourceConversationTitle: string | null
+}
+
+/** 用户在管理页手动添加的记忆；Sub-agent 作用域不开放手填，避免写进一个查无此人的 id。 */
+export interface MemoryCreateInput {
+  content: string
+  type: MemoryType
+  scope: 'global' | 'workspace'
+  /** workspace 时为 projectId；global 忽略。 */
+  scopeId: string | null
 }

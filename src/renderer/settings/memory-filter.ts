@@ -1,4 +1,4 @@
-import type { MemoryListQuery, MemoryRecord, MemoryScope, ModelOption } from '../../shared/types'
+import type { MemoryListItem, MemoryListQuery, MemoryRecord, MemoryScope, ModelOption } from '../../shared/types'
 
 /** 记忆管理页的作用域筛选；project 用 projectId，与记忆的 scopeId 同一口径。 */
 export type MemoryScopeFilter = { kind: 'all' } | { kind: 'global' } | { kind: 'project'; projectId: string }
@@ -51,4 +51,26 @@ export function describeMemoryScope(memory: Pick<MemoryRecord, 'scope' | 'scopeI
   if (memory.scope === 'agent') return `Sub-agent · ${memory.scopeId ?? '未指定'}`
   if (!memory.scopeId) return '项目'
   return `项目 · ${projectNames[memory.scopeId] ?? '已移除的项目'}`
+}
+
+/** 来源一栏：有来源会话就给标题并允许跳转；会话已删只留说明，手动添加的没有来源。 */
+export function describeMemorySource(memory: Pick<MemoryListItem, 'sourceConversationId' | 'sourceConversationTitle'>): { label: string; conversationId: string | null } {
+  if (!memory.sourceConversationId) return { label: '手动添加', conversationId: null }
+  if (memory.sourceConversationTitle === null) return { label: '来源对话已删除', conversationId: null }
+  return { label: memory.sourceConversationTitle || '未命名对话', conversationId: memory.sourceConversationId }
+}
+
+/**
+ * 新增记忆的默认作用域：正在看某个项目的记忆就落到那个项目，
+ * 否则落到当前打开的项目，都没有才是全局——跟用户此刻关注的范围走。
+ */
+export function defaultCreateScope(filter: MemoryScopeFilter, currentProjectId: string | null, projectIds: readonly string[]): string {
+  if (filter.kind === 'project') return filter.projectId
+  if (filter.kind === 'global') return 'global'
+  return currentProjectId && projectIds.includes(currentProjectId) ? currentProjectId : 'global'
+}
+
+/** 作用域下拉值转成创建参数：'global' 以外的值都是 projectId。 */
+export function memoryCreateScope(value: string): { scope: 'global' | 'workspace'; scopeId: string | null } {
+  return value === 'global' ? { scope: 'global', scopeId: null } : { scope: 'workspace', scopeId: value }
 }

@@ -61,3 +61,10 @@ export interface KbIndexResult {
   /** 逐个文件的失败原因；整体失败时 source.status 为 failed。 */
   failures: Array<{ path: string; error: string }>
 }
+
+/** 项目知识库的检索开关与注入条数；只影响对话时的自动注入，不影响条目管理与全局搜索。 */
+export interface KnowledgeSettings {
+  enabled: boolean
+  /** 单轮最多注入几条，1~8。 */
+  maxRecall: number
+}

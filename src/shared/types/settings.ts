@@ -1,3 +1,4 @@
+import type { KnowledgeSettings } from './kb'
 import type { PermissionAction } from '../permission-rules'
 import type { SandboxSettings } from '../sandbox'
 import type { AgentAbilityPolicy } from './abilities'
@@ -165,6 +166,8 @@ export interface AppSettings {
   bashPath: string
   /** 执行轨迹的展示偏好；缺省视为默认值（底部用时 + 中文文案 + 展开即见内容） */
   traceDisplay?: TraceDisplaySettings
+  /** 知识库注入开关与条数；缺省视为默认值。 */
+  knowledge: KnowledgeSettings
   /** 输入框 `!命令` 直接执行 shell；缺省视为默认值（开启 + 只本地显示） */
   shellCommand?: ShellCommandSettings
   /** Ctrl+G 外部编辑使用的编辑器可执行文件路径；空串表示用系统默认应用打开草稿 */

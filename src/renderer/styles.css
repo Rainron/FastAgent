@@ -273,11 +273,11 @@ body.project-reordering, body.project-reordering * { cursor: grabbing !important
 .project-item:hover .project-folder { color: var(--text-secondary); }
 .project-folder.open { color: var(--accent-tech); transform: scale(1.06); }
 /* 项目里有进行中的运行或没看过的结果时，在文件夹角上点一枚小灯，不额外占一列 */
-.project-folder-badge { position: absolute; right: -2px; bottom: -1px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-tech); box-shadow: 0 0 0 1.5px var(--sidebar); }
+.project-folder-badge { position: absolute; right: -2px; bottom: -1px; width: 6px; height: 6px; border-radius: 50%; background: var(--run-mark-active); box-shadow: 0 0 0 1.5px var(--sidebar); }
 .project-folder-badge.running { animation: run-status-pulse 1.8s ease-in-out infinite; }
-.project-folder-badge.waiting { background: #f59e0b; }
-.project-folder-badge.failed { background: #ef4444; }
-.project-folder-badge.cancelled { background: var(--text-tertiary); }
+.project-folder-badge.waiting { background: var(--run-mark-waiting); }
+.project-folder-badge.failed { background: var(--run-mark-failed); }
+.project-folder-badge.cancelled { background: var(--run-mark-muted); }
 :root[data-motion="off"] .project-folder, :root[data-motion="system"][data-reduced-motion="true"] .project-folder { transition: none; }
 :root[data-motion="off"] .project-folder-badge.running, :root[data-motion="system"][data-reduced-motion="true"] .project-folder-badge.running { animation: none; }
 .project-conversations-more { width: 100%; height: 24px; display: flex; align-items: center; padding: 0 8px; border: none; border-radius: 7px; background: transparent; color: var(--text-tertiary); text-align: left; font: inherit; font-size: 11px; cursor: pointer; }
@@ -301,19 +301,28 @@ body.project-reordering, body.project-reordering * { cursor: grabbing !important
 .row-title::-webkit-scrollbar, .recent-title::-webkit-scrollbar { display: none; }
 .run-status-slot { width: 8px; flex: 0 0 8px; display: inline-flex; align-items: center; justify-content: center; }
 .project-item .run-status-slot { width: 8px; }
-/* 进行中的状态点落在标题左侧的缩进带里：绝对定位，出现与否都不会让标题左右跳 */
-.row-lead-dot { position: absolute; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary); transform: translateY(-50%); }
-.recent-item .row-lead-dot { left: 16px; }
-.project-conversation .row-lead-dot { left: 1px; }
-.row-lead-dot.running { background: var(--accent-tech); animation: run-status-pulse 1.8s ease-in-out infinite; }
-.row-lead-dot.waiting { background: #f59e0b; }
-/* 已出结果但没看过：右端一枚未读点，悬停时让位给操作菜单 */
-.row-unread-dot { position: absolute; top: 50%; right: 11px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-tech); transform: translateY(-50%); transition: opacity var(--motion-hover) ease-out; }
-.row-unread-dot.failed { background: #ef4444; }
-.row-unread-dot.cancelled { background: var(--text-tertiary); }
-.workspace-item:hover .row-unread-dot, .project-conversation:hover .row-unread-dot,
-.workspace-item:has(.item-actions-trigger[aria-expanded="true"]) .row-unread-dot { opacity: 0; }
-:root[data-motion="off"] .row-lead-dot.running, :root[data-motion="system"][data-reduced-motion="true"] .row-lead-dot.running { animation: none; }
+/* 侧栏状态语义色：运行用主题色，待处理琥珀，失败红，中断灰；全侧栏只认这一套 */
+.sidebar { --run-mark-active: var(--accent-tech); --run-mark-waiting: #f59e0b; --run-mark-failed: var(--status-error); --run-mark-muted: var(--text-tertiary); }
+/* 状态标记一律在行尾，与「⋯」菜单同一个中心（距右缘约 13.5px）：行首留给标题对齐和项目树竖线，
+   标记落在行内，跟着行的悬停 / 选中底色走；悬停或菜单展开时让位给菜单，不跳位 */
+.row-status-mark { --mark-size: 7px; position: absolute; top: 50%; right: calc(13.5px - var(--mark-size) / 2); width: var(--mark-size); height: var(--mark-size); display: grid; place-items: center; border-radius: 50%; transform: translateY(-50%); pointer-events: none; transition: opacity var(--motion-hover) ease-out; }
+.row-status-mark.glyph-spinner { --mark-size: 11px; }
+.row-status-mark.glyph-attention, .row-status-mark.glyph-alert { --mark-size: 12px; }
+.run-mark-spinner { width: 100%; height: 100%; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--run-mark-active) 22%, transparent); border-top-color: var(--run-mark-active); border-radius: 50%; animation: spin 900ms linear infinite; }
+/* 待处理与失败：带感叹号的实心圆，形状本身就和「转圈」「圆点」分得开 */
+.glyph-attention, .glyph-alert { color: #fff; font-size: 9px; font-weight: 700; line-height: 1; }
+.glyph-attention::after, .glyph-alert::after { content: '!'; }
+.glyph-attention { background: var(--run-mark-waiting); }
+.glyph-alert { background: var(--run-mark-failed); }
+.row-status-mark.glyph-dot { background: var(--run-mark-active); }
+.row-status-mark.glyph-dot.cancelled { background: var(--run-mark-muted); }
+.workspace-item:hover .row-status-mark, .project-conversation:hover .row-status-mark,
+.workspace-item:has(.item-actions-trigger[aria-expanded="true"]) .row-status-mark,
+.project-conversation:has(.item-actions-trigger[aria-expanded="true"]) .row-status-mark,
+.recent-item.active .row-status-mark { opacity: 0; }
+/* 未读标题加重一档：邮件 / IM 的通行做法，扫一眼就能分出哪些有新结果 */
+.recent-item.unread .recent-title, .project-conversation.unread .row-title { color: var(--text-primary); font-weight: 600; }
+:root[data-motion="off"] .run-mark-spinner, :root[data-motion="system"][data-reduced-motion="true"] .run-mark-spinner { animation-duration: 2.4s; }
 .project-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-calm); }
 .project-dot.tech { background: var(--accent-tech); }
 .project-item .workspace-item-main > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -336,8 +345,8 @@ body.project-reordering, body.project-reordering * { cursor: grabbing !important
 
 .recent-title-input { flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 7px; border: 1px solid var(--accent-calm); border-radius: 6px; background: var(--surface); color: var(--text-primary); font: inherit; font-size: 12px; outline: none; }
 .recent-item .workspace-item-main time { min-width: max-content; flex: 0 0 auto; align-self: center; white-space: nowrap; text-align: right; color: var(--text-tertiary); font-size: 10px; line-height: 16px; transition: opacity var(--motion-hover) ease-out; }
-/* 未读点占的就是时间那块位置，两个一起出现会挤成一团 */
-.recent-item:has(.row-unread-dot) .workspace-item-main time { opacity: 0; visibility: hidden; }
+/* 状态标记占的就是时间那块位置，两个一起出现会挤成一团 */
+.recent-item:has(.row-status-mark) .workspace-item-main time { opacity: 0; visibility: hidden; }
 .recent-item .item-actions { position: absolute; top: 0; right: 0; bottom: 0; width: 30px; z-index: 2; }
 .recent-item .item-actions-trigger { opacity: 0; }
 .recent-item:hover .workspace-item-main time,
@@ -2508,6 +2517,10 @@ button.file-list-row:hover { background: var(--hover); color: var(--text-primary
 .ability-row-title strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .ability-row-main > small { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; line-height: 18px; }
 .ability-row-main > small.mono { font-family: "JetBrains Mono", Consolas, monospace; font-size: 10px; }
+/* dsh 搜索结果的兼容说明：原因可能较长，允许折两行，颜色跟着徽章走 */
+.ability-card .ability-row-main > small.dsh-compat-note { -webkit-line-clamp: 2; font-size: 10.5px; }
+.ability-row-main > small.dsh-compat-note.warn { color: var(--status-warn); }
+.ability-row-main > small.dsh-compat-note.error { color: var(--status-error); }
 .ability-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--text-tertiary); font-size: 10px; line-height: 16px; }
 .ability-row-meta .mono { font-family: "JetBrains Mono", Consolas, monospace; }
 /* 与标题行同高并顶部对齐，描述长短不同的行右侧控件才在同一水平线上。 */

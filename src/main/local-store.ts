@@ -1,7 +1,7 @@
+import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, ModelUsageWindow, TurnSessionAnchor } from '../shared/types'
 import { app } from 'electron'
 import Database from 'better-sqlite3'
-import type { AbilityInstallMeta, AbilityType, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, AgentTaskRecord, AgentTaskStatus, ResumableRun, RunErrorKind, AppSettings, Artifact, ArtifactQuery, CompactionHistory, ContextPolicy, ContextState, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, ConversationTurnPatch, ClientPreferences, CliToolCheck, FileOperation, FileVersionRecord, HubSource, LocalCliTool, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PageResult, ProjectRecord, SkillVersionRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnContextSource, TurnRuntimeConfig, TurnStatus } from '../shared/types'
-import type { ModelUsageOverview, ModelUsageRecord, ModelUsageSummary, ModelUsageWindow, TurnSessionAnchor } from '../shared/types'
+import type { AbilityInstallMeta, AbilityType, AgentRunChanges, AgentRunLedgerEntry, AgentRunRecord, AgentRunStatus, AgentTaskRecord, AgentTaskStatus, ResumableRun, RunErrorKind, AppSettings, Artifact, ArtifactQuery, CompactionHistory, ContextPolicy, ContextState, ContextSummary, ConversationDetailed, ConversationPageQuery, ConversationRunState, ConversationStats, ConversationTurn, ConversationTurnPatch, ClientPreferences, CliToolCheck, FileOperation, FileVersionRecord, HubSource, LocalCliTool, LocalMcpServer, LocalMcpServerInput, LocalModelInput, LocalModelSummary, McpConnectionSnapshot, MemoryListQuery, MemoryRecord, MemoryScope, MemoryUpdateInput, ModelCredentials, PageQuery, PageResult, ProjectRecord, SkillVersionRecord, StoredPermissionRule, TodoItem, ToolCallRecord, TurnContextSource, TurnRuntimeConfig, TurnStatus, MemoryListItem } from '../shared/types'
 import type { PermissionAction } from '../shared/permission-rules'
 import type { ModelParameterOverride } from '../shared/model-parameters'
 import type { StoredPermissionProfile } from '../shared/permission-profiles'
@@ -301,6 +301,16 @@ export class LocalStore {
   findResumableRun(namespace: string, conversationId: string): ResumableRun | null { return this.agentRunRepository.findResumableRun(namespace, conversationId) }
 
   listMemories(namespace: string, query?: MemoryListQuery): PageResult<MemoryRecord> { return this.memoryRepository.listMemories(namespace, query) }
+  /** 管理页列表：跨域补上来源会话标题，一页最多几十条，逐条按主键查即可。 */
+  listMemoriesWithSource(namespace: string, query?: MemoryListQuery): PageResult<MemoryListItem> {
+    const page = this.memoryRepository.listMemories(namespace, query)
+    const titles = new Map<string, string | null>()
+    const titleOf = (id: string) => {
+      if (!titles.has(id)) titles.set(id, this.conversationRepository.getConversation(namespace, id)?.title ?? null)
+      return titles.get(id) ?? null
+    }
+    return { ...page, items: page.items.map((memory) => ({ ...memory, sourceConversationTitle: memory.sourceConversationId ? titleOf(memory.sourceConversationId) : null })) }
+  }
   recordMemoryRecalls(namespace: string, conversationId: string, turnId: string, memoryIds: string[], now?: number): void { this.memoryRepository.recordMemoryRecalls(namespace, conversationId, turnId, memoryIds, now) }
   listMemoryRecallsForTurn(namespace: string, turnId: string): Array<MemoryRecord & { recalledAt: number }> { return this.memoryRepository.listMemoryRecallsForTurn(namespace, turnId) }
   recordTurnContextSources(namespace: string, conversationId: string, turnId: string, sources: readonly Omit<TurnContextSource, 'recordedAt'>[], now?: number): void { this.memoryRepository.recordTurnContextSources(namespace, conversationId, turnId, sources, now) }

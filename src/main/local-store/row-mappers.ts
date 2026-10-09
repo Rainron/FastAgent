@@ -2,6 +2,7 @@ import type { AbilityInstallMeta, AbilitySource, AbilityType, AgentRunRecord, Ag
 import { defaultSandboxSettings } from '../../shared/sandbox'
 import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
 import { clampRecallLimit, DEFAULT_RECALL } from '../agent/memory/memory-rank'
+import { DEFAULT_KNOWLEDGE_SETTINGS } from '../../shared/knowledge-settings'
 import { SUBAGENT_LIMITS } from '../agent/subagent/subagent-types'
 import { DEFAULT_ATTACHMENT_POLICY } from '../../shared/attachment-policy'
 import { DEFAULT_SHELL_COMMAND_SETTINGS } from '../../shared/shell-command'
@@ -63,6 +64,7 @@ export const defaultSettings: AppSettings = {
   subAgentEnabled: true,
   subAgentMaxToolCalls: SUBAGENT_LIMITS.defaultMaxToolCalls,
   memory: { enabled: true, autoExtract: true, maxRecall: DEFAULT_RECALL, extractModelId: null },
+  knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
   sandbox: defaultSandboxSettings,
   quickDialogEnabled: true,
   limits: DEFAULT_RUN_LIMITS
