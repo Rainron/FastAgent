@@ -13,6 +13,8 @@ export interface AgentFileChange {
   tools: string[]
   /** 有无可展示的逐行 diff；文本按需单独取，不随列表一起传。 */
   hasDiff: boolean
+  /** 已被用户在界面上撤销（原文写回 / 新建的文件删掉）。 */
+  reverted: boolean
   updatedAt: number
 }
 
@@ -33,6 +35,12 @@ export interface FileVersionRecord {
   /** 存过改动前原文，可恢复；旧记录与超限文件为 false。 */
   canRestore: boolean
   changedAt: number
+}
+
+/** 撤销一轮改动的结果：按文件分开，成功与跳过（含原因）各自列出。 */
+export interface TurnRevertResult {
+  reverted: string[]
+  skipped: Array<{ path: string; reason: string }>
 }
 
 export interface AgentRunChanges {

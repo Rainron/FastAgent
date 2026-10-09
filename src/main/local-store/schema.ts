@@ -5,7 +5,7 @@ import { ensureKbEntrySourceColumns } from '../kb-store'
 import {
   backfillArtifactsFromTurnEvents, backfillConversationModelId, ensureAbilityMetaLatestColumns, ensureAbilityMetaSourceColumn,
   ensureAccountLayoutColumns, ensureAgentRunDiagnosticColumns, ensureContextPolicyForceCompaction,
-  ensureConversationModelColumn, ensureConversationProjectColumn, ensureFileChangeBeforeText,
+  ensureConversationModelColumn, ensureConversationProjectColumn, ensureFileChangeBeforeText, ensureFileChangeRevertedAt,
   ensureCompactionContextWindow, ensureSummarySourceColumn, ensureTodoPlanColumns, ensureTodoStatusExtended,
   ensureToolCallSourceColumn, ensureToolCallSubAgentColumns, ensureTurnSessionAnchorColumn, ensureTurnStatusInterrupted,
   migrateLegacyMessages, migrateModelSessionToConversation, seedProjectTrustFromProjects, stripEventExecutionSnapshots,
@@ -37,6 +37,7 @@ export function applyMigrations(db: Database.Database) {
   ensureAgentRunDiagnosticColumns(db)
   ensureKbEntrySourceColumns(db)
   ensureFileChangeBeforeText(db)
+  ensureFileChangeRevertedAt(db)
   ensureSummarySourceColumn(db)
   ensureContextPolicyForceCompaction(db)
   ensureCompactionContextWindow(db)

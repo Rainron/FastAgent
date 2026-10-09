@@ -5,7 +5,7 @@ import type { Ability, AbilityType, DoctorReport, LocalMcpServer, LocalMcpServer
 import type { BundleExportOptions, BundleImportPlan, BundlePreview } from './bundle'
 import type { HubInstallResult, HubInstalledAbility, HubListingDetail, HubQuery, HubSearchResult, HubSource, HubSourceInput, HubUpdateCheckResult } from './hub'
 import type { AgentEvent, ToolCallRecord } from './agent-events'
-import type { AgentRunChanges, FileVersionRecord } from './changes'
+import type { AgentRunChanges, FileVersionRecord, TurnRevertResult } from './changes'
 import type { ActiveRunInfo, AgentRunLedgerEntry, AgentTaskRecord, ResumableRun } from './agent-runs'
 import type { AuthSnapshot, BootstrapData, CaptchaData } from './auth'
 import type { ApprovalDecision, ApprovalRequest, ConversationMode, ConversationRunState, PermissionPreset, ThinkingLevel, TodoItem } from './common'
@@ -421,6 +421,8 @@ export interface FastAgentApi {
     list(turnId: string): Promise<AgentRunChanges>
     /** 单个文件在这一轮的逐行 diff；二进制 / 超大文件为 null。 */
     diff(turnId: string, path: string): Promise<string | null>
+    /** 撤销这一轮的文件改动：写回改动前原文、删掉本轮新建的文件；之后又被改过的文件跳过。 */
+    revert(turnId: string): Promise<TurnRevertResult>
   }
   composer: {
     /** 把输入框内容写入临时草稿文件并用系统默认编辑器打开，返回草稿路径 */

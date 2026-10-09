@@ -372,6 +372,7 @@ export const SCHEMA_SQL = `
         after_hash TEXT,
         diff TEXT,
         before_text TEXT,
+        reverted_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         PRIMARY KEY(namespace, turn_id, path)

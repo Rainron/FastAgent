@@ -2,6 +2,17 @@ import type Database from 'better-sqlite3'
 import type { AgentFileChange, AgentRunChanges, Artifact, ArtifactQuery, FileOperation, FileVersionRecord } from '../../shared/types'
 import { parseJson } from './row-mappers'
 
+/** 撤销一轮改动时需要的单条台账记录。 */
+export interface RevertableFileChange {
+  path: string
+  conversationId: string
+  operation: FileOperation
+  /** 本轮写完后的哈希；文件被删掉时为 null。和磁盘现状比对，判断之后有没有人再改过。 */
+  afterHash: string | null
+  /** 本轮第一次写之前的原文；新建文件、二进制与超大文件为 null。 */
+  beforeText: string | null
+}
+
 /** 成果登记与 Agent 文件变更台账（含 diff 与恢复用原文）。 */
 export class ArtifactStore {
   constructor(private readonly db: Database.Database) {}
@@ -170,6 +181,8 @@ export class ArtifactStore {
         -- 同一回合里同一个文件可能被写多次，原文只保留第一次那份，
         -- 否则「恢复到本轮之前」会退成上一次写完的样子。
         before_text = COALESCE(before_text, excluded.before_text),
+        -- 撤销之后同一轮又写了这个文件：撤销标记已不代表磁盘现状
+        reverted_at = NULL,
         updated_at = excluded.updated_at
     `).run(
       namespace, input.turnId, input.path, input.conversationId, input.runId, input.operation,
@@ -194,12 +207,12 @@ export class ArtifactStore {
   /** 一轮的变更聚合，Bar 直接用；diff 文本不在这里返回，按需走 getFileChangeDiff。 */
   listFileChanges(namespace: string, turnId: string): AgentRunChanges {
     const rows = this.db.prepare(`
-      SELECT path, operation, old_path, additions, deletions, tools, diff, updated_at
+      SELECT path, operation, old_path, additions, deletions, tools, diff, reverted_at, updated_at
       FROM agent_file_changes WHERE namespace = ? AND turn_id = ?
       ORDER BY updated_at DESC, path ASC
     `).all(namespace, turnId) as Array<{
       path: string; operation: FileOperation; old_path: string | null
-      additions: number; deletions: number; tools: string; diff: string | null; updated_at: number
+      additions: number; deletions: number; tools: string; diff: string | null; reverted_at: number | null; updated_at: number
     }>
     const files: AgentFileChange[] = rows.map((row) => ({
       path: row.path,
@@ -209,6 +222,7 @@ export class ArtifactStore {
       deletions: row.deletions,
       tools: parseJson<string[]>(row.tools, []),
       hasDiff: Boolean(row.diff),
+      reverted: row.reverted_at !== null,
       updatedAt: row.updated_at
     }))
     return {
@@ -257,6 +271,23 @@ export class ArtifactStore {
     const row = this.db.prepare('SELECT before_text FROM agent_file_changes WHERE namespace = ? AND turn_id = ? AND path = ?')
       .get(namespace, turnId, path) as { before_text: string | null } | undefined
     return row?.before_text ?? null
+  }
+
+  /** 撤销要用的原始记录：只取还没撤销过的，原文与改后哈希都带上，供写回与冲突判断。 */
+  listRevertableFileChanges(namespace: string, turnId: string): RevertableFileChange[] {
+    const rows = this.db.prepare(`
+      SELECT path, conversation_id, operation, after_hash, before_text
+      FROM agent_file_changes WHERE namespace = ? AND turn_id = ? AND reverted_at IS NULL
+      ORDER BY path ASC
+    `).all(namespace, turnId) as Array<{ path: string; conversation_id: string; operation: FileOperation; after_hash: string | null; before_text: string | null }>
+    return rows.map((row) => ({ path: row.path, conversationId: row.conversation_id, operation: row.operation, afterHash: row.after_hash, beforeText: row.before_text }))
+  }
+
+  markFileChangesReverted(namespace: string, turnId: string, paths: string[]) {
+    if (!paths.length) return
+    const statement = this.db.prepare('UPDATE agent_file_changes SET reverted_at = ? WHERE namespace = ? AND turn_id = ? AND path = ?')
+    const now = Date.now()
+    this.db.transaction(() => { for (const path of paths) statement.run(now, namespace, turnId, path) })()
   }
 
   getFileChangeDiff(namespace: string, turnId: string, path: string): string | null {

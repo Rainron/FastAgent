@@ -15,6 +15,13 @@ export function ensureFileChangeBeforeText(db: Database.Database) {
   db.exec('ALTER TABLE agent_file_changes ADD COLUMN before_text TEXT')
 }
 
+/** 界面撤销一轮改动后打的标记；旧库补空列，等同「从未撤销」。 */
+export function ensureFileChangeRevertedAt(db: Database.Database) {
+  const columns = db.prepare('PRAGMA table_info(agent_file_changes)').all() as Array<{ name: string }>
+  if (columns.some((column) => column.name === 'reverted_at')) return
+  db.exec('ALTER TABLE agent_file_changes ADD COLUMN reverted_at INTEGER')
+}
+
 /**
  * 重跑回退 session 用的本轮锚点。旧库补空列，历史回合没有锚点，重跑时走摘要兜底。
  * 必须排在 ensureTurnStatusInterrupted 之后：那次整表重建按固定列名搬数据，会把这一列丢掉。

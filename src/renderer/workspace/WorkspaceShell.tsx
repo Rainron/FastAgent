@@ -4,7 +4,6 @@ import type { AgentEvent, AppSettings, AppTheme, ApprovalDecision, Attachment, A
 import { resetFileExistsCache } from '../ai-response/file-exists-cache'
 import { formatFileReference, type FileReference } from '../ai-response/file-reference'
 import { ResponseActionsContext, type ResponseActions } from '../ai-response/response-context'
-import { AgentRunBar } from '../composer/AgentRunBar'
 import { ResumeBar } from '../composer/ResumeBar'
 import { Composer } from '../composer/Composer'
 import { MIN_COMPOSER_HEIGHT } from '../composer/composer-height'
@@ -182,8 +181,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [runStates, setRunStates] = useState<Record<string, ConversationRunState>>({})
   const conversationItemsRef = useRef<WorkspaceConversation[]>([])
   const runId = selectedConversationId ? runIdsByConversation[selectedConversationId] ?? null : null
-  // Run Bar 跟着最后一轮走：跑完仍留在那一轮的结果上，发下一条消息才切过去
-  const latestTurnId = turns.length ? turns[turns.length - 1].id : null
   // runIdsByConversation 的 ref 镜像：停止任务后轮询等待终态清除时要用最新值。
   const runIdsRef = useRef<Record<string, string>>({})
   useEffect(() => { runIdsRef.current = runIdsByConversation }, [runIdsByConversation])
@@ -1567,8 +1564,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
             <div className="scroll-nav-anchor">{scrollNav !== 'none' && <button className="scroll-nav" onClick={() => jumpConversation(scrollNav === 'top' ? 'top' : 'bottom')} aria-label={scrollNavLabel[scrollNav]} title={scrollNavLabel[scrollNav]}>
               {scrollNav === 'top' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
             </button>}</div>
-            {/* 本轮 Agent 对工作区的改动；与输入框同级，宽度和对齐都跟随 conversation-content */}
-            <AgentRunBar turnId={latestTurnId} running={Boolean(runId)} />
             <ResumeBar conversationId={selectedConversationId} running={Boolean(runId)} onResume={handleResumeRun} />
             {pressure && <ContextPressureBar pressure={pressure} onCompact={handleCompact} onOpenSettings={handleOpenContextSettings} />}
             <Composer workspace={composerWorkspace} onRunShellCommand={handleRunShellCommand} onSteer={handleSteer} onRevealWorkspace={handleRevealWorkspace} onCopyWorkspacePath={handleCopyWorkspacePath} onChangeWorkspace={handlePickWorkspace} onOpenWorkspaceTerminal={handleOpenWorkspaceTerminal} workspaceTrust={workspaceTrust} onToggleWorkspaceTrust={handleToggleWorkspaceTrust} shortcuts={settings?.shortcuts} height={composerHeight} heightPinned={composerHeightPinned} onHeightChange={changeComposerHeight} contextHealth={contextHealth} contextPolicy={effectiveContextPolicy} compaction={selectedConversationCompaction} onCompact={handleCompact} onCancelCompaction={handleCancelCompaction} onOpenCompactionHistory={handleOpenCompactionHistory} onNewChat={handleNewChatInContext} onSelectConversation={handleSelectConversation} onClearConversation={handleClearConversation} onInitProject={handleInitProject} currentProjectId={selectedProjectId} onManageModels={handleManageModels} onNotice={handleNotice} mode={mode} planMode={planMode} onTogglePlanMode={handleTogglePlanMode} agentAvailable={agentAvailable} setMode={handleSetMode} model={selectedModel} selectedModelId={selectedModelId} models={allModels} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} onSelectModel={handleSelectModel} thinkingLevel={thinkingLevel} onThinkingLevelChange={handleThinkingLevelChange} onToggleFavorite={handleToggleFavoriteModel} attachmentRequest={attachmentRequest} runId={runId} queue={queuedPrompts} onEnqueue={handleEnqueue} onRemoveQueued={handleRemoveQueued} quoteRequest={quoteRequest} prefillRequest={prefillRequest} paused={Boolean(runId) && pausedRunId === runId} onPause={handlePauseRun} onResume={handleResumeRunPause} onSend={handleSend} gitState={gitState} gitAnyRunActive={anyRunActive} onGitCheckout={handleGitCheckout} onGitCreate={handleGitCreate} onGitStopAndCheckout={handleGitStopAndCheckout} permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={handlePermissionChange} onOpenPermissionSettings={handleOpenPermissionSettings} onCancel={handleCancelRun} />

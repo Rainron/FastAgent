@@ -24,6 +24,7 @@ import { todoStats } from './todo-status'
 import { ToolCallCard } from './ToolCallCard'
 import { MemoryTurnBar } from './MemoryTurnBar'
 import { ContextSourceBar } from './ContextSourceBar'
+import { TurnChangesCard } from './TurnChangesCard'
 import { ShellCommandCard } from './ShellCommandCard'
 import { groupShellEntries, type ShellCommandEntry } from './shell-entries'
 
@@ -130,6 +131,8 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
       {/* 没有轨迹的回合（轻量分析卡 / 无活动）由正文区自己承担流式输出，首 token 就要边收边显 */}
       {renderAssistant(0)}
     </section> : null}
+    {/* 改动卡片只挂在跑过工具的回合上：没有工具调用就不可能改文件，省掉每轮一次台账查询 */}
+    {showActivity && !lightweightActivity && turn.status !== 'working' && <TurnChangesCard turnId={turn.id} onNotice={onNotice} />}
     {(turn.artifacts.length > 0 || turn.citations.length > 0) && <section className="message assistant message-metadata">
       {turn.artifacts.length > 0 && <div className="turn-results">{turn.artifacts.map((artifact, index) => <button className="result-reference" key={artifact.id || index}><span>{artifact.name || artifact.path || 'Result'}</span><span>打开</span></button>)}</div>}
       {turn.citations.length > 0 && <div className="turn-citations">{turn.citations.map((citation, index) => <CitationLink key={citation.id || index} index={index} citation={citation} />)}</div>}
@@ -228,5 +231,5 @@ function AgentActivity({ turnId, events, thinking, status }: { turnId: string; e
 }
 
 export function EmptyConversation({ onPickWorkspace, onAddAttachment, onRunAgent }: { onPickWorkspace: () => void; onAddAttachment: () => void; onRunAgent?: () => void }) {
-  return <div className="empty-conversation motion-welcome-enter"><div className="empty-mark" aria-hidden="true"><span className="empty-mark-glyph"><Zap size={22} fill="currentColor" strokeWidth={0} /></span></div><div className="empty-kicker"><span className="kicker-line" /> 准备开始 <span className="kicker-line" /></div><h1>今天想做什么？</h1><p>从一个问题开始，或打开一个项目让 FastAgent 参与工作。</p><div className="quick-actions"><button onClick={onPickWorkspace}><FolderOpen size={16} /> 打开项目</button><button onClick={onAddAttachment}><Archive size={16} /> 添加附件</button>{onRunAgent && <button onClick={onRunAgent}><TerminalSquare size={16} /> 运行智能体</button>}</div></div>
+  return <div className="empty-conversation motion-welcome-enter"><div className="empty-mark" aria-hidden="true"><span className="empty-mark-glyph"><Zap size={22} fill="currentColor" strokeWidth={0} /></span></div><h1>今天想做什么？</h1><div className="quick-actions"><button onClick={onPickWorkspace}><FolderOpen size={16} /> 打开项目</button><button onClick={onAddAttachment}><Archive size={16} /> 添加附件</button>{onRunAgent && <button onClick={onRunAgent}><TerminalSquare size={16} /> 运行智能体</button>}</div></div>
 }

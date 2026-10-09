@@ -342,7 +342,8 @@ const api: FastAgentApi = {
   },
   changes: {
     list: (turnId: string) => ipcRenderer.invoke('changes:list', turnId),
-    diff: (turnId: string, path: string) => ipcRenderer.invoke('changes:diff', turnId, path)
+    diff: (turnId: string, path: string) => ipcRenderer.invoke('changes:diff', turnId, path),
+    revert: (turnId: string) => ipcRenderer.invoke('changes:revert', turnId)
   },
   composer: {
     openExternalEditor: (text: string) => ipcRenderer.invoke('composer:external-edit-open', text),

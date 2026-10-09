@@ -1,6 +1,7 @@
 import type { ArtifactQuery } from '../../shared/types'
 import { diffSnapshots, snapshotFile } from '../agent/file-ledger'
 import { resolveToolPath } from '../agent/safety/workspace-guard'
+import { revertTurn } from '../agent/turn-revert'
 import { existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -72,8 +73,10 @@ export function registerArtifactsIpc(handle: IpcRegistrar, ctx: MainContext) {
       return { ok: false, error: error instanceof Error ? error.message : '恢复失败' }
     }
   })
-  // 台账只读：运行与任务由 ctx.runLocalRun / executeSubAgent 写入，界面不修改它们。
+  // 台账由 ctx.runLocalRun / executeSubAgent 写入；界面只读，唯一例外是下面的撤销标记。
   handle('changes:list', (_event, turnId: string) => ctx.store.listFileChanges(ctx.requireNamespace(), turnId))
   handle('changes:diff', (_event, turnId: string, path: string) => ctx.store.getFileChangeDiff(ctx.requireNamespace(), turnId, path))
+  // 撤销是真实写盘：界面先弹确认再调用；之后又被改过的文件由 revertTurn 跳过。
+  handle('changes:revert', (_event, turnId: string) => revertTurn(ctx.store, ctx.requireNamespace(), turnId, ctx.appPaths.quickWorkspaceDir))
   // 只放行 http/https：javascript:/file:/data: 交给 shell.openExternal 会直接变成本机代码执行或任意文件打开。
 }

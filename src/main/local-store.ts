@@ -15,7 +15,7 @@ import { accountModelId } from './local-store/shared-workspace'
 import { AbilityMetaStore } from './local-store/ability-meta-store'
 import { AccountStore, storeNamespace, type OutboxItem, type StoredSession } from './local-store/account-store'
 import { AgentRunStore } from './local-store/agent-run-store'
-import { ArtifactStore } from './local-store/artifact-store'
+import { ArtifactStore, type RevertableFileChange } from './local-store/artifact-store'
 import { CliToolStore } from './local-store/cli-tool-store'
 import { ContextStore } from './local-store/context-store'
 import { ConversationStore, type ConversationMessage } from './local-store/conversation-store'
@@ -285,6 +285,8 @@ export class LocalStore {
   listFileVersions(namespace: string, path: string, conversationId?: string | null, limit?: number): FileVersionRecord[] { return this.artifactRepository.listFileVersions(namespace, path, conversationId, limit) }
   getFileChangeBeforeText(namespace: string, turnId: string, path: string): string | null { return this.artifactRepository.getFileChangeBeforeText(namespace, turnId, path) }
   getFileChangeDiff(namespace: string, turnId: string, path: string): string | null { return this.artifactRepository.getFileChangeDiff(namespace, turnId, path) }
+  listRevertableFileChanges(namespace: string, turnId: string): RevertableFileChange[] { return this.artifactRepository.listRevertableFileChanges(namespace, turnId) }
+  markFileChangesReverted(namespace: string, turnId: string, paths: string[]) { this.artifactRepository.markFileChangesReverted(namespace, turnId, paths) }
 
   startAgentRun(...args: Parameters<AgentRunStore['startAgentRun']>) { this.agentRunRepository.startAgentRun(...args) }
   finishAgentRun(namespace: string, runId: string, status: Exclude<AgentRunStatus, 'running'>, error?: string | null, finishedAt?: number, errorKind?: RunErrorKind | null) { this.agentRunRepository.finishAgentRun(namespace, runId, status, error, finishedAt, errorKind) }
