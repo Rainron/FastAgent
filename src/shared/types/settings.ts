@@ -26,6 +26,10 @@ export interface ClientPreferences {
     recent: boolean
   }
   paginationPageSize: number
+  gitChangeView: {
+    mode: 'file' | 'folder' | 'status'
+    collapsedDirs: string[]
+  }
 }
 
 export interface DataStorageInfo {

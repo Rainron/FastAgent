@@ -70,7 +70,7 @@ export const defaultSettings: AppSettings = {
 
 export const defaultRuntimeConfig = (): TurnRuntimeConfig => ({ modelId: null, thinkingLevel: 'auto', mode: 'chat', permission: null, project: null })
 
-export const defaultClientPreferences = (): ClientPreferences => ({ recentServers: [], favoriteModelIds: [], recentModelIds: [], selectedModelId: null, modePrompts: {}, sidebarSections: { workspace: true, recent: true }, paginationPageSize: DEFAULT_PAGE_SIZE })
+export const defaultClientPreferences = (): ClientPreferences => ({ recentServers: [], favoriteModelIds: [], recentModelIds: [], selectedModelId: null, modePrompts: {}, sidebarSections: { workspace: true, recent: true }, gitChangeView: { mode: 'file', collapsedDirs: [] }, paginationPageSize: DEFAULT_PAGE_SIZE })
 
 /** 旧版本的 code 模式已并入 agent，读旧记录时就地归一，不改写库里的原始 JSON。 */
 export function normalizeRuntimeConfig(value: Partial<TurnRuntimeConfig>): Partial<TurnRuntimeConfig> {

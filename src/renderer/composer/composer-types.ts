@@ -97,6 +97,8 @@ export interface ComposerGitProps {
   onGitCheckout: (branch: string) => Promise<GitOperationResult>
   onGitCreate: (name: string) => Promise<GitOperationResult>
   onGitStopAndCheckout: (branch: string) => Promise<GitOperationResult>
+  /** 打开完整 Git 面板（提交历史、改动与提交、远程同步都在那里）。 */
+  onOpenGitPanel: () => void
 }
 
 export interface ComposerLayoutProps {

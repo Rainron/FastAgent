@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, CircleAlert, GitBranch, Plus, X } from 'lucide-react'
+import { Check, ChevronDown, CircleAlert, GitBranch, PanelsTopLeft, Plus, X } from 'lucide-react'
 import type { GitOperationResult, GitStatusEntry, GitWorkspaceState } from '../../shared/types'
+import { syncLabel } from '../git/git-view'
 import { useDismiss } from '../use-dismiss'
 import { usePopoverClamp } from '../use-popover-clamp'
 
@@ -10,7 +11,7 @@ export function gitBranchLabel(state: GitWorkspaceState): string {
   return state.branch ?? '—'
 }
 
-export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onCreate, onStopAndCheckout }: {
+export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onCreate, onStopAndCheckout, onOpenPanel }: {
   /** 非仓库或读取失败时为 null，由调用方决定不渲染。 */
   state: GitWorkspaceState
   /** 窄窗口下只显示图标，避免挤占右侧运行配置。 */
@@ -21,6 +22,8 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
   onCreate: (name: string) => Promise<GitOperationResult>
   /** 停止当前任务后再切换（「停止任务并切换」确认路径）。 */
   onStopAndCheckout: (branch: string) => Promise<GitOperationResult>
+  /** 打开完整 Git 面板；提交、历史、远程同步都在那里，popover 只留快操。 */
+  onOpenPanel: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [branches, setBranches] = useState<string[]>([])
@@ -101,12 +104,14 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
   }
 
   const label = gitBranchLabel(state)
+  const sync = syncLabel(state.sync)
   return <div className="git-branch-selector" ref={ref}>
     <button className="composer-chip git-branch-trigger" onClick={() => setOpen((value) => !value)} aria-haspopup="menu" aria-expanded={open} title={compact ? `当前分支：${label}` : `Git 分支：${label}`}>
       {state.isDirty && <span className="git-dirty-dot" aria-hidden="true" />}
       <GitBranch size={14} />
       {!compact && <span className="git-branch-label">{label}</span>}
       {!compact && state.isDirty && <span className="git-dirty-count">{state.changedFiles}</span>}
+      {!compact && sync.text !== '无 upstream' && <span className={`git-badge ${sync.tone}`} title={sync.title}>{sync.text}</span>}
       {!compact && <ChevronDown size={12} />}
     </button>
     {open && <div ref={menuRef} className="git-branch-menu popover-card" role="menu" aria-label="Git 分支">
@@ -153,6 +158,7 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
         ) : <>
           <button className="git-branch-action" onClick={() => { setCreating(true); setViewingStatus(false) }}><Plus size={13} />新建分支</button>
           <button className="git-branch-action" onClick={() => { setViewingStatus(true); setCreating(false) }}>查看 Git 状态</button>
+          <button className="git-branch-action primary" onClick={() => { closePopover(); onOpenPanel() }}><PanelsTopLeft size={13} />打开 Git 面板</button>
         </>}
       </div>
     </div>}

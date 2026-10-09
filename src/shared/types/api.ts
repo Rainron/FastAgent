@@ -22,7 +22,7 @@ import type { ShellCommandChunk, ShellCommandRequest, ShellCommandResult } from 
 import type { TerminalAttachment, TerminalChunk, TerminalExit, TerminalSessionInfo } from './terminal'
 import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, RendererErrorReport, StartupWarnings, StoredPermissionRule } from './settings'
 import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
-import type { Artifact, ArtifactQuery, GitBranchInfo, GitCommitDetail, GitCommitSummary, GitIntegrationState, GitOperationResult, GitStashEntry, GitStatusEntry, GitWorkingChanges, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
+import type { Artifact, ArtifactQuery, GitBranchInfo, GitCommitDetail, GitCommitSummary, GitIntegrationState, GitOperationResult, GitRemoteInfo, GitStashEntry, GitStatusEntry, GitWorkingChanges, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
 
 export interface FastAgentApi {
   settings: {
@@ -317,6 +317,10 @@ export interface FastAgentApi {
     remoteBranches(): Promise<string[]>
     /** 远程名列表。 */
     remotes(): Promise<string[]>
+    remoteDetails(): Promise<GitRemoteInfo[]>
+    addRemote(name: string, url: string): Promise<GitOperationResult>
+    setRemoteUrl(name: string, url: string): Promise<GitOperationResult>
+    removeRemote(name: string): Promise<GitOperationResult>
     /** 工作区改动，按已暂存 / 未暂存分组。 */
     changes(): Promise<GitWorkingChanges>
     /** 合并 / 变基进行中状态与冲突文件。 */
