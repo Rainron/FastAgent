@@ -59,6 +59,9 @@ import { useConversationScroll } from './hooks/use-conversation-scroll'
 import { useConversationMinimap } from './hooks/use-conversation-minimap'
 import { ConversationMinimap } from '../conversation/ConversationMinimap'
 import { PlanDrawer } from '../conversation/PlanDrawer'
+import { SubAgentPanel } from '../conversation/SubAgentPanel'
+import { SubAgentPanelContext } from '../conversation/subagent-panel-context'
+import { useSubAgentPanel } from './hooks/use-subagent-panel'
 import { useEffectiveDark } from './hooks/use-effective-dark'
 import { useFindBar } from './hooks/use-find-bar'
 import { useNotice } from './hooks/use-notice'
@@ -1556,6 +1559,12 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const handleGitCreate = useEventCallback((name: string) => createGitBranch(name))
   const handleGitStopAndCheckout = useEventCallback((branch: string) => stopRunThenSwitch(branch))
   const planPanelOpen = planOpen && planDisplayMode === 'top'
+  const subAgentPanel = useSubAgentPanel({
+    conversationId: selectedConversationId,
+    turns,
+    otherPanelOpen: artifactOpen || Boolean(inspector) || planPanelOpen || Boolean(attachmentPreview),
+    closeOtherPanels: () => { closeInspector(); setArtifactOpen(false); setPlanOpen(false); setAttachmentPreview(null) }
+  })
   const handleOpenGitPanel = useEventCallback(() => setGitPanelOpen(true))
   const handleCloseGitPanel = useEventCallback(() => setGitPanelOpen(false))
   const handleGitPrefill = useEventCallback((text: string) => setPrefillRequest({ text, nonce: Date.now() }))
@@ -1583,6 +1592,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   })
 
   return (
+    <SubAgentPanelContext.Provider value={subAgentPanel.control}>
     <ResponseActionsContext.Provider value={responseActions}>
     <div className="app-shell">
       <WorkspaceTitlebar section={section} canGoBack={navigation.index > 0} canGoForward={navigation.index < navigation.entries.length - 1}
@@ -1590,7 +1600,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenSettings} onToggleTheme={handleToggleTheme} />
       <div className="shell-body">
         <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onNewChatInSection={handleNewChatInContext} onNewChatInProject={handleNewChatInProject} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
-        <main className={`conversation ${artifactOpen || planPanelOpen || attachmentPreview ? 'with-artifact' : ''}${minimap.enabled ? ' minimap-on' : ''}`}>
+        <main className={`conversation ${artifactOpen || planPanelOpen || attachmentPreview || subAgentPanel.turn ? 'with-artifact' : ''}${minimap.enabled ? ' minimap-on' : ''}`}>
           {section === 'chats' && batchKind !== 'conversations' ? <>
             <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
               <div><span className="status-dot" /> <span>{conversationTitle}</span></div>
@@ -1616,6 +1626,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}
         {planPanelOpen && <PlanDrawer turns={turns} todosByTurn={todosByTurn} onClose={handleClosePlanDrawer} />}
         {attachmentPreview && <AttachmentPanel attachment={attachmentPreview} onClose={handleCloseAttachmentPreview} />}
+        {subAgentPanel.turn && subAgentPanel.selected && <SubAgentPanel turn={subAgentPanel.turn} taskId={subAgentPanel.selected.taskId} onClose={subAgentPanel.close} />}
         {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} />}
         {inspector && <ConversationInspector data={inspector} initialSection={inspectorSection} onUpdatePolicy={(conversationId, patch) => void handleUpdateContextPolicy(conversationId, patch)} compaction={inspectorId ? compactionStates[inspectorId] ?? null : null} onCancelCompaction={() => { if (inspectorId) { void window.fastAgent.conversations.cancelCompaction(inspectorId); setCompactionStates((current) => cancelCompaction(current, inspectorId)) } }} onClose={closeInspector} onRefresh={() => { if (inspectorId) void openInspector(inspectorId) }} onCompact={() => void compactConversationNow(inspectorId)} />}
         {Object.entries(compactionStates).filter(([, state]) => state.status === 'failed' || state.status === 'timed_out').map(([conversationId, state]) => <CompactionFallbackDialog key={`${conversationId}:${state.taskId}`} state={state} models={allModels} onRetry={(modelId) => void compactConversationNow(conversationId, modelId)} onCancel={() => { void window.fastAgent.conversations.cancelCompaction(conversationId); setCompactionStates((current) => cancelCompaction(current, conversationId)) }} onClose={() => setCompactionStates((current) => clearCompaction(current, conversationId))} />)}
@@ -1646,5 +1657,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       />}
     </div>
     </ResponseActionsContext.Provider>
+    </SubAgentPanelContext.Provider>
   )
 }

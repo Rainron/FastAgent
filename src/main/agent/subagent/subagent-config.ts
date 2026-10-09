@@ -46,6 +46,7 @@ const BUILTIN: SubAgentConfig[] = [
 /** 小节必须与 subagent-handoff.ts 的 HEADINGS 一一对应：少一节，那个字段就恒为空。 */
 export const SUBAGENT_HANDOFF_PROMPT = `请严格按以下格式交接，区分事实、推断和建议：
 ## 目标
+## 改动文件
 ## 已验证项
 ## 未验证项
 ## 关键发现

@@ -2,6 +2,8 @@ import { SUBAGENT_LIMITS } from './subagent-types'
 
 export interface SubAgentHandoff {
   goal: string
+  /** 可写角色实际改过的文件；只读角色恒为空。主 Agent 靠它知道要复核哪些文件。 */
+  changedFiles: string[]
   verified: string[]
   unverified: string[]
   findings: string[]
@@ -12,6 +14,7 @@ export interface SubAgentHandoff {
 
 const HEADINGS: Array<[keyof SubAgentHandoff, RegExp]> = [
   ['goal', /^##\s*目标\s*$/im],
+  ['changedFiles', /^##\s*改动文件\s*$/im],
   ['verified', /^##\s*已验证项\s*$/im],
   ['unverified', /^##\s*未验证项\s*$/im],
   ['findings', /^##\s*关键发现\s*$/im],
@@ -25,7 +28,7 @@ function lines(section: string): string[] {
 }
 
 export function parseSubAgentHandoff(output: string): SubAgentHandoff {
-  const result: SubAgentHandoff = { goal: '', verified: [], unverified: [], findings: [], decisions: [], recommendations: [], remainingSteps: [] }
+  const result: SubAgentHandoff = { goal: '', changedFiles: [], verified: [], unverified: [], findings: [], decisions: [], recommendations: [], remainingSteps: [] }
   const matches = HEADINGS.flatMap(([key, pattern]) => {
     const match = pattern.exec(output)
     return match ? [{ key, index: match.index, end: match.index + match[0].length }] : []
@@ -42,6 +45,7 @@ export function parseSubAgentHandoff(output: string): SubAgentHandoff {
 
 const CHAIN_SECTIONS: Array<[keyof SubAgentHandoff, string]> = [
   ['goal', '目标'],
+  ['changedFiles', '改动文件'],
   ['verified', '已验证项'],
   ['unverified', '未验证项'],
   ['findings', '关键发现'],

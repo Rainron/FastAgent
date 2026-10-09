@@ -2,6 +2,8 @@ import { Fragment, memo, useEffect, useMemo, useState, type ReactElement, type R
 import { ArrowUp, Ban, Check, ChevronRight, Circle, CornerDownRight, Layers, LoaderCircle, Paperclip, Pause, Sparkles, X } from 'lucide-react'
 import type { Attachment, ConversationTurn, TraceLabelStyle, TurnActivity } from '../../shared/types'
 import { formatTokenCount, traceDefaultOpen } from '../../shared/trace-display'
+import { useResponseActions } from '../ai-response/response-context'
+import { AttachmentImage, isImageAttachment } from './AttachmentImage'
 import { useScrollAnchor } from '../scroll-anchor'
 import { formatDiffStat, formatElapsed, isDelegationToolAction, thinkingTextByGroup, traceAnswerStart, traceGroupDiff, traceGroupLabel, traceGroupLiveLabel, traceOutcomeLabel, traceRunStatusText, traceSummary, traceSummaryLabel, traceTokenTotal, type ExecutionTrace, type TraceGroup } from '../execution-trace'
 import { thinkingHeadline, thinkingPreview } from './thinking-preview'
@@ -13,7 +15,9 @@ import { ToolCallCard } from './ToolCallCard'
 import type { TraceAction } from '../execution-trace'
 import { parseBlocks } from '../ai-response/block-parser'
 import { MessageBlockRenderer } from '../ai-response/MessageBlockRenderer'
+import { SubAgentStrip } from './SubAgentStrip'
 import { Collapse } from '../Collapse'
+import { collectSubAgents } from './subagent-view'
 
 export type RunKind = Exclude<TurnActivity['status'], 'idle'>
 
@@ -99,6 +103,7 @@ function TraceGroupBlock({ group, turnId, workspaceRoot, activeEventId, thinking
  * 附件走消息区同一套渲染（图片出缩略图、其余给 chip），补充里带的图不能只剩一句「已送达」。
  */
 function TraceSteer({ text, attachments }: { text: string; attachments: Attachment[] }) {
+  const actions = useResponseActions()
   return (
     <div className="trace-steer">
       <div className="trace-steer-head">
@@ -108,7 +113,9 @@ function TraceSteer({ text, attachments }: { text: string; attachments: Attachme
       </div>
       {text && <p className="trace-steer-text">{text}</p>}
       {attachments.length > 0 && <div className="trace-steer-files">
-        {attachments.map((attachment) => <span className="attachment-chip" key={attachment.id} title={attachment.name}><Paperclip size={12} />{attachment.name}</span>)}
+        {attachments.map((attachment) => isImageAttachment(attachment)
+          ? <AttachmentImage key={attachment.id} attachment={attachment} onOpen={actions.openAttachment} />
+          : <button type="button" className="attachment-chip" key={attachment.id} title={`预览 ${attachment.name}`} onClick={() => actions.openAttachment(attachment)}><Paperclip size={12} />{attachment.name}</button>)}
       </div>}
     </div>
   )
@@ -183,6 +190,7 @@ export function ExecutionTrace({ turn, trace, startedAt, finishedAt, kind, rende
   const headline = thinkingLive ? thinkingHeadline(thinkingText) : null
   const tokenTotal = display.showTokens ? traceTokenTotal(turn.activity?.events ?? []) : null
   const summary = useMemo(() => traceSummary(trace), [trace])
+  const subagents = useMemo(() => collectSubAgents(trace), [trace])
   const headDiff = display.showDiffStats ? summary.diff : null
   // 没有任何动作也没有思考的回合不给过程头：点开只会看到一句「本回合没有工具调用」。
   const hasProcess = trace.hasActivity || Boolean(thinkingFallback) || kind === 'working'
@@ -231,6 +239,7 @@ export function ExecutionTrace({ turn, trace, startedAt, finishedAt, kind, rende
         <ChevronRight size={12} className="run-status-chevron" />
       </button>}
       {headPreview && <p className="trace-live-preview head">{headPreview}</p>}
+      {subagents.length > 0 && <SubAgentStrip turnId={turn.id} subagents={subagents} turnFinishedAt={finishedAt} />}
       <div className="execution-trace-body">
         <Collapse open={open} appear={false}><div className="execution-trace-details">
           {trace.segments.map((segment, index) => segment.kind === 'group'

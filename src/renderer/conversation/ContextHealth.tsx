@@ -1,10 +1,12 @@
 import { memo, useCallback, useRef, useState } from 'react'
+import { Collapse } from '../Collapse'
 import { ChevronDown, ChevronRight, History, Minimize2 } from 'lucide-react'
 import { useDismiss } from '../use-dismiss'
 import { usePopoverClamp } from '../use-popover-clamp'
 import type { CompactionState } from './compaction-state'
 import type { ContextPolicy, ModelUsageSummary } from '../../shared/types'
 import { compactionSummaryLabel, contextHealthView } from './context-health-view'
+import { ModelCacheUsage } from './ModelCacheUsage'
 import './context-usage.css'
 
 export interface ContextHealthData {
@@ -98,10 +100,11 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
         {Boolean(data.compactionCount) && onOpenHistory && <ChevronRight size={12} />}
       </button>
 
+      <ModelCacheUsage usage={data.usage} pending={data.usagePending} />
       <button className={`context-health-detail-toggle${detailOpen ? ' open' : ''}`} onClick={() => setDetailOpen((value) => !value)} aria-expanded={detailOpen}>
         <ChevronRight size={12} />占用明细
       </button>
-      {detailOpen && <>
+      <Collapse open={detailOpen}><div>
         <dl className="context-health-breakdown">
           <div><dt>消息</dt><dd>{formatTokens(data.messageTokens)}</dd></div>
           <div><dt>工具</dt><dd>{formatTokens(data.toolTokens)}</dd></div>
@@ -111,8 +114,7 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
         </dl>
         <div className="context-health-meta"><span>计量</span><span>{data.countingMethod === 'provider-usage' ? '总量：模型 usage · 分类：比例估算' : '统一估算'}</span></div>
         {data.usagePending && <p className="context-health-pending" role="status">正在生成，本次用量待返回。</p>}
-        <p className="context-health-note">模型缓存与 token 成本在「会话详情 › Context」里。</p>
-      </>}
+      </div></Collapse>
     </div>}
   </div>
 })

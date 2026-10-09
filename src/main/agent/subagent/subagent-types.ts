@@ -39,7 +39,7 @@ export interface SubAgentResult {
   agentName: string
   status: Exclude<SubAgentStatus, 'queued' | 'running'>
   output: string
-  handoff?: { goal: string; verified: string[]; unverified: string[]; findings: string[]; decisions: string[]; recommendations: string[]; remainingSteps: string[] }
+  handoff?: { goal: string; changedFiles: string[]; verified: string[]; unverified: string[]; findings: string[]; decisions: string[]; recommendations: string[]; remainingSteps: string[] }
   error?: string
   truncated: boolean
   startedAt: number
