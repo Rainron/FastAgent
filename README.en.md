@@ -54,6 +54,9 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 **Read-only subagents**  
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
+**Interface and interaction**
+The sidebar width is draggable and remembered, long titles scroll on hover, search supports arrow-key selection with Enter, and projects can be reordered by drag. The settings centre is grouped into agent, workspace, and security sections. The execution trace can be configured (timer and token placement, summary style, diff stats), collapses by default with animated expansion, and messages sent while a run is active are inserted into that same turn. The theme is a clean white base with neutral greys and a lake-blue accent.
+
 **Built-in terminal and `!` commands**  
 Open a terminal panel from the conversation header and run commands in the project directory, with multiple tabs; output never goes through the model. Typing `!` in the composer also runs a shell command directly — commands and output stay in the conversation as cards you can stop or remove, and the output can be kept local, appended as a turn the model can read, or sent back to the composer.
 
