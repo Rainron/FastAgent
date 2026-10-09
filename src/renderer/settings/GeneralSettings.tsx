@@ -13,9 +13,10 @@ const rows: Array<{ key: 'startAtLogin' | 'showOnStartup' | 'closeToTray'; label
 export function GeneralSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
   const [editorPathDraft, setEditorPathDraft] = useState(settings.externalEditorPath)
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
+  const [planDisplayMode, setPlanDisplayMode] = useState<'top' | 'inline'>('top')
 
   useEffect(() => { setEditorPathDraft(settings.externalEditorPath) }, [settings.externalEditorPath])
-  useEffect(() => { void window.fastAgent.preferences.get().then((preferences) => setPageSize(normalizePageSize(preferences.paginationPageSize))).catch(() => undefined) }, [])
+  useEffect(() => { void window.fastAgent.preferences.get().then((preferences) => { setPageSize(normalizePageSize(preferences.paginationPageSize)); setPlanDisplayMode(preferences.planDisplayMode ?? 'top') }).catch(() => undefined) }, [])
 
   function updatePageSize(value: number) {
     setPageSize(value)
@@ -56,6 +57,7 @@ export function GeneralSettings({ settings, onChange }: { settings: AppSettings;
     </div>
 
     <div className="settings-section-heading"><div><h2>列表分页</h2><p>控制会话、项目、插件和能力列表每次加载的数量。</p></div></div>
+    <div className="settings-row"><div><strong>计划显示位置</strong><span>选择把任务计划集中到顶部面板，或保留在每个对话回合内。</span></div><select value={planDisplayMode} onChange={(event) => { const value = event.target.value as 'top' | 'inline'; setPlanDisplayMode(value); void window.fastAgent.preferences.update({ planDisplayMode: value }) }} aria-label="计划显示位置"><option value="top">顶部计划面板</option><option value="inline">对话内显示</option></select></div>
     <div className="settings-row">
       <div><strong>每页数量</strong><span>数值越小首屏加载越快，也可以直接在列表底部的分页条上改。</span></div>
       <select value={pageSize} onChange={(event) => updatePageSize(Number(event.target.value))} aria-label="列表每页数量">

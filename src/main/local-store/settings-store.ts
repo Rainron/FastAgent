@@ -54,6 +54,7 @@ export class SettingsStore {
     if (patch.recentModelIds !== undefined) accountPatch.recentModelIds = patch.recentModelIds
     if (patch.selectedModelId !== undefined) accountPatch.selectedModelId = patch.selectedModelId
     if (patch.sidebarSections !== undefined) globalPatch.sidebarSections = patch.sidebarSections
+    if (patch.planDisplayMode !== undefined) globalPatch.planDisplayMode = patch.planDisplayMode
     // 页长是跨账号的全局偏好；写进 account scope 会在读取时反向覆盖 global
     if (patch.paginationPageSize !== undefined) globalPatch.paginationPageSize = normalizePageSize(patch.paginationPageSize)
     const save = (scope: string, nextPatch: Partial<ClientPreferences>) => {

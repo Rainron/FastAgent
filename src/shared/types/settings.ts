@@ -30,6 +30,7 @@ export interface ClientPreferences {
     mode: 'file' | 'folder' | 'status'
     collapsedDirs: string[]
   }
+  planDisplayMode: 'top' | 'inline'
 }
 
 export interface DataStorageInfo {
