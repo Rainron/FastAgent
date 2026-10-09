@@ -2555,10 +2555,15 @@ html[data-density="compact"] .conversation-turn { margin-bottom: 20px; }
 .seg button:hover { color: var(--text-primary); }
 .seg button.on { background: var(--surface); box-shadow: var(--shadow-1); font-weight: 600; color: var(--text-primary); }
 .titlebar-actions { gap: 4px; padding: 0 6px 0 8px; }
-.plan-top-button span { font-size: 10px; font-weight: 700; letter-spacing: .08em; }
 .plan-top-button:disabled { opacity: .35; cursor: default; }
-.plan-drawer { position: absolute; z-index: 20; top: 52px; right: 12px; bottom: 12px; width: min(380px, calc(100% - 24px)); overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-2); animation: motion-minimap-enter var(--motion-popover) var(--motion-ease) both; }
-.plan-drawer-head { display: flex; justify-content: space-between; gap: 12px; }.plan-drawer-kicker { color: var(--accent-tech); font-size: 10px; font-weight: 700; letter-spacing: .12em; }.plan-drawer h2 { margin: 3px 0 5px; font-size: 18px; }.plan-overall { font-size: 11px; color: var(--text-secondary); }.plan-overall.working { color: var(--accent-tech); }.plan-overall.failed,.plan-overall.blocked { color: var(--danger); }.plan-progress { margin: 18px 0; }.plan-progress > div:first-child { display:flex; justify-content:space-between; color: var(--text-secondary); font-size: 11px; }.plan-progress-track { height: 5px; margin-top: 8px; overflow: hidden; border-radius: 99px; background: var(--surface-2); }.plan-progress-track i { display:block; height:100%; border-radius:inherit; background: var(--accent-tech); transition: width .25s ease; }.plan-group { border-top: 1px solid var(--border); }.plan-group-toggle { width:100%; display:flex; align-items:center; gap:7px; padding: 12px 0; color: var(--text-primary); text-align:left; }.plan-group.open .plan-group-toggle svg { transform: rotate(180deg); }.plan-group-title { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:12px; }.plan-group-count { color: var(--text-tertiary); font-size:11px; }.plan-drawer-list { display:grid; gap:8px; margin: 0 0 12px 21px; padding: 0; list-style:none; }.plan-drawer-item { display:grid; grid-template-columns: 16px 1fr auto; align-items:start; gap:7px; color: var(--text-secondary); font-size:12px; line-height:17px; }.plan-drawer-item svg { margin-top:2px; color: var(--text-tertiary); }.plan-drawer-item.completed svg { color: var(--success); }.plan-drawer-item.in_progress svg { color: var(--accent-tech); }.plan-drawer-item.failed svg,.plan-drawer-item.blocked svg { color: var(--danger); }.plan-drawer-item em { color: var(--text-tertiary); font-size:10px; font-style:normal; white-space:nowrap; }.plan-empty { padding: 28px 0; color: var(--text-tertiary); text-align:center; font-size:12px; }
+/* 与资源面板、检查面板共用右侧那一栏：同宽、同边框、同进场动画 */
+.plan-drawer { width: 360px; min-width: 300px; flex: 0 0 360px; display: flex; flex-direction: column; padding: 12px 14px 14px; border-left: 1px solid var(--border); background: var(--surface); animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) backwards; }
+.plan-drawer-head { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }.plan-drawer-head > svg { flex: 0 0 auto; color: var(--accent-tech); }.plan-drawer h2 { margin: 0; font-size: 13px; font-weight: 600; }.plan-drawer-head .icon-button { width: 26px; height: 26px; margin-left: 2px; }.plan-overall { padding: 1px 6px; border-radius: 4px; background: var(--surface-3); color: var(--text-secondary); font-size: 10px; }.plan-overall.working { background: var(--accent-soft); color: var(--accent-calm); }.plan-overall.done { color: var(--success); }.plan-overall.failed,.plan-overall.blocked { color: var(--danger); }.plan-count { margin-left: auto; color: var(--text-tertiary); font: 11px "JetBrains Mono", Consolas, monospace; }
+.plan-progress { display: flex; align-items: center; gap: 8px; margin: 12px 0; }.plan-progress-track { flex: 1; height: 4px; overflow: hidden; border-radius: 99px; background: var(--surface-3); }.plan-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--accent-tech); transition: width .25s ease; }.plan-progress > span { color: var(--text-tertiary); font-size: 10px; }
+.plan-groups { display: grid; align-content: start; gap: 8px; min-height: 0; overflow-y: auto; margin: 0 -2px; padding: 0 2px 2px; }.plan-group { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }.plan-group::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--text-tertiary); }.plan-group.working::before { background: var(--accent-tech); }.plan-group.done::before { background: var(--success); }.plan-group.failed::before,.plan-group.blocked::before { background: var(--danger); }
+.plan-group-toggle { width: 100%; display: flex; align-items: center; gap: 7px; padding: 9px 10px 9px 12px; color: var(--text-primary); text-align: left; transition: background var(--motion-hover) ease-out; }.plan-group-toggle:hover { background: var(--hover); }.plan-group-toggle > svg { flex: 0 0 auto; color: var(--text-tertiary); transition: transform var(--motion-hover) var(--motion-ease); }.plan-group.open .plan-group-toggle > svg { transform: rotate(180deg); }.plan-group-title { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }.plan-group-count { color: var(--text-tertiary); font: 11px "JetBrains Mono", Consolas, monospace; }
+.plan-drawer-list { display: grid; gap: 7px; margin: 0; padding: 0 10px 10px 33px; list-style: none; }.plan-drawer-item { display: grid; grid-template-columns: 14px 1fr; align-items: start; gap: 8px; color: var(--text-secondary); font-size: 12px; line-height: 17px; }.plan-drawer-item svg { margin-top: 2px; color: var(--text-tertiary); }.plan-drawer-item.completed svg { color: var(--success); }.plan-drawer-item.completed span { color: var(--text-tertiary); text-decoration: line-through; }.plan-drawer-item.in_progress svg { color: var(--accent-tech); }.plan-drawer-item.in_progress span { color: var(--text-primary); }.plan-drawer-item.failed svg,.plan-drawer-item.blocked svg { color: var(--danger); }.plan-drawer-item.cancelled span,.plan-drawer-item.skipped span { color: var(--text-tertiary); }
+.plan-empty { display: grid; justify-items: center; gap: 10px; padding: 32px 0; color: var(--text-tertiary); font-size: 12px; }.plan-empty svg { color: var(--border-strong); }
 /* 自绘窗口控制：尺寸按 Windows 习惯留宽一点，关闭键沿用系统的红底反白 */
 .win { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
 .win button { width: 34px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: transparent; color: var(--text-tertiary); transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease); }
@@ -2629,6 +2634,10 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .workspace-item { transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), box-shadow var(--motion-focus) var(--motion-ease), transform var(--motion-press) var(--motion-ease); }
 .workspace-item:active { transform: scale(.99); }
 .sidebar-scroll-list > .workspace-item, .recent-list > .recent-item { animation: motion-sidebar-item-enter var(--motion-status) var(--motion-ease) both; }
+/* 上面这条进场动画是 fill: both，条目因此一直是独立层叠上下文，弹出菜单的 z-index 被关在条目内，
+   后面的条目就会压住菜单。菜单展开时把整条提到兄弟之上。 */
+.sidebar-scroll-list > .workspace-item:has(.item-actions-trigger[aria-expanded="true"]),
+.recent-list > .recent-item:has(.item-actions-trigger[aria-expanded="true"]) { z-index: 5; }
 .sidebar-scroll-list > .workspace-item:nth-child(2), .recent-list > .recent-item:nth-child(2) { animation-delay: 20ms; }
 .sidebar-scroll-list > .workspace-item:nth-child(3), .recent-list > .recent-item:nth-child(3) { animation-delay: 40ms; }
 @keyframes motion-sidebar-item-enter { from { opacity: .45; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
@@ -2685,14 +2694,43 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .message-actions.user { opacity: 0; transition: opacity .15s var(--motion-ease); }
 .message.user:hover .message-actions.user, .message-actions.user:focus-within { opacity: 1; }
 .message-actions.user .message-action { width: 22px; height: 22px; border-radius: 6px; }
-.msg-imgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; margin: 0 0 8px; }
 .msg-img { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); cursor: zoom-in; padding: 0; }
 .msg-img img { width: 132px; height: 82px; object-fit: cover; display: block; }
+/* 消息里的图片与文件芯片排在同一行，图片缩到与芯片同量级，避免一张图占满一行 */
+.message-body .message-attachments { align-items: center; }
+.message-body .msg-img { border-radius: 7px; }
+.message-body .msg-img img { width: 72px; height: 44px; }
+.message-body .msg-img-copy { right: 4px; bottom: 4px; width: 20px; height: 20px; border-radius: 5px; }
 .msg-img-copy { position: absolute; right: 6px; bottom: 6px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: rgba(20, 20, 18, .72); color: #fff; opacity: 0; transition: opacity var(--motion-hover) var(--motion-ease), background var(--motion-hover) var(--motion-ease); }
 .msg-img:hover .msg-img-copy, .msg-img:focus-within .msg-img-copy { opacity: 1; }
 .msg-img-copy:hover { background: rgba(20, 20, 18, .9); }
 .message .attachment-chip { background: var(--surface-2); border-color: var(--border); }
+/* 消息里的附件芯片是预览入口，给出可点提示；输入区那份仍是纯展示 */
+.message-body .attachment-chip { cursor: pointer; }
+.message-body .attachment-chip:hover { background: var(--hover); color: var(--text-primary); }
 .message-body .message-attachments { max-width: 100%; justify-content: flex-start; }
+/* 附件预览复用资源面板的外壳，只在它没有文件树那套内容时补上正文的最小高度 */
+.attachment-panel { width: 420px; min-width: 300px; flex: 0 0 420px; }
+.attachment-image-zoom { max-width: 100%; max-height: 100%; display: block; padding: 0; background: transparent; cursor: zoom-in; }
+.attachment-image-zoom img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+/* 元数据区：能预览时收在一条可展开的横栏里，不能预览时是正文本体 */
+.attachment-meta-block { flex: 0 0 auto; border-bottom: 1px solid var(--border); }
+.attachment-meta-toggle { width: 100%; display: flex; align-items: center; gap: 6px; padding: 7px 14px; color: var(--text-tertiary); text-align: left; font-size: 11px; transition: color var(--motion-hover) ease-out; }
+.attachment-meta-toggle:hover { color: var(--text-secondary); }
+.attachment-meta-toggle svg { transition: transform var(--motion-hover) var(--motion-ease); }
+.attachment-meta-block.open .attachment-meta-toggle svg { transform: rotate(180deg); }
+.attachment-meta-block .attachment-meta { padding-top: 0; border-bottom: none; }
+.attachment-meta { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--border); }
+.attachment-meta > div { min-width: 0; display: grid; gap: 2px; }
+.attachment-meta dt { color: var(--text-tertiary); font-size: 10px; }
+.attachment-meta dd { min-width: 0; margin: 0; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.attachment-unreadable { min-height: 0; flex: 1; overflow-y: auto; }
+.attachment-unreadable .attachment-meta { border-bottom: none; }
+.attachment-unreadable-head { display: grid; justify-items: center; gap: 7px; padding: 34px 24px 22px; text-align: center; }
+.attachment-unreadable strong { font-size: 13px; color: var(--text-primary); }
+.attachment-unreadable-hint { color: var(--text-tertiary); font-size: 11px; }
+.attachment-unreadable-actions { display: flex; justify-content: center; gap: 12px; padding: 4px 14px 18px; }
+.attachment-unreadable-actions .text-button { display: inline-flex; align-items: center; gap: 5px; }
 
 /* ---------- 代码块 ---------- */
 .code-block { border-radius: 10px; }
@@ -2712,6 +2750,9 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .attach-warning > span { min-width: 0; flex: 1; }
 .attach-warning > button { flex: none; padding: 3px 8px; border-radius: 6px; background: var(--hover); color: var(--accent-tech); font-size: 11px; }
 .attach-warning > button:hover { color: var(--text-primary); }
+.thumb { width: 96px; height: 58px; flex: none; position: relative; border-radius: 9px; border: 1px solid var(--border); overflow: hidden; background: var(--surface-2); cursor: zoom-in; animation: thumb-pop .22s var(--motion-ease); }
+/* AttachmentImage 渲染的是 button 包 img，尺寸由内部规则定死，这里让它跟着缩略图框走 */
+.thumb .msg-img, .thumb .msg-img img { width: 100%; height: 100%; border: 0; border-radius: 0; }
 
 /* 上下文余量提示：只在越过预警线时出现，常驻百分比在工具栏的上下文环上。
    `--tone` 是这一档的语义色，色阶（描边、底色、水位条、按钮）全部由它推导，
@@ -2762,7 +2803,7 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .thumb .x { position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(24, 22, 19, .72); color: #fff; cursor: pointer; opacity: 0; transition: opacity .13s var(--motion-ease); }
 .thumb:hover .x, .thumb:focus-within .x { opacity: 1; }
 .thumb .x:hover { background: var(--danger); }
-.thumb.file { display: grid; place-items: center; gap: 2px; padding: 4px 24px; text-align: center; font: 600 8.5px/1.2 ui-monospace, "JetBrains Mono", Consolas, monospace; color: var(--text-tertiary); word-break: break-all; overflow: hidden; }
+.thumb.file { display: grid; place-items: center; gap: 2px; padding: 4px 14px; text-align: center; font: 600 8.5px/1.2 ui-monospace, "JetBrains Mono", Consolas, monospace; color: var(--text-tertiary); word-break: break-all; overflow: hidden; }
 .thumb.file span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thumb.file svg { color: var(--text-tertiary); }
 .composer-top { padding: 0; border-bottom: 0; margin: 0; }

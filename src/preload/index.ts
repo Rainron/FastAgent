@@ -42,6 +42,7 @@ const api: FastAgentApi = {
   files: {
     getPath: (file: File) => webUtils.getPathForFile(file),
     readImage: (path: string): Promise<string | null> => ipcRenderer.invoke('files:read-image', path)
+    ,readText: (path: string): Promise<string | null> => ipcRenderer.invoke('files:read-text', path)
     ,saveClipboardImage: (dataUrl: string, name: string, type: string): Promise<string> => ipcRenderer.invoke('files:save-clipboard-image', dataUrl, name, type)
   },
   app: {

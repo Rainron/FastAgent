@@ -67,6 +67,7 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(turn.userMessage.text)
   const [editAttachments, setEditAttachments] = useState<Attachment[]>(turn.attachments)
+  const actions = useResponseActions()
   const activity = turn.activity
   const activityStatus = activity?.status === 'working' ? 'working' : activity?.status === 'failed' || activity?.status === 'cancelled' || activity?.status === 'interrupted' ? 'done' : activity?.status === 'done' ? 'done' : 'idle'
   // 任务进度区分失败：ExecutionTrace 把失败归入折叠入口，这里保留原始状态。
@@ -107,8 +108,8 @@ const ConversationTurnView = React.memo(function ConversationTurnView({ isNew, t
       </div> : <>
         <div className="message-body">
           {turn.attachments.length > 0 && <div className="message-attachments">{turn.attachments.map((attachment) => isImageAttachment(attachment)
-            ? <AttachmentImage key={attachment.id} attachment={attachment} />
-            : <button type="button" className="attachment-chip" key={attachment.id} title={attachment.name}><Paperclip size={12} />{attachment.name}</button>)}</div>}
+            ? <AttachmentImage key={attachment.id} attachment={attachment} onOpen={actions.openAttachment} />
+            : <button type="button" className="attachment-chip" key={attachment.id} title={`预览 ${attachment.name}`} onClick={() => actions.openAttachment(attachment)}><Paperclip size={12} />{attachment.name}</button>)}</div>}
           {normalizeFlagEmoji(turn.userMessage.text)}
         </div>
       </>}

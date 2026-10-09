@@ -11,6 +11,7 @@ import type { ProjectTrustState } from '../composer/WorkspaceMenu'
 import { ApprovalDialog } from '../conversation/ApprovalDialog'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { truncateTurnsForRerun } from './rerun-turns'
+import { AttachmentPanel } from '../conversation/AttachmentPanel'
 import { beginCompaction, cancelCompaction, clearCompaction, completeCompaction, failCompaction, type CompactionStates } from '../conversation/compaction-state'
 import { CompactionFallbackDialog } from '../conversation/CompactionFallbackDialog'
 import { conversationMetaNow, mergeStreamedText, normalizeRenameInput, readModelIds, titleFromPrompt, toWorkspaceConversation } from '../conversation/conversation-meta'
@@ -111,6 +112,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const [terminalOpen, setTerminalOpen] = useState(false)
   // xterm 吃具体色值、不认 CSS 变量，这里同步一份深浅判定
   const darkTheme = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+  const [attachmentPreview, setAttachmentPreview] = useState<Attachment | null>(null)
   const [planOpen, setPlanOpen] = useState(false)
   const [planDisplayMode, setPlanDisplayMode] = useState<'top' | 'inline'>('top')
   const [gitPanelOpen, setGitPanelOpen] = useState(false)
@@ -735,6 +737,8 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     if (!detail) { setNotice('会话详情不存在'); return }
     setInspectorId(conversationId)
     setArtifactOpen(false)
+    setPlanOpen(false)
+    setAttachmentPreview(null)
     const model = allModels.find((item) => item.id === detail.runtime.modelId)
     const history = await window.fastAgent.conversations.history(conversationId).catch(() => [] as ConversationTurn[])
     const latestTurn = history.at(-1)
@@ -1038,6 +1042,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const handleCloseTerminal = useEventCallback(() => setTerminalOpen(false))
   /** 计划面板与资源面板、检查器共用右侧位置：打开前先关掉那两个。 */
   const handleClosePlanDrawer = useEventCallback(() => setPlanOpen(false))
+  const handleCloseAttachmentPreview = useEventCallback(() => setAttachmentPreview(null))
   const handleTogglePlanDrawer = useEventCallback(() => {
     closeInspector()
     setArtifactOpen(false)
@@ -1218,6 +1223,14 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
       }
       setArtifactFile(reference)
       setArtifactOpen(true)
+    },
+    // 再点一次同一个附件收回预览，与 openFile 的手感一致。
+    openAttachment: (attachment) => {
+      setInspector(null)
+      setInspectorId(null)
+      setArtifactOpen(false)
+      setPlanOpen(false)
+      setAttachmentPreview((current) => current?.id === attachment.id ? null : attachment)
     },
     copyText: (text) => void copyText(text),
     notify: setNotice,
@@ -1577,7 +1590,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenSettings} onToggleTheme={handleToggleTheme} />
       <div className="shell-body">
         <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onNewChatInSection={handleNewChatInContext} onNewChatInProject={handleNewChatInProject} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
-        <main className={`conversation ${artifactOpen || planPanelOpen ? 'with-artifact' : ''}`}>
+        <main className={`conversation ${artifactOpen || planPanelOpen || attachmentPreview ? 'with-artifact' : ''}${minimap.enabled ? ' minimap-on' : ''}`}>
           {section === 'chats' && batchKind !== 'conversations' ? <>
             <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
               <div><span className="status-dot" /> <span>{conversationTitle}</span></div>
@@ -1591,7 +1604,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
               {turns.length === 0 && shellCommands.entries.length === 0 ? <EmptyConversation onPickWorkspace={handlePickWorkspace} onAddAttachment={() => setAttachmentRequest((value) => value + 1)} onRunAgent={agentAvailable ? () => { setMode('agent'); applyDefaultPermission('ask'); setNotice('已切换到智能体模式') } : undefined} /> : <MessageList planDisplayMode={planDisplayMode} turns={turns} models={allModels} onCopy={handleCopyText} onDelete={handleDeleteTurn} onRetry={handleRerunTurn} onRegenerate={handleRerunTurn} onEdit={handleEditTurn} onContinue={handleContinueTurn} onShowContextMenu={showMessageContextMenu} todosByTurn={todosByTurn} memoryTurnIds={memoryTurnIds} contextSourceTurnIds={contextSourceTurnIds} shellEntries={shellCommands.entries} onCancelShellCommand={handleCancelShellCommand} onDismissShellCommand={handleDismissShellCommand} compactionHistory={compactionHistory} contextWindow={contextHealth.contextWindow} onNotice={setNotice} />}
             </div>
             {minimap.enabled && <ConversationMinimap segments={minimap.segments} metrics={minimap.metrics} onSeek={minimap.seek} />}
-            {planOpen && planDisplayMode === 'top' && <PlanDrawer turns={turns} todosByTurn={todosByTurn} onClose={() => setPlanOpen(false)} />}
             </div>
             <div className="scroll-nav-anchor">{scrollNav !== 'none' && <button className="scroll-nav" onClick={() => jumpConversation(scrollNav === 'top' ? 'top' : 'bottom')} aria-label={scrollNavLabel[scrollNav]} title={scrollNavLabel[scrollNav]}>
               {scrollNav === 'top' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
@@ -1603,6 +1615,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         </main>
         {terminalOpen && <TerminalPanel dark={darkTheme} onClose={handleCloseTerminal} onNotice={handleNotice} />}
         {planPanelOpen && <PlanDrawer turns={turns} todosByTurn={todosByTurn} onClose={handleClosePlanDrawer} />}
+        {attachmentPreview && <AttachmentPanel attachment={attachmentPreview} onClose={handleCloseAttachmentPreview} />}
         {artifactOpen && !inspector && <ResourcePanel workspaceRoot={workspaceRoot} conversationId={selectedConversationId} file={artifactFile} onPickWorkspace={handlePickWorkspace} onOpenFile={setArtifactFile} onCloseFile={handleCloseArtifactFile} onClose={handleCloseArtifactPanel} onNotice={handleNotice} onPickSuggestion={handlePickArtifactSuggestion} onContinueEdit={handleContinueEditArtifact} />}
         {inspector && <ConversationInspector data={inspector} initialSection={inspectorSection} onUpdatePolicy={(conversationId, patch) => void handleUpdateContextPolicy(conversationId, patch)} compaction={inspectorId ? compactionStates[inspectorId] ?? null : null} onCancelCompaction={() => { if (inspectorId) { void window.fastAgent.conversations.cancelCompaction(inspectorId); setCompactionStates((current) => cancelCompaction(current, inspectorId)) } }} onClose={closeInspector} onRefresh={() => { if (inspectorId) void openInspector(inspectorId) }} onCompact={() => void compactConversationNow(inspectorId)} />}
         {Object.entries(compactionStates).filter(([, state]) => state.status === 'failed' || state.status === 'timed_out').map(([conversationId, state]) => <CompactionFallbackDialog key={`${conversationId}:${state.taskId}`} state={state} models={allModels} onRetry={(modelId) => void compactConversationNow(conversationId, modelId)} onCancel={() => { void window.fastAgent.conversations.cancelCompaction(conversationId); setCompactionStates((current) => cancelCompaction(current, conversationId)) }} onClose={() => setCompactionStates((current) => clearCompaction(current, conversationId))} />)}

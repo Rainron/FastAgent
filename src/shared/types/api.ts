@@ -45,6 +45,8 @@ export interface FastAgentApi {
     getPath(file: File): string
     /** 读取附件图片转 data URL；路径失效或超出限制时返回 null，不抛错。 */
     readImage(path: string): Promise<string | null>
+    /** 读取附件文本；二进制、超过 2MB 或路径失效时返回 null，不抛错。 */
+    readText(path: string): Promise<string | null>
     saveClipboardImage(dataUrl: string, name: string, type: string): Promise<string>
   }
   app: {

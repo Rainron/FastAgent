@@ -274,6 +274,23 @@ export async function readAttachmentImage(requested: string): Promise<string | n
   }
 }
 
+/**
+ * 读取任意本地附件的文本内容，供消息里的附件预览。
+ * 与 readWorkspaceFile 的区别同 readAttachmentImage：附件由用户显式添加，允许来自工作区之外。
+ * 二进制、超过 2MB、路径失效一律返回 null，调用方退回到「元信息 + 用系统程序打开」。
+ */
+export async function readAttachmentText(requested: string): Promise<string | null> {
+  try {
+    const info = await stat(requested)
+    if (!info.isFile() || info.size > MAX_WORKSPACE_FILE_BYTES) return null
+    const buffer = await readFile(requested)
+    if (isProbablyBinary(buffer)) return null
+    return buffer.toString('utf8')
+  } catch {
+    return null
+  }
+}
+
 export interface WorkspaceDeleteResult {
   ok: boolean
   error?: string

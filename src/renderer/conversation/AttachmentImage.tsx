@@ -14,8 +14,8 @@ export function attachmentImageSrc(attachment: Attachment): string | null {
   return attachment.localPath ? cache.get(attachment.localPath) ?? null : null
 }
 
-/** 附件图片缩略图；路径失效或超限时静默退场，布局由调用方兜底。 */
-export function AttachmentImage({ attachment, title }: { attachment: Attachment; title?: string }) {
+/** 附件图片缩略图；路径失效或超限时静默退场，布局由调用方兜底。onOpen 缺省时点击开灯箱。 */
+export function AttachmentImage({ attachment, title, onOpen }: { attachment: Attachment; title?: string; onOpen?: (attachment: Attachment) => void }) {
   const [src, setSrc] = useState<string | null>(() => attachmentImageSrc(attachment))
   const path = attachment.localPath
   useEffect(() => {
@@ -34,7 +34,7 @@ export function AttachmentImage({ attachment, title }: { attachment: Attachment;
     const blob = await fetch(src!).then((response) => response.blob())
     await navigator.clipboard.write([new ClipboardItem({ [blob.type || 'image/png']: blob })])
   }
-  return <button type="button" className="msg-img" onClick={() => openLightbox(src)} title={title ?? attachment.name} aria-label={`查看 ${attachment.name}`}><img src={src} alt={attachment.name} loading="lazy" draggable={false} /><span className="msg-img-copy" role="button" tabIndex={0} onClick={(event) => { void copyImage(event) }} aria-label="复制图片" title="复制图片"><Copy size={13} /></span></button>
+  return <button type="button" className="msg-img" onClick={() => onOpen ? onOpen(attachment) : openLightbox(src)} title={title ?? attachment.name} aria-label={`查看 ${attachment.name}`}><img src={src} alt={attachment.name} loading="lazy" draggable={false} /><span className="msg-img-copy" role="button" tabIndex={0} onClick={(event) => { void copyImage(event) }} aria-label="复制图片" title="复制图片"><Copy size={13} /></span></button>
 }
 
 /** 原型 fmtSize：M 级一位小数，K 级向上取整，1K 起步。 */

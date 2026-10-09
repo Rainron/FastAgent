@@ -4,7 +4,7 @@ import { readAgentContextFiles, resolveAgentContextPaths } from '../agent-contex
 import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from '../agent-init'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
-import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
+import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readAttachmentText, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
 import { openTerminalAt } from '../open-terminal'
 import { shell } from 'electron'
 import { spawn } from 'node:child_process'
@@ -88,6 +88,7 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
   handle('workspace:read-file', (_event, path: string) => readWorkspaceFile(ctx.workspaceRoot, path))
   handle('workspace:read-image', (_event, path: string) => readWorkspaceImage(ctx.workspaceRoot, path))
   handle('files:read-image', (_event, path: string) => readAttachmentImage(path))
+  handle('files:read-text', (_event, path: string) => readAttachmentText(path))
   handle('files:save-clipboard-image', (_event, dataUrl: string, name: string, type: string) => {
     const match = /^data:[^;]+;base64,(.+)$/.exec(dataUrl)
     if (!match) throw new Error('剪贴板图片格式无效')
