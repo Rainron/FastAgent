@@ -190,14 +190,26 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .nav-item.active { font-weight: 500; }
 .nav-badge { margin-left: auto; min-width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; padding: 0 5px; border-radius: 99px; background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); font-family: "JetBrains Mono", Consolas, monospace; font-size: 10px; }
 .sidebar.collapsed .nav-badge { display: none; }
-/* 列表区吃掉导航与账户行之外的全部高度；overflow 只在两个分区都触到各自下限时才兜底出滚动条 */
-.sidebar-lists { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+/* 侧栏里唯一的滚动容器，从导航一直包到最近对话：一条滚动条贯穿整条侧栏，
+   导航、工作区、最近对话都按内容自然撑开，不再各自滚各自的。品牌行与账户行留在外面不跟着滚。
+   负 margin + 等量 padding 把滚动条推到侧栏右缘，列表项的内容边界不变。
+   overflow-x 必须显式 hidden：只写 overflow-y: auto 时 overflow-x 的 visible 会被算成 auto，底部多出一条横向滚动条。 */
+.sidebar-scroll { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; margin-right: -8px; padding-right: 8px; }
+.sidebar-lists { flex: 0 0 auto; display: flex; flex-direction: column; }
 .sidebar.collapsed .sidebar-lists { display: none; }
 .sidebar-section { width: 100%; margin-top: 24px; margin-left: 0; }
-/* 收起的分区不参与弹性分配；展开时工作区封顶 40% 且不被压缩（会话一多它会被挤成 0 高、项目全看不见），剩余高度归最近对话 */
+/* 分区一律按内容高度排布，不参与弹性分配，高度由外层滚动容器兜住 */
 .sidebar-section.workspace, .sidebar-section.recent { flex: 0 0 auto; }
-.sidebar-section.workspace.open { flex: 0 0 auto; min-height: 0; max-height: 40%; display: flex; flex-direction: column; }
-.sidebar-section.recent.open { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.sidebar-section.workspace.open, .sidebar-section.recent.open { display: flex; flex-direction: column; }
+/* 展开 / 折叠：高度从 0fr 长到 1fr，配一点点上浮与淡入。
+   比整段淡入柔和，也不需要预先知道内容高度。 */
+.collapse { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--motion-sidebar) var(--motion-ease), opacity var(--motion-sidebar) var(--motion-ease); }
+.collapse.open { grid-template-rows: 1fr; opacity: 1; }
+.collapse-inner { min-height: 0; overflow: hidden; }
+.collapse > .collapse-inner > * { transform: translateY(-3px); transition: transform var(--motion-sidebar) var(--motion-ease); }
+.collapse.open > .collapse-inner > * { transform: none; }
+:root[data-motion="off"] .collapse, :root[data-motion="system"][data-reduced-motion="true"] .collapse,
+:root[data-motion="off"] .collapse > .collapse-inner > *, :root[data-motion="system"][data-reduced-motion="true"] .collapse > .collapse-inner > * { transition: none; }
 .section-label { flex: 0 0 auto; width: 100%; display: flex; align-items: center; justify-content: space-between; padding: 0 0 7px; background: transparent; color: var(--text-tertiary); font-family: inherit; font-size: 13px; letter-spacing: normal; text-align: left; }
 .section-label:hover { color: var(--text-secondary); }
 .section-label-title { display: inline-flex; align-items: center; gap: 2px; padding-left: 0; }
@@ -212,8 +224,42 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .sidebar-search:focus-within { border-color: var(--accent-calm); }
 .sidebar-search input { flex: 1 1 auto; min-width: 0; border: none; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; outline: none; }
 .sidebar-search-empty { margin: 6px 2px; color: var(--text-tertiary); font-size: 11.5px; }
-/* 工作区列表超过 10 项后自行滚动，不把整条侧栏撑长 */
-.sidebar-scroll-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.sidebar-scroll-list { flex: 0 0 auto; }
+/* 项目下挂它自己的最新会话：一条细引导线 + 缩进对齐项目名的文字起点，视觉上从属于上面那一行 */
+.project-group { display: grid; }
+.project-group + .project-group { margin-top: 1px; }
+/* 缩进 22px = 文件夹图标 15 + 间距 7：子会话的标题正好落在项目名那一列，像文件树一样对齐 */
+.project-conversations { display: grid; gap: 1px; margin: 1px 0 6px 22px; border-left: 1px solid var(--border); }
+.project-conversation { position: relative; min-width: 0; width: 100%; display: flex; align-items: center; border-radius: 7px; color: var(--text-tertiary); transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease); }
+.project-conversation-main { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 26px 0 9px; border: none; border-radius: inherit; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 12.5px; cursor: pointer; }
+.project-conversation:hover { background: var(--hover); color: var(--text-secondary); }
+/* 条目菜单压在右侧，和最近对话一致：平时不占位，悬停或选中才出现 */
+.project-conversation .item-actions { position: absolute; top: 0; right: 0; bottom: 0; width: 26px; z-index: 2; }
+.project-conversation .item-actions-trigger { width: 22px; height: 22px; opacity: 0; }
+.project-conversation:hover .item-actions-trigger, .project-conversation .item-actions-trigger[aria-expanded="true"] { opacity: 1; }
+.project-conversation .recent-title-input { margin: 0 4px; }
+/* 文件夹图标就是展开指示：展开画开着的那只，切换时轻微放大一下 */
+.project-folder { position: relative; flex: 0 0 15px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); transition: color var(--motion-hover) ease; }
+.project-folder > svg { grid-area: 1 / 1; transition: opacity var(--motion-focus) var(--motion-ease), transform var(--motion-focus) var(--motion-ease); }
+.project-folder { display: grid; place-items: center; }
+.project-folder > svg.folder-closed { opacity: 1; transform: none; }
+.project-folder > svg.folder-open { opacity: 0; transform: scale(.82) rotate(-8deg); }
+.project-folder.open > svg.folder-closed { opacity: 0; transform: scale(.82) rotate(8deg); }
+.project-folder.open > svg.folder-open { opacity: 1; transform: none; }
+:root[data-motion="off"] .project-folder > svg, :root[data-motion="system"][data-reduced-motion="true"] .project-folder > svg { transition: none; }
+.project-item:hover .project-folder { color: var(--text-secondary); }
+.project-folder.open { color: var(--accent-tech); transform: scale(1.06); }
+/* 项目里有进行中的运行或没看过的结果时，在文件夹角上点一枚小灯，不额外占一列 */
+.project-folder-badge { position: absolute; right: -2px; bottom: -1px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-tech); box-shadow: 0 0 0 1.5px var(--sidebar); }
+.project-folder-badge.running { animation: run-status-pulse 1.8s ease-in-out infinite; }
+.project-folder-badge.waiting { background: #f59e0b; }
+.project-folder-badge.failed { background: #ef4444; }
+.project-folder-badge.cancelled { background: var(--text-tertiary); }
+:root[data-motion="off"] .project-folder, :root[data-motion="system"][data-reduced-motion="true"] .project-folder { transition: none; }
+:root[data-motion="off"] .project-folder-badge.running, :root[data-motion="system"][data-reduced-motion="true"] .project-folder-badge.running { animation: none; }
+.project-conversations-more { width: 100%; height: 24px; display: flex; align-items: center; padding: 0 8px; border: none; border-radius: 7px; background: transparent; color: var(--text-tertiary); text-align: left; font: inherit; font-size: 11px; cursor: pointer; }
+.project-conversations-more:hover { background: var(--hover); color: var(--text-secondary); }
+.project-conversations-empty { margin: 1px 0 6px 22px; padding-left: 9px; border-left: 1px solid var(--border); color: var(--text-tertiary); font-size: 11.5px; line-height: 22px; }
 .workspace-item { min-width: 0; width: 100%; margin-left: 0; position: relative; display: flex; align-items: center; border-radius: 8px; color: var(--text-secondary); }
 .sidebar-section > .workspace-item { width: 100%; }
 .workspace-item:hover { background: var(--hover); color: var(--text-primary); }
@@ -222,8 +268,29 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .workspace-item.active::before { content: ''; position: absolute; left: -8px; top: 50%; width: 3px; height: 16px; border-radius: 2px; background: var(--accent); transform: translateY(-50%); }
 .workspace-item-main { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px 0 0; margin: 0; overflow: hidden; background: transparent; color: inherit; text-align: left; font-size: 13px; }
 .workspace-item-main > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 侧栏所有单行标题共用：一行放不下就省略号，绝不折行把行高撑开。
+   宽度按「最多显示几个字」裁（设置里可调），放不下的部分靠悬停滚动补齐；
+   滚的是容器的 scrollLeft，所以这里不能给 overflow-x: clip。 */
+/* 必须是块级：行内元素没有 clientWidth，也接不住 scrollLeft，悬停滚动就无从谈起 */
+.row-title[data-scrolling="true"], .recent-title[data-scrolling="true"] { text-overflow: clip; }
+.row-title, .recent-title { display: block; min-width: 0; max-width: min(100%, calc(var(--sidebar-title-chars, 18) * 1em)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; scrollbar-width: none; }
+.row-title { flex: 0 1 auto; }
+.row-title::-webkit-scrollbar, .recent-title::-webkit-scrollbar { display: none; }
 .run-status-slot { width: 8px; flex: 0 0 8px; display: inline-flex; align-items: center; justify-content: center; }
 .project-item .run-status-slot { width: 8px; }
+/* 进行中的状态点落在标题左侧的缩进带里：绝对定位，出现与否都不会让标题左右跳 */
+.row-lead-dot { position: absolute; top: 50%; width: 6px; height: 6px; border-radius: 50%; background: var(--text-tertiary); transform: translateY(-50%); }
+.recent-item .row-lead-dot { left: 16px; }
+.project-conversation .row-lead-dot { left: 1px; }
+.row-lead-dot.running { background: var(--accent-tech); animation: run-status-pulse 1.8s ease-in-out infinite; }
+.row-lead-dot.waiting { background: #f59e0b; }
+/* 已出结果但没看过：右端一枚未读点，悬停时让位给操作菜单 */
+.row-unread-dot { position: absolute; top: 50%; right: 11px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-tech); transform: translateY(-50%); transition: opacity var(--motion-hover) ease-out; }
+.row-unread-dot.failed { background: #ef4444; }
+.row-unread-dot.cancelled { background: var(--text-tertiary); }
+.workspace-item:hover .row-unread-dot, .project-conversation:hover .row-unread-dot,
+.workspace-item:has(.item-actions-trigger[aria-expanded="true"]) .row-unread-dot { opacity: 0; }
+:root[data-motion="off"] .row-lead-dot.running, :root[data-motion="system"][data-reduced-motion="true"] .row-lead-dot.running { animation: none; }
 .project-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-calm); }
 .project-dot.tech { background: var(--accent-tech); }
 .project-item .workspace-item-main > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -235,18 +302,19 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .run-status-dot.cancelled { background: #94a3b8; }
 @keyframes run-status-pulse { 50% { opacity: .45; } }
 :root[data-motion="off"] .run-status-dot.running, :root[data-motion="system"][data-reduced-motion="true"] .run-status-dot.running { animation: none; opacity: 1; }
-/* overflow-x 必须显式 hidden：只写 overflow-y:auto 时 overflow-x 的 visible 会被计算成 auto，底部多出一条横向滚动条 */
 .recent { min-height: 0; margin-top: 22px; }
-/* 滚动只发生在会话列表本身，搜索框与「查看全部」留在分区里不跟着滚 */
-.recent-list { flex: 1 1 auto; min-height: 96px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.recent-list { flex: 0 0 auto; }
 .recent-item { align-items: stretch; }
-.recent-item .workspace-item-main { height: auto; min-height: 0; display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; column-gap: 8px; align-items: start; padding: 5px 32px 5px 0; line-height: 16px; }
-.recent-item .workspace-item-main > .run-status-slot { grid-column: 1; grid-row: 1; width: 8px; height: 16px; }
-.project-item .workspace-item-main > .run-status-slot { margin-left: 0; }
-.recent-copy { min-width: 0; grid-column: 2; grid-row: 1; display: grid; gap: 3px; }
-.recent-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 行首状态点是可有可无的，用 flex 让标题自己顶上去，不像 grid 那样留一条空列 */
+/* 左内边距对齐项目名那一列（8 项目行内边距 + 15 文件夹 + 7 间距），
+   于是「最近对话」的标题和展开在项目下面的会话标题落在同一条竖线上 */
+.recent-item .workspace-item-main { height: auto; min-height: 0; display: flex; align-items: center; gap: 7px; padding: 6px 30px 6px 32px; line-height: 16px; }
+.recent-copy { min-width: 0; flex: 1 1 auto; display: grid; gap: 3px; }
+
 .recent-title-input { flex: 1 1 auto; min-width: 0; height: 26px; padding: 0 7px; border: 1px solid var(--accent-calm); border-radius: 6px; background: var(--surface); color: var(--text-primary); font: inherit; font-size: 12px; outline: none; }
-.recent-item .workspace-item-main time { grid-column: 3; grid-row: 1; justify-self: end; min-width: max-content; flex-shrink: 0; white-space: nowrap; text-align: right; color: var(--text-tertiary); font-size: 10px; line-height: 16px; transition: opacity var(--motion-hover) ease-out; }
+.recent-item .workspace-item-main time { min-width: max-content; flex: 0 0 auto; align-self: center; white-space: nowrap; text-align: right; color: var(--text-tertiary); font-size: 10px; line-height: 16px; transition: opacity var(--motion-hover) ease-out; }
+/* 未读点占的就是时间那块位置，两个一起出现会挤成一团 */
+.recent-item:has(.row-unread-dot) .workspace-item-main time { opacity: 0; visibility: hidden; }
 .recent-item .item-actions { position: absolute; top: 0; right: 0; bottom: 0; width: 30px; z-index: 2; }
 .recent-item .item-actions-trigger { opacity: 0; }
 .recent-item:hover .workspace-item-main time,
@@ -266,7 +334,8 @@ html[data-maximized="true"] .app-shell { border-radius: 0; }
 .item-open-folder { width: 26px; height: 26px; flex: 0 0 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 5px; background: transparent; color: var(--text-tertiary); opacity: 0; }
 .workspace-item:hover .item-open-folder, .workspace-item.active .item-open-folder { opacity: 1; }
 .item-open-folder:hover { background: var(--surface); color: var(--text-primary); }
-.item-actions-menu { width: 176px; position: absolute; top: calc(100% - 2px); right: 0; z-index: 80; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-popover); animation: motion-popover-enter var(--motion-popover) var(--motion-ease) both; }
+/* 挂在 body 上用 fixed + 视口坐标（见 item-actions-position.ts）：留在列表里会被侧栏滚动容器的 overflow 裁掉 */
+.item-actions-menu { width: 176px; position: fixed; z-index: 90; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-popover); animation: motion-popover-enter var(--motion-popover) var(--motion-ease) both; }
 .item-actions-menu button { height: 28px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-radius: 5px; background: transparent; color: var(--text-secondary); text-align: left; font-size: 11px; }
 .item-actions-menu button:hover { background: var(--hover); color: var(--text-primary); }
 .sidebar-bottom { margin-top: auto; display: grid; gap: 6px; }
@@ -1127,8 +1196,19 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 .auth-submit:hover:not(:disabled) { background: var(--brand-hover); }
 .auth-submit:active:not(:disabled) { background: var(--brand-active); }
 .auth-note { display: flex; align-items: center; justify-content: center; gap: 5px; margin: 0; color: var(--text-tertiary); font-size: 11px; }
-.toast { position: fixed; right: 22px; bottom: 22px; z-index: 100; max-width: min(360px, calc(100vw - 44px)); display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-popover); color: var(--text-primary); font-size: 12px; animation: motion-toast-enter var(--motion-popover) var(--motion-ease) both; }
-@keyframes motion-toast-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.toast-inline { width: min(var(--conversation-max, 900px), calc(100% - var(--conversation-gutter, 48px))); min-width: 0; margin: 0 auto 10px; display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--accent-tech) 30%, var(--border)); color: var(--text-secondary); font-size: 12px; line-height: 18px; animation: motion-toast-enter var(--motion-popover) var(--motion-ease) both; }
+.toast-message { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-action { min-height: 25px; flex: 0 0 auto; padding: 0 8px; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--accent-tech) 10%, transparent); color: var(--accent-tech); font-size: 11px; transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease); }
+.toast-action:hover { background: color-mix(in srgb, var(--accent-tech) 17%, transparent); color: var(--text-primary); }
+@keyframes motion-toast-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+/* 顶部浮出的提示：主区内居中、悬在对话头下沿，2 秒后自己退场。
+   用绝对定位而不是占一行：提示来去不该让下面的内容上下跳。 */
+.toast-top { position: absolute; top: 12px; left: 50%; z-index: 40; max-width: min(520px, calc(100% - 48px)); display: flex; align-items: center; gap: 10px; padding: 9px 14px; border: 1px solid color-mix(in srgb, var(--accent-tech) 26%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-2, 0 10px 30px rgba(15, 23, 42, .16)); backdrop-filter: blur(10px); color: var(--text-primary); font-size: 12.5px; line-height: 18px; transform: translateX(-50%); animation: motion-toast-drop var(--motion-popover) var(--motion-ease) both; }
+.toast-top::before { content: ''; width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--accent-tech); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-tech) 18%, transparent); }
+.toast-top.closing { animation: motion-toast-lift var(--motion-popover-exit) var(--motion-ease) both; }
+@keyframes motion-toast-drop { from { opacity: 0; transform: translate(-50%, -10px) scale(.96); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+@keyframes motion-toast-lift { from { opacity: 1; transform: translate(-50%, 0) scale(1); } to { opacity: 0; transform: translate(-50%, -8px) scale(.97); } }
+:root[data-motion="off"] .toast-top, :root[data-motion="system"][data-reduced-motion="true"] .toast-top { animation: none; }
 .toast.closing { animation: motion-toast-exit var(--motion-popover-exit) var(--motion-ease) both; pointer-events: none; }
 @keyframes motion-toast-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(8px); } }
 .toast-action { min-height: 24px; padding: 0 7px; border-radius: 5px; background: var(--hover); color: var(--accent-tech); font-size: 11px; }
@@ -2486,21 +2566,76 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .nav-item.active svg, .nav-item:hover svg { color: var(--accent-tech); }
 .nav-badge { margin-left: auto; }
 .nav-item kbd { margin-left: auto; font: 600 9.5px/1 ui-monospace, "JetBrains Mono", Consolas, monospace; padding: 3px 5px; border-radius: 5px; background: var(--surface); border: 1px solid var(--border); color: var(--text-tertiary); box-shadow: 0 1px 0 var(--border); }
+/* 这一层把侧栏内边距抬到 10px，滚动条的贴边补偿要跟着走 */
+.sidebar-scroll { margin-right: -10px; padding-right: 10px; }
+/* 导航项不画底色：当前项已经由右侧那颗点表达 */
+.nav-item.active { background: transparent; box-shadow: none; }
+.nav-item.active:hover { background: var(--bg-side-2); }
+/* 项目行的 ⋮ 不再占一列宽度：压到行尾，悬停才出现 */
+.project-item .item-actions { position: absolute; top: 0; right: 0; bottom: 0; width: 28px; z-index: 2; }
+.project-item .workspace-item-main { padding-left: 8px; padding-right: 52px; }
+.project-item .item-actions-trigger { width: 22px; height: 22px; }
+/* 项目名右边的「新建对话」：和 ⋮ 并排压在行尾，平时藏起来，悬停才出现 */
+.item-new-chat { position: absolute; top: 50%; right: 26px; z-index: 2; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 6px; background: transparent; color: var(--text-tertiary); opacity: 0; transform: translateY(-50%); transition: opacity var(--motion-hover) ease-out, background var(--motion-hover) ease-out, color var(--motion-hover) ease-out; cursor: pointer; }
+.workspace-item:hover .item-new-chat, .item-new-chat:focus-visible { opacity: 1; }
+.item-new-chat:hover { background: var(--surface); color: var(--text-primary); }
+.sidebar-resizer { position: absolute; top: 0; right: -3px; bottom: 0; width: 7px; z-index: 30; cursor: col-resize; }
+.sidebar-resizer:hover, .sidebar-resizer:active { background: color-mix(in srgb, var(--accent-tech) 14%, transparent); }
 .sidebar-section { margin-top: 18px; }
-.section-label { padding: 0 10px 6px; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+/* 分区标题与它下面的条目同字号：工作区 → 项目 → 会话要读起来像一棵树的三层，
+   标题一旦缩成小号大写字母，层级关系就断在第一级上。 */
+.section-label { padding: 0 8px 6px; font-size: 12.5px; font-weight: 600; letter-spacing: normal; text-transform: none; }
 .section-label-title { gap: 0; }
 .workspace-item { border-radius: 9px; }
 .workspace-item:hover { background: var(--bg-side-2); }
-.workspace-item.active { background: var(--surface); box-shadow: var(--shadow-1); }
+/* 选中态一律走「毛玻璃药丸」：半透底 + 背景虚化 + 一圈 accent 细边。
+   不用纯白实底——侧栏本来就浅，实底糊成一块，边界反而比周围更硬。 */
+.recent-item.active, .project-conversation.active {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-tech) 22%, transparent), 0 1px 2px color-mix(in srgb, #0f172a 6%, transparent);
+  backdrop-filter: blur(8px) saturate(1.15);
+  color: var(--text-primary);
+}
+.recent-item.active:hover, .project-conversation.active:hover { background: color-mix(in srgb, var(--surface) 76%, transparent); }
+/* 选中的对话再压一道 accent 竖条，和「当前所在的项目」区分开 */
+.recent-item.active::after, .project-conversation.active::after {
+  content: ''; position: absolute; left: 0; top: 50%; width: 2px; height: 14px; border-radius: 0 2px 2px 0;
+  background: var(--accent-tech); transform: translateY(-50%);
+}
+.workspace-item { transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), box-shadow var(--motion-focus) var(--motion-ease), transform var(--motion-press) var(--motion-ease); }
+.workspace-item:active { transform: scale(.99); }
+.sidebar-scroll-list > .workspace-item, .recent-list > .recent-item { animation: motion-sidebar-item-enter var(--motion-status) var(--motion-ease) both; }
+.sidebar-scroll-list > .workspace-item:nth-child(2), .recent-list > .recent-item:nth-child(2) { animation-delay: 20ms; }
+.sidebar-scroll-list > .workspace-item:nth-child(3), .recent-list > .recent-item:nth-child(3) { animation-delay: 40ms; }
+@keyframes motion-sidebar-item-enter { from { opacity: .45; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 .workspace-item.active::before { display: none; }
 .workspace-item-main { height: 32px; gap: 9px; font-size: 12.5px; }
-.recent-item .workspace-item-main { padding: 7px 30px 7px 0; }
+.recent-item .workspace-item-main { padding: 7px 30px 7px 32px; }
 .recent-title { font-size: 12.5px; }
 .recent-more { margin: 4px 2px 0; height: 28px; padding: 0 8px; border-radius: 8px; color: var(--text-tertiary); font-size: 11.5px; }
 .recent-more:hover { background: var(--bg-side-2); color: var(--text-primary); }
 .sidebar-bottom { padding: 8px 4px 2px; }
 .account-row .avatar { width: 26px; height: 26px; border-radius: 9px; background: linear-gradient(145deg, #6b8cc7, #4b6ba8); color: #fff; font-size: 12px; font-weight: 600; box-shadow: var(--shadow-1); }
 .account-row strong { font-size: 12.5px; font-weight: 600; }
+
+/* ---------- 内嵌终端面板 ---------- */
+/* 右侧面板（终端 / 检查器）的进入动画：从右边滑入 */
+@keyframes motion-resource-enter { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+.terminal-panel { width: 460px; min-width: 320px; flex: 0 0 460px; display: flex; flex-direction: column; min-height: 0; padding: 10px 10px 8px; border-left: 1px solid var(--border); background: var(--surface); animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) backwards; }
+.terminal-panel-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.terminal-panel-head > svg { flex: 0 0 auto; color: var(--accent-tech); }
+.terminal-panel-head .icon-button { width: 26px; height: 26px; }
+.terminal-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
+.terminal-tab { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 9px; border: none; border-radius: 7px; background: transparent; color: var(--text-tertiary); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.terminal-tab:hover { background: var(--bg-side-2); color: var(--text-secondary); }
+.terminal-tab.active { background: var(--surface-2); color: var(--text-primary); }
+.terminal-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 4px; opacity: .55; }
+.terminal-tab-close:hover { background: var(--hover); opacity: 1; }
+/* xterm 自己按容器尺寸算行列，父容器必须给出确定高度，否则 fit 算不出行数 */
+.terminal-surface { flex: 1 1 auto; min-height: 0; margin-top: 8px; overflow: hidden; }
+.terminal-surface .xterm { height: 100%; }
+.terminal-surface .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
+.terminal-empty { margin: 16px 4px; color: var(--text-tertiary); font-size: 12px; }
 
 /* ---------- 对话头部（main-top） ---------- */
 .conversation-header { height: 46px; flex: 0 0 46px; padding: 0 14px; font-size: 12.5px; font-weight: 600; letter-spacing: .01em; }
@@ -2827,24 +2962,6 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
   .recent { margin-top: 12px; }
 }
 
-/* 内嵌终端面板（私有 e15fe4b 的终端部分；侧栏重做那批样式不随本批进来） */
-@keyframes motion-resource-enter { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
-/* ---------- 内嵌终端面板 ---------- */
-.terminal-panel { width: 460px; min-width: 320px; flex: 0 0 460px; display: flex; flex-direction: column; min-height: 0; padding: 10px 10px 8px; border-left: 1px solid var(--border); background: var(--surface); animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) backwards; }
-.terminal-panel-head { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.terminal-panel-head > svg { flex: 0 0 auto; color: var(--accent-tech); }
-.terminal-panel-head .icon-button { width: 26px; height: 26px; }
-.terminal-tabs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
-.terminal-tab { display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 6px 0 9px; border: none; border-radius: 7px; background: transparent; color: var(--text-tertiary); font: inherit; font-size: 11.5px; white-space: nowrap; cursor: pointer; }
-.terminal-tab:hover { background: var(--bg-side-2); color: var(--text-secondary); }
-.terminal-tab.active { background: var(--surface-2); color: var(--text-primary); }
-.terminal-tab-close { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 4px; opacity: .55; }
-.terminal-tab-close:hover { background: var(--hover); opacity: 1; }
-/* xterm 自己按容器尺寸算行列，父容器必须给出确定高度，否则 fit 算不出行数 */
-.terminal-surface { flex: 1 1 auto; min-height: 0; margin-top: 8px; overflow: hidden; }
-.terminal-surface .xterm { height: 100%; }
-.terminal-surface .xterm-viewport { background: transparent !important; scrollbar-width: thin; }
-.terminal-empty { margin: 16px 4px; color: var(--text-tertiary); font-size: 12px; }
 
 /* 输入区项目菜单（私有 b77e2a9 引入，38fe131 加上信任入口） */
 .workspace-menu-selector { position: relative; min-width: 0; }

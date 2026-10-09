@@ -80,3 +80,10 @@ export function buildInspectorData(input: InspectorMapInput): ConversationInspec
     } : undefined
   }
 }
+
+/** 详情面板里的时间戳展示：库里存的是 ISO 串，脏值或空值一律显示占位符而不是 Invalid Date。 */
+export function formatInspectorTimestamp(value: string | null | undefined): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false })
+}

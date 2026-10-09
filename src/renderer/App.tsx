@@ -4,6 +4,7 @@ import type { AppSettings, AppTheme, AuthSnapshot } from '../shared/types'
 import { BootScreen, LoginScreen } from './auth/LoginScreen'
 import { WorkspaceShell } from './workspace/WorkspaceShell'
 import { shouldShowLoginScreen } from './startup-access'
+import { clampSidebarTitleChars } from '../shared/sidebar-title'
 
 function App() {
   // react-query 只有主窗口的功能在用，provider 随 App chunk 加载，快速小窗入口不背这个包
@@ -61,7 +62,9 @@ function App() {
     root.dataset.glass = settings?.sidebarGlass ? 'true' : 'false'
     root.dataset.surfaceLevel = settings?.surfaceLevel ?? 'standard'
     root.dataset.bodyContrast = settings?.bodyTextContrast ?? 'standard'
-  }, [settings?.accentColor, settings?.baseFontSize, settings?.uiDensity, settings?.sidebarGlass, settings?.surfaceLevel, settings?.bodyTextContrast])
+    // 侧栏会话标题的裁剪宽度按字数算，写成 CSS 变量供侧栏各处共用
+    root.style.setProperty('--sidebar-title-chars', String(clampSidebarTitleChars(settings?.sidebarTitleChars)))
+  }, [settings?.accentColor, settings?.baseFontSize, settings?.uiDensity, settings?.sidebarGlass, settings?.surfaceLevel, settings?.bodyTextContrast, settings?.sidebarTitleChars])
 
   useEffect(() => {
     const root = document.documentElement

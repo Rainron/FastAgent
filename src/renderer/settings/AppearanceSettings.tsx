@@ -1,5 +1,6 @@
 import { Boxes, Check, Monitor, Moon, Sun } from 'lucide-react'
 import type { AppSettings, AppTheme } from '../../shared/types'
+import { clampSidebarTitleChars, SIDEBAR_TITLE_CHARS } from '../../shared/sidebar-title'
 
 const themes: Array<{ value: AppTheme; label: string; hint: string; Icon: typeof Sun }> = [
   { value: 'light', label: '浅色', hint: '日光下的暖白', Icon: Sun },
@@ -39,6 +40,7 @@ const bodyContrasts: Array<{ value: NonNullable<AppSettings['bodyTextContrast']>
 ]
 
 export function AppearanceSettings({ settings, theme, onThemeChange, onChange }: { settings: AppSettings; theme: AppTheme; onThemeChange: (theme: AppTheme) => void; onChange: (patch: Partial<AppSettings>) => void }) {
+  const titleChars = clampSidebarTitleChars(settings.sidebarTitleChars)
   return <section className="settings-panel appearance" aria-labelledby="settings-appearance">
     <div className="settings-section-heading"><div><h2 id="settings-appearance">主题</h2><p>主题会同步应用到窗口标题栏，并在重启后保持。</p></div></div>
     <div className="theme-cards">
@@ -58,6 +60,21 @@ export function AppearanceSettings({ settings, theme, onThemeChange, onChange }:
     <div className="settings-row">
       <div><strong>侧栏毛玻璃</strong><span>窗口失焦或移动时透出桌面；性能优先可关闭。</span></div>
       <label className="switch-row"><input type="checkbox" checked={Boolean(settings.sidebarGlass)} onChange={(event) => onChange({ sidebarGlass: event.target.checked })} /><span className="switch-visual" aria-hidden="true" /></label>
+    </div>
+    <div className="settings-row">
+      <div><strong>侧栏标题长度</strong><span>会话标题最多显示多少个字；放不下的部分在鼠标悬停时自右向左滚出来。</span></div>
+      <div className="settings-slider">
+        <input
+          type="range"
+          min={SIDEBAR_TITLE_CHARS.min}
+          max={SIDEBAR_TITLE_CHARS.max}
+          step={1}
+          value={titleChars}
+          aria-label="侧栏会话标题最多显示字数"
+          onChange={(event) => onChange({ sidebarTitleChars: clampSidebarTitleChars(Number(event.target.value)) })}
+        />
+        <output>{titleChars} 字</output>
+      </div>
     </div>
     <div className="settings-section-heading"><div><h2>底色与正文</h2><p>浅色与深色各有一套取值，切主题后按当前主题生效。</p></div></div>
     <div className="settings-row">

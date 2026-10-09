@@ -135,6 +135,11 @@ export interface AppSettings {
   surfaceLevel: SurfaceLevel
   bodyTextContrast: BodyTextContrast
   sidebarGlass: boolean
+  /**
+   * 侧栏会话标题最多显示多少个字；超出的部分鼠标悬停时自右向左滚出来。
+   * 缺省视为默认值（见 SIDEBAR_TITLE_CHARS）。
+   */
+  sidebarTitleChars?: number
   autoSummary: boolean
   contextStrategy: ContextStrategy
   triggerRatio: number | null

@@ -534,9 +534,13 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     focusComposerSoon()
   }
 
-  /** /new 的语境版本：项目里新建当前项目下的空会话（保持项目绑定），快速对话等同普通新对话。 */
-  function startNewChatInContext(options: { silent?: boolean } = {}) {
-    if (!selectedProjectId) {
+  /**
+   * /new 的语境版本：项目里新建当前项目下的空会话（保持项目绑定），快速对话等同普通新对话。
+   * projectId 显式传入是给「在某个项目上直接新建」用的：那条路径刚调过 selectProject，
+   * 这一帧里 selectedProjectId 还是旧值，读 state 会把会话建到上一个项目下。
+   */
+  function startNewChatInContext(projectId: string | null = selectedProjectId) {
+    if (!projectId) {
       startNewChat()
       return
     }
@@ -548,7 +552,6 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     setArtifactFile(null)
     setSection('chats'); setNavigation((current) => pushNavigation(current.entries, current.index, 'chats')); setSelectedConversationId(null); setConversationTitle('新对话'); setTurns([]); setActiveTurnId(null); setContextHealth(emptyContextHealth()); resetConversationContext(); setMode('agent'); applyDefaultPermission('workspace'); resetModelToDefault()
     writeLastConversationId(null)
-    if (!options.silent) setNotice('已新建当前项目的对话')
     focusComposerSoon()
   }
 
@@ -557,7 +560,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
    * 选中的项目要留住：用户是在这个项目的最近对话里删掉一条，不是要退出这个项目。
    */
   function leaveRemovedConversation() {
-    if (selectedProjectId) startNewChatInContext({ silent: true })
+    if (selectedProjectId) startNewChatInContext()
     else startNewChat()
   }
 
@@ -1272,6 +1275,10 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const handleNavigate = useEventCallback(navigate)
   const handleNewChat = useEventCallback(() => startNewChat())
   const handleNewChatInContext = useEventCallback(() => startNewChatInContext())
+  const handleNewChatInProject = useEventCallback(async (item: WorkspaceProject) => {
+    if (selectedProjectId !== item.id) await selectProject(item)
+    startNewChatInContext(item.id)
+  })
   const handlePickWorkspace = useEventCallback(() => { void pickWorkspace() })
   const handleSelectConversation = useEventCallback((item: WorkspaceConversation) => { void selectConversation(item) })
   const handleSelectProject = useEventCallback((item: WorkspaceProject) => { void selectProject(item) })
@@ -1519,7 +1526,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
         workspaceRoot={workspaceRoot} effectiveDark={effectiveDark} onToggleSidebar={handleToggleSidebar}
         onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenGeneralSettings} onToggleTheme={handleToggleTheme} />
       <div className="shell-body">
-        <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
+        <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onNewChatInSection={handleNewChatInContext} onNewChatInProject={handleNewChatInProject} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
         <main className={`conversation ${artifactOpen ? 'with-artifact' : ''}`}>
           {section === 'chats' && batchKind !== 'conversations' ? <>
             <div className={`conversation-header${headerStuck ? ' stuck' : ''}`}>
