@@ -19,6 +19,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "0.84.4",
     "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.2",
     "@deepseek-ai/dsh-brand": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
     "@deepseek-ai/dsh-scope": "0.1.5-rc.2",
