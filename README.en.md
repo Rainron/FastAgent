@@ -54,6 +54,15 @@ Tool calls, approvals, and durations are archived by turn. After write operation
 **Read-only subagents**  
 The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
 
+**Git panel and change reversion**
+The composer's Git menu opens a three-pane panel: branches and remotes, changes/history views, and the diff plus commit area. A turn's file changes can be reverted as a whole, with files that were modified again since skipped and explained.
+
+**Web preview and resource tree**
+The model can call `preview_show` to inspect a draft offscreen and ask the UI to open it; previews go through the privileged `fa-preview://` protocol and can only reach registered roots. The resource tree supports multi-select, drag-to-move, and adding references to the composer.
+
+**Plugins, quotas, and memory**
+The sidebar's Plugins page manages local DSH plugins (the host runs in a separate process without access to your account or database); model connections can be exported to a passphrase-encrypted archive with a preview before import; the usage page shows subscription quotas and reset times per connection; settings allow adding memories by hand and testing recall, and knowledge-base injection is configurable.
+
 **Interface and interaction**
 The sidebar width is draggable and remembered, long titles scroll on hover, search supports arrow-key selection with Enter, and projects can be reordered by drag. The settings centre is grouped into agent, workspace, and security sections. The execution trace can be configured (timer and token placement, summary style, diff stats), collapses by default with animated expansion, and messages sent while a run is active are inserted into that same turn. The theme is a clean white base with neutral greys and a lake-blue accent.
 
