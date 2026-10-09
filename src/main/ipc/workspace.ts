@@ -1,9 +1,8 @@
 import { isExternalHttpUrl } from '../../renderer/ai-response/sanitize-url'
-import type { GitStatusEntry, GitWorkspaceState, PageQuery, WorkspaceSnapshot } from '../../shared/types'
+import type { PageQuery, WorkspaceSnapshot } from '../../shared/types'
 import { readAgentContextFiles, resolveAgentContextPaths } from '../agent-context'
 import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from '../agent-init'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
-import { checkoutBranch, createBranch, execGit, listLocalBranches, parsePorcelain, resolveGitWorkspaceState } from '../git'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
 import { deleteWorkspaceEntry, listWorkspaceDirectory, readAttachmentImage, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
 import { openTerminalAt } from '../open-terminal'
@@ -84,38 +83,6 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
     return content
   })
   handle('workspace:snapshot', (): WorkspaceSnapshot => ({ rootPath: ctx.workspaceRoot, changes: [] }))
-  handle('git:state', async (): Promise<GitWorkspaceState | null> => {
-    if (!ctx.workspaceRoot) return null
-    try {
-      return await resolveGitWorkspaceState(ctx.workspaceRoot)
-    } catch (error) {
-      // 读取失败降级隐藏，并记录日志便于事后排查（git 缺失/仓库损坏/权限等）。
-      console.warn('Failed to resolve Git workspace state', error)
-      return null
-    }
-  })
-  handle('git:branches', (): Promise<string[]> => {
-    if (!ctx.workspaceRoot) return Promise.resolve([])
-    return listLocalBranches(ctx.workspaceRoot)
-  })
-  handle('git:status', async (): Promise<GitStatusEntry[]> => {
-    if (!ctx.workspaceRoot) return []
-    const result = await execGit(ctx.workspaceRoot, ['status', '--porcelain'])
-    if (result.code !== 0) return []
-    return parsePorcelain(result.stdout)
-  })
-  handle('git:checkout', async (_event, branch: string) => {
-    if (!ctx.workspaceRoot) return { ok: false, error: '尚未打开工作区' }
-    const result = await checkoutBranch(ctx.workspaceRoot, branch)
-    if (result.ok) ctx.broadcastGitChanged()
-    return result
-  })
-  handle('git:create', async (_event, name: string) => {
-    if (!ctx.workspaceRoot) return { ok: false, error: '尚未打开工作区' }
-    const result = await createBranch(ctx.workspaceRoot, name)
-    if (result.ok) ctx.broadcastGitChanged()
-    return result
-  })
   handle('quick:hide', () => { hideQuickWindow() })
   handle('quick:setPinned', (_event, pinned: boolean) => { setQuickWindowPinned(Boolean(pinned)) })
   handle('workspace:read-file', (_event, path: string) => readWorkspaceFile(ctx.workspaceRoot, path))

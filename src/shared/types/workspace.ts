@@ -103,6 +103,15 @@ export interface GitWorkspaceState {
   headShort: string | null
   changedFiles: number
   isDirty: boolean
+  /** 与 upstream 的领先/落后；没有跟踪分支或 detached 时为 null。 */
+  sync?: GitSyncState | null
+}
+
+/** 当前分支与其 upstream 的同步差距。 */
+export interface GitSyncState {
+  upstream: string
+  ahead: number
+  behind: number
 }
 
 /** git status --porcelain 的单个变更条目。 */
@@ -112,11 +121,91 @@ export interface GitStatusEntry {
   status: string
 }
 
+/** 本地分支及其跟踪状态，Git 面板左栏用。 */
+export interface GitBranchInfo {
+  name: string
+  current: boolean
+  upstream: string | null
+  /** upstream 已在远程被删除（%(upstream:track) 里的 gone）。 */
+  upstreamGone: boolean
+  ahead: number
+  behind: number
+  lastCommitDate: string
+  lastCommitSubject: string
+}
+
+/** 提交列表条目。 */
+export interface GitCommitSummary {
+  hash: string
+  shortHash: string
+  parents: string[]
+  author: string
+  email: string
+  /** ISO 8601 作者时间。 */
+  date: string
+  subject: string
+  /** 指向该提交的引用名（HEAD -> main、tag: v1 等）。 */
+  refs: string[]
+}
+
+/** 提交或工作区里的单个文件改动。 */
+export interface GitCommitFile {
+  path: string
+  additions: number
+  deletions: number
+  binary: boolean
+  /** 单字符状态码（M/A/D/R…）；只有 numstat 来源的条目可能缺省。 */
+  status?: string
+}
+
+/** 提交详情：元数据 + 完整提交信息 + 改动文件。 */
+export interface GitCommitDetail extends GitCommitSummary {
+  body: string
+  files: GitCommitFile[]
+}
+
+/** 工作区文件改动（区分已暂存与未暂存两组）。 */
+export interface GitFileChange extends GitCommitFile {
+  /** 单字符状态码：M/A/D/R/? 等。 */
+  status: string
+  untracked: boolean
+}
+
+export interface GitWorkingChanges {
+  staged: GitFileChange[]
+  unstaged: GitFileChange[]
+}
+
+/** 远程仓库的名字与地址；`git remote -v` 的 fetch 行。 */
+export interface GitRemoteInfo {
+  name: string
+  url: string
+}
+
+export interface GitStashEntry {
+  ref: string
+  message: string
+  date: string
+}
+
+/** 合并 / 变基进行中的状态与冲突文件。 */
+export interface GitIntegrationState {
+  merging: boolean
+  rebasing: boolean
+  conflicts: string[]
+}
+
 export interface GitOperationResult {
   ok: boolean
   error?: string
   /** 操作成功后的最新工作区状态；非仓库时为 null。 */
   state?: GitWorkspaceState | null
+  /** merge / rebase 失败时的冲突文件。 */
+  conflicts?: string[]
+  /** 删除未合并分支这类需要用户再确认强制执行的失败。 */
+  needsForce?: boolean
+  /** git 的原始输出，用于在通知里展示「已推送 2 个提交」这类信息。 */
+  output?: string
 }
 
 export interface ProjectRecord {

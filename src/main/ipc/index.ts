@@ -7,6 +7,7 @@ import { registerBundleIpc } from './bundle'
 import { registerChatIpc } from './chat'
 import { registerConversationIpc } from './conversation'
 import { registerDiagnosticsIpc } from './diagnostics'
+import { registerGitIpc } from './git'
 import { registerHubIpc } from './hub'
 import { registerKbIpc } from './kb'
 import { registerMcpIpc } from './mcp'
@@ -38,6 +39,7 @@ export function registerAllIpc(handle: IpcRegistrar, ctx: MainContext) {
   registerWorkspaceIpc(handle, ctx)
   registerShellCommandIpc(handle, ctx)
   registerTerminalIpc(handle, ctx)
+  registerGitIpc(handle, ctx)
   registerKbIpc(handle, ctx)
   registerArtifactsIpc(handle, ctx)
   registerDiagnosticsIpc(handle, ctx)

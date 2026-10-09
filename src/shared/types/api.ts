@@ -22,7 +22,7 @@ import type { ShellCommandChunk, ShellCommandRequest, ShellCommandResult } from 
 import type { TerminalAttachment, TerminalChunk, TerminalExit, TerminalSessionInfo } from './terminal'
 import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, RendererErrorReport, StartupWarnings, StoredPermissionRule } from './settings'
 import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
-import type { Artifact, ArtifactQuery, GitOperationResult, GitStatusEntry, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
+import type { Artifact, ArtifactQuery, GitBranchInfo, GitCommitDetail, GitCommitSummary, GitIntegrationState, GitOperationResult, GitStashEntry, GitStatusEntry, GitWorkingChanges, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
 
 export interface FastAgentApi {
   settings: {
@@ -311,6 +311,61 @@ export interface FastAgentApi {
     create(name: string): Promise<GitOperationResult>
     /** 未提交变更列表（porcelain 摘要）。 */
     status(): Promise<GitStatusEntry[]>
+    /** 本地分支详情（含 upstream 与领先/落后条数）。 */
+    branchInfos(): Promise<GitBranchInfo[]>
+    /** 远程跟踪分支名（origin/main 形式）。 */
+    remoteBranches(): Promise<string[]>
+    /** 远程名列表。 */
+    remotes(): Promise<string[]>
+    /** 工作区改动，按已暂存 / 未暂存分组。 */
+    changes(): Promise<GitWorkingChanges>
+    /** 合并 / 变基进行中状态与冲突文件。 */
+    integration(): Promise<GitIntegrationState>
+    /** 指定 ref 的提交列表；ref 传空取 HEAD。 */
+    commits(ref: string, limit?: number, skip?: number): Promise<GitCommitSummary[]>
+    commitCount(ref: string): Promise<number>
+    /** 单条提交的完整信息；哈希无效时返回 null。 */
+    commitDetail(hash: string): Promise<GitCommitDetail | null>
+    /** 提交的 patch；带 path 时只取该文件。 */
+    commitPatch(hash: string, path?: string | null): Promise<string>
+    /** 工作区文件 diff；staged 取暂存区与 HEAD 的差异，untracked 取新文件全文。 */
+    fileDiff(path: string, staged: boolean, untracked?: boolean): Promise<string>
+    /** 全部未提交改动的合并 diff。 */
+    workingDiff(stagedOnly?: boolean): Promise<string>
+    stashes(): Promise<GitStashEntry[]>
+    stashPatch(ref: string): Promise<string>
+    /** 基于远程分支建立本地跟踪分支并切换过去。 */
+    createTracking(remoteRef: string, localName?: string): Promise<GitOperationResult>
+    /** 删除本地分支；未合并时返回 needsForce，由 UI 二次确认后带 force 重试。 */
+    deleteBranch(name: string, force?: boolean): Promise<GitOperationResult>
+    renameBranch(from: string, to: string): Promise<GitOperationResult>
+    /** remoteRef 传 null 表示取消跟踪。 */
+    setUpstream(branch: string, remoteRef: string | null): Promise<GitOperationResult>
+    stage(paths: string[]): Promise<GitOperationResult>
+    unstage(paths: string[]): Promise<GitOperationResult>
+    commit(message: string, options?: { amend?: boolean }): Promise<GitOperationResult>
+    /** 丢弃改动：paths 是已跟踪文件，untracked 是要删除的未跟踪文件。不可恢复。 */
+    discard(paths: string[], untracked?: string[]): Promise<GitOperationResult>
+    /** 回退最近一次提交，soft 保留暂存，mixed 只保留工作区改动。 */
+    reset(mode: 'soft' | 'mixed'): Promise<GitOperationResult>
+    fetch(remote?: string): Promise<GitOperationResult>
+    /** 只做快进；无法快进时报错，由用户显式走 merge / rebase。 */
+    pull(): Promise<GitOperationResult>
+    /** 没有 upstream 时自动 -u 建立跟踪；不支持强推。 */
+    push(remote?: string): Promise<GitOperationResult>
+    stashPush(message: string, includeUntracked?: boolean): Promise<GitOperationResult>
+    stashPop(ref: string): Promise<GitOperationResult>
+    stashApply(ref: string): Promise<GitOperationResult>
+    stashDrop(ref: string): Promise<GitOperationResult>
+    /** 合并指定分支到当前分支；冲突时 conflicts 带回冲突文件。 */
+    merge(ref: string): Promise<GitOperationResult>
+    /** 把当前分支变基到指定分支；冲突时停在冲突状态。 */
+    rebase(ref: string): Promise<GitOperationResult>
+    abortIntegration(): Promise<GitOperationResult>
+    /** 在系统终端打开工作区目录。 */
+    openTerminal(): Promise<{ ok: boolean; error?: string }>
+    /** 按当前未提交改动生成提交信息；modelId 用当前会话选中的模型。 */
+    suggestCommitMessage(modelId?: number | null): Promise<{ message: string | null; error?: string }>
     /** 工作区 .git 元数据变化（外部切换分支等）时通知，返回取消订阅函数。 */
     onChanged(listener: () => void): () => void
   }
