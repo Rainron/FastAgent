@@ -883,7 +883,12 @@ body.composer-resizing { cursor: ns-resize; user-select: none; }
 .message-actions { height: 26px; min-height: 26px; display: flex; align-items: center; gap: 2px; margin-top: 4px; opacity: 0; visibility: hidden; transform: translateY(3px); transition: opacity var(--motion-hover) ease-out, transform var(--motion-hover) var(--motion-ease); }
 .message-actions.user { justify-content: flex-end; }
 .message-actions.assistant { justify-content: flex-start; }
-.message:hover .message-actions, .message:focus-within .message-actions, .conversation-turn:focus > .message .message-actions { opacity: 1; visibility: visible; transform: none; }
+/* 有执行轨迹的回合里，操作条并在轨迹收尾行里（.trace-runbar-actions），既不在 .message 里也不在正文里，
+   少了这组选择器它就永远出不来 */
+.message:hover .message-actions, .message:focus-within .message-actions, .conversation-turn:focus > .message .message-actions,
+.conversation-turn:hover .trace-runbar-actions .message-actions, .trace-runbar-actions:focus-within .message-actions, .conversation-turn:focus .trace-runbar-actions .message-actions { opacity: 1; visibility: visible; transform: none; }
+/* 收尾行里的操作条与结算文字同排：不再自带上下外边距，行高由 .trace-runbar 统一给 */
+.trace-runbar-actions .message-actions { height: 24px; min-height: 24px; margin-top: 0; }
 .message-action { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: transparent; color: var(--text-tertiary); transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), transform var(--motion-press) var(--motion-ease); }
 .message-action:hover, .message-action:focus-visible { background: var(--hover); color: var(--text-secondary); }
 .message-action:active { transform: scale(.96); }
@@ -932,23 +937,135 @@ button.activity-heading:hover { color: var(--text-primary); }
 /* 内联执行轨迹：状态行 + 动作组 + 说明文本段，替代原先的独立执行面板与工具卡堆叠 */
 .execution-trace { min-width: 0; margin: -4px 0 18px; }
 .execution-trace.working { margin-bottom: 16px; }
-.run-status { width: 100%; min-height: 26px; display: flex; align-items: center; gap: 8px; padding: 2px 0; background: transparent; color: var(--text-secondary); text-align: left; font-size: 12px; cursor: pointer; }
+/* 吸顶条：往下读长回答时，本轮上下文与过程头滚出视野，这里留一份摘要，点一下跳回原位。
+   本身高 0，条是绝对定位浮在上面的：出不出条都不改文档流，正文不会跳。
+   粘性范围就是本轮的轨迹区，滚过这一轮它自然跟着离开，不会盖到下一轮上。 */
+.trace-sticky { position: sticky; top: 0; z-index: 4; height: 0; }
+.trace-sticky-bar { position: absolute; top: 0; left: -12px; right: -12px; height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 12px; background: var(--canvas); border-bottom: 1px solid var(--border); opacity: 0; transform: translateY(-4px); pointer-events: none; transition: opacity var(--motion-hover) ease-out, transform var(--motion-hover) ease-out; }
+.trace-sticky.pinned .trace-sticky-bar { opacity: 1; transform: none; pointer-events: auto; }
+.trace-sticky-item { min-width: 0; height: 26px; display: inline-flex; align-items: center; gap: 6px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
+.trace-sticky-item:hover { background: var(--hover); color: var(--text-primary); }
+.trace-sticky-item.main { flex: 0 1 auto; }
+.trace-sticky-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-sticky-jump { flex: 0 0 auto; color: var(--text-tertiary); }
+.trace-sticky-sep { flex: 0 0 1px; width: 1px; height: 12px; background: var(--border-strong); }
+/* 吸顶条出来后，本轮里代码块头、工具卡头这些二级吸顶要让到条下面，不能叠在一起 */
+.execution-trace.head-pinned { --sticky-top: 34px; }
+/* 跳回原位时让出吸顶条的高度，否则头部正好落在条下面，条也不会收起 */
+.run-status, .turn-context-anchor { scroll-margin-top: 40px; }
+/* 思考中最新一句：让「正在思考」有内容可看。压到最弱一档、限两行，读作旁白而不是正文 */
+.trace-live-preview { max-width: 640px; margin: 0 0 2px; padding-left: 20px; color: var(--text-tertiary); font-size: 11.5px; line-height: 18px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; animation: motion-detail-enter var(--motion-expand) var(--motion-ease) both; }
+.trace-group .trace-live-preview { padding-left: 0; }
+/* 出字前就取消：一句说明 + 下一步，排在正文位置 */
+.trace-outcome { display: grid; gap: 8px; padding: 6px 0 2px; }
+.trace-outcome-text { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 20px; }
+.trace-outcome-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.trace-outcome-button { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; transition: background var(--motion-hover) ease-out, color var(--motion-hover) ease-out, border-color var(--motion-hover) ease-out; }
+.trace-outcome-button:hover { background: var(--hover); border-color: var(--border-strong); color: var(--text-primary); }
+/* 点击区只包住内容本身：整行可点意味着右侧一大片空白也会折叠轨迹，误触率高且看不出哪里能点 */
+.run-status { width: fit-content; max-width: 100%; min-height: 26px; display: flex; align-items: center; gap: 8px; padding: 2px 0; background: transparent; color: var(--text-secondary); text-align: left; font-size: 12px; cursor: pointer; }
 .run-status:hover { color: var(--text-primary); }
 .run-status-chevron { flex: 0 0 auto; color: var(--text-tertiary); transition: transform var(--motion-hover) ease-out; }
 .run-status[aria-expanded="true"] .run-status-chevron { transform: rotate(90deg); }
-.run-status-text { font-weight: 600; }
-/* 状态只靠图标区分，不额外着色：整行统一继承 .run-status 的文字色 */
-.run-status-icon { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.run-status-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+/* 终态的过程头是「这一轮干了多少活」的摘要，不是标题：压一档字重，别跟下面的回答抢 */
+.execution-trace:not(.working) .run-status-text { font-weight: 500; }
+/* 状态只靠图标区分，不额外着色：整行统一继承 .run-status 的文字色。
+   固定 14px 槽位与底栏同款：进行中是 ✳、终态是 ✓ / ×，尺寸不同，不给槽位整行文字会横向抖。 */
+.run-status-icon { position: relative; flex: 0 0 14px; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; }
+.execution-trace.working .run-status-icon { color: var(--accent); }
+.execution-trace.done .run-status-icon { color: var(--success); }
+.execution-trace.failed .run-status-icon { color: var(--danger); }
 .execution-trace.working .run-status-icon { animation: motion-status-breathe var(--motion-status) var(--motion-ease) both; }
 @keyframes motion-status-breathe { from { opacity: .55; transform: translateY(2px); } to { opacity: 1; transform: none; } }
 .run-status-time { color: var(--text-tertiary); font: 10px "JetBrains Mono", Consolas, monospace; font-weight: 400; }
 /* 终态的执行过程退居次级信息：弱化配色，让最终回答成为会话主体。
    字号与字重不跟着状态变，第一层（Plan / Completed）始终是同一套排版。 */
 .execution-trace:not(.working) .run-status { color: var(--text-tertiary); }
-.execution-trace-body { display: grid; gap: 2px; padding: 6px 0 8px var(--turn-indent); min-width: 0; animation: motion-detail-enter var(--motion-expand) var(--motion-ease) both; }
+.execution-trace-body { display: grid; gap: 2px; padding: 0; min-width: 0; }
+.execution-trace-details { display: grid; gap: 4px; padding: 4px 0 4px var(--turn-indent); min-width: 0; }
+/* 正文只有这一个挂载位：与上方的过程头 / 动作组隔开一行呼吸，两者字号与颜色都不同，贴着会糊成一坨 */
+.trace-answer { min-width: 0; padding: 8px 0 4px; }
+/* 正文还没开始输出时这一格是空的：留着 padding 会在动作行与收尾行之间撑出一大块空白 */
+.trace-answer:empty { display: none; padding: 0; }
+/* 收尾行：左边结算（用时 · token · 结果），右边本轮操作。不再是折叠入口，所以整行不可点、没有 hover 态 */
+.trace-runbar { min-width: 0; min-height: 26px; display: flex; align-items: center; gap: 10px; margin-top: 2px; color: var(--text-tertiary); font-size: 11px; line-height: 16px; }
+.trace-runbar:empty { display: none; }
+.trace-runbar-stat { min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
+.trace-runbar-actions { flex: 0 0 auto; display: inline-flex; align-items: center; }
+/* 固定尺寸的图标槽：进行中是 ✳、终态是 ✓ / ×，两种图标尺寸不同，必须落在同一个格子里，
+   否则状态一变整行文字就横向抖一下。缩放动画只作用在槽内的 svg 上，不撑动槽本身。 */
+.trace-runbar-icon { position: relative; flex: 0 0 14px; width: 14px; height: 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+.trace-runbar-icon > svg { display: block; }
+/* 终态图标淡入回弹：从「进行中」切到「已完成」不再是硬切 */
+.execution-trace:not(.working) .trace-runbar-icon > svg { animation: motion-icon-swap var(--motion-focus) var(--motion-ease) both; }
+.execution-trace.done .trace-runbar-icon { color: var(--success); }
+.execution-trace.failed .trace-runbar-icon { color: var(--danger); }
+.execution-trace.cancelled .trace-runbar-icon, .execution-trace.interrupted .trace-runbar-icon { color: var(--text-tertiary); }
+.trace-runbar-time, .trace-runbar-tokens { font: 10px "JetBrains Mono", Consolas, monospace; }
+.trace-runbar-dot { opacity: .55; }
+.trace-runbar-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trace-runbar-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 10px "JetBrains Mono", Consolas, monospace; }
+/* 执行中的状态图标：快节奏的缩放 + 微旋 + 光晕，一眼能看出这一轮还在跑。过程头与收尾行共用一套。
+   节奏用带回弹的缓动而不是匀速正弦——匀速看起来像机械闪烁，回弹才有「活着」的手感。
+   幅度压在槽位内（12px 图标最大 1.18 ≈ 14px），再大就会把 14px 的格子顶出去，行内文字跟着抖。 */
+.execution-trace.working .trace-runbar-icon > svg,
+.execution-trace.working .run-status-icon > svg {
+  animation: motion-runbar-pulse .6s cubic-bezier(.34, 1.5, .5, 1) infinite;
+  transform-origin: center;
+  filter: drop-shadow(0 0 2.5px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+@keyframes motion-runbar-pulse {
+  0% { transform: scale(.8) rotate(-10deg); opacity: .55; }
+  45% { transform: scale(1.18) rotate(8deg); opacity: 1; }
+  70% { transform: scale(.96) rotate(1deg); opacity: .88; }
+  100% { transform: scale(.8) rotate(-10deg); opacity: .55; }
+}
+/* 图标背后的柔光：只在执行中出现，跟着同一节奏呼吸，给那颗小图标一点体积感 */
+.execution-trace.working .trace-runbar-icon::before,
+.execution-trace.working .run-status-icon::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 26%, transparent) 0%, transparent 68%);
+  animation: motion-runbar-halo .6s cubic-bezier(.34, 1.5, .5, 1) infinite;
+  pointer-events: none;
+}
+@keyframes motion-runbar-halo {
+  0% { transform: scale(.7); opacity: .25; }
+  42% { transform: scale(1.15); opacity: .75; }
+  100% { transform: scale(.7); opacity: .25; }
+}
+:root[data-motion="off"] .execution-trace.working .trace-runbar-icon > svg,
+:root[data-motion="off"] .execution-trace.working .run-status-icon > svg,
+:root[data-motion="system"][data-reduced-motion="true"] .execution-trace.working .trace-runbar-icon > svg,
+:root[data-motion="system"][data-reduced-motion="true"] .execution-trace.working .run-status-icon > svg { animation: none; opacity: 1; transform: none; filter: none; }
+:root[data-motion="off"] .execution-trace.working .trace-runbar-icon::before,
+:root[data-motion="off"] .execution-trace.working .run-status-icon::before,
+:root[data-motion="system"][data-reduced-motion="true"] .execution-trace.working .trace-runbar-icon::before,
+:root[data-motion="system"][data-reduced-motion="true"] .execution-trace.working .run-status-icon::before { display: none; }
+
+/* 增删行数：加绿减红，跟 diff 视图同一套语义色 */
+.trace-diff-stat { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; font: 10px "JetBrains Mono", Consolas, monospace; }
+.trace-diff-add { color: var(--success); }
+.trace-diff-del { color: var(--danger); }
+
+/* 工具卡展开区的读取预览：图片出图、文本给节选 */
+.tool-read-preview { display: grid; gap: 6px; min-width: 0; }
+.tool-read-preview.loading, .tool-read-preview.unavailable { display: flex; align-items: center; gap: 6px; color: var(--text-tertiary); font-size: 11px; }
+.tool-read-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tool-read-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.tool-read-open { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--text-tertiary); font-size: 10px; cursor: pointer; }
+.tool-read-open:hover { color: var(--text-primary); background: var(--hover); }
+.tool-read-image { display: block; max-width: 100%; padding: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); overflow: hidden; cursor: zoom-in; }
+.tool-read-image img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; }
+.tool-read-excerpt { max-height: 260px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-soft); color: var(--text-body); font: 11px/17px "JetBrains Mono", Consolas, monospace; white-space: pre; overflow: auto; }
+.tool-read-more { color: var(--text-tertiary); font-size: 10px; }
+
 .trace-group { min-width: 0; }
 /* 第二层（执行过程摘要）：比状态行低一档字号，不继承正文排版，读作执行记录而不是标题 */
-.trace-group-summary { width: 100%; min-width: 0; min-height: 22px; display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font-family: inherit; font-size: 11px; line-height: 16px; cursor: pointer; }
+.trace-group-summary { width: fit-content; max-width: 100%; min-width: 0; min-height: 22px; display: flex; align-items: center; gap: 6px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font-family: inherit; font-size: 11px; line-height: 16px; cursor: pointer; }
 .trace-group-summary.static { cursor: default; }
 button.trace-group-summary:hover .trace-group-label { color: var(--text-primary); }
 .trace-group-icon { display: inline-flex; flex: 0 0 auto; color: var(--text-tertiary); }
@@ -957,33 +1074,82 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 .trace-group-label { min-width: 0; font-weight: 500; color: var(--text-tertiary); }
 .trace-group.failed .trace-group-label { color: var(--danger); }
 .trace-group.done .trace-group-icon { animation: motion-feedback-pop var(--motion-focus) var(--motion-ease) both; }
-.trace-group-detail { display: grid; gap: 6px; padding: 6px 0 8px var(--turn-indent); min-width: 0; animation: motion-detail-enter var(--motion-expand) var(--motion-ease) both; }
+/* 执行轨迹里的展开区：高度过渡交给外层 .collapse，内容不再单独播入场动画，否则先长高再淡入两段节奏打架 */
+.trace-group-detail { display: grid; gap: 6px; padding: 6px 0 8px var(--turn-indent); min-width: 0; }
 /* 思考正文走 Markdown 块渲染，不再 pre-wrap：换行交给渲染器，这里只压字色字号并限高 */
+/* 用户中途插进来的补充：紧凑内联卡。标题行交代来源与附件数，正文、附件依次排在下面，
+   宽度跟着轨迹走而不是撑满，读起来是时间线上的一个节点，不是另起一段的公告框。 */
+.trace-steer { min-width: 0; display: grid; gap: 4px; margin: 5px 0; padding: 6px 9px 7px; border: 1px solid color-mix(in srgb, var(--accent-tech) 18%, var(--border)); border-left: 2px solid var(--accent-tech); border-radius: 7px; background: color-mix(in srgb, var(--accent-tech) 5%, var(--surface)); font-size: 11.5px; line-height: 18px; }
+.trace-steer-head { min-width: 0; display: flex; align-items: center; gap: 5px; color: var(--accent-tech); }
+.trace-steer-mark { flex: 0 0 auto; display: inline-flex; align-items: center; }
+.trace-steer-head strong { font-size: 10px; font-weight: 600; letter-spacing: .02em; }
+/* 附件计数跟在标题后：正文一长，下面那排缩略图就滚出视线，这里得能一眼看出补充带了东西 */
+.trace-steer-count { display: inline-flex; align-items: center; gap: 3px; height: 14px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--accent-tech) 12%, transparent); font: 10px "JetBrains Mono", Consolas, monospace; }
+.trace-steer-text { margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; white-space: pre-wrap; }
+.trace-steer-files { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 1px; }
+/* 缩略图按消息气泡里的尺寸缩一档：轨迹是次级信息，附件不该比正文还抢眼 */
+.trace-steer-files .msg-img { border-radius: 7px; }
+.trace-steer-files .msg-img img { width: 72px; height: 44px; }
+.trace-steer-files .msg-img-copy { right: 4px; bottom: 4px; width: 20px; height: 20px; border-radius: 5px; }
+.trace-steer-files .attachment-chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--surface-2); cursor: pointer; }
 .trace-thinking { max-height: 320px; overflow-y: auto; padding: 2px 0; color: var(--text-tertiary); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; scrollbar-width: thin; }
 .trace-thinking > *, .activity-thinking > * { min-width: 0; }
 .trace-thinking p, .activity-thinking p { margin: 0 0 6px; }
 .trace-thinking p:last-child, .activity-thinking p:last-child { margin-bottom: 0; }
-/* Sub-agent 卡片：与 tool-call-card 同一层级，靠左边框区分委派出去的只读子任务 */
-.trace-subagent-card { min-width: 0; display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--border); border-left: 2px solid var(--accent-calm); border-radius: 8px; font-size: 11px; line-height: 17px; }
-.trace-subagent-card.failed { border-left-color: var(--danger); }
-.trace-subagent-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.trace-subagent-head strong { font-size: 11px; font-weight: 600; }
-.trace-subagent-head .spin { flex: 0 0 auto; color: var(--text-tertiary); }
-.trace-subagent-status { color: var(--text-tertiary); }
-.trace-subagent-card.failed .trace-subagent-status { color: var(--danger); }
-/* 动态行：子 Agent 当前动作与累计进度，是委派期间唯一的进度信号 */
-.trace-subagent-activity { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
-.trace-subagent-task { margin: 0; color: var(--text-tertiary); overflow-wrap: anywhere; }
-.trace-subagent-card small { color: var(--text-tertiary); font-size: 10px; }
-.trace-subagent-handoff { display: grid; gap: 3px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
-.trace-subagent-handoff b { font-size: 10px; font-weight: 600; color: var(--text-secondary); }
-.trace-subagent-handoff p { margin: 0; color: var(--text-tertiary); overflow-wrap: anywhere; }
+/* 子代理行：常驻过程头下方，不随执行过程折叠；一行说清是谁、在做什么、跑了多久，点开看右侧详情 */
+.trace-subagents { display: grid; gap: 3px; min-width: 0; margin: 2px 0 6px; padding-left: var(--turn-indent); }
+.trace-subagent-row { width: 100%; max-width: 640px; min-width: 0; min-height: 26px; display: flex; align-items: center; gap: 7px; padding: 3px 8px; border: 1px solid var(--border); border-left: 2px solid var(--accent-calm); border-radius: 7px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 11.5px; line-height: 17px; text-align: left; cursor: pointer; transition: background var(--motion-hover) ease-out, border-color var(--motion-hover) ease-out; }
+.trace-subagent-row:hover { background: var(--hover); color: var(--text-primary); }
+.trace-subagent-row.active { background: color-mix(in srgb, var(--accent-calm) 9%, var(--surface)); border-color: color-mix(in srgb, var(--accent-calm) 45%, var(--border)); color: var(--text-primary); }
+.trace-subagent-row.failed { border-left-color: var(--danger); }
+/* 新委派出来的子代理从上方轻轻落进来；状态图标切换时弹一下 */
+.trace-subagent-row { animation: motion-detail-enter var(--motion-expand) var(--motion-ease) both; }
+.trace-subagent-row:not(.running) .trace-subagent-row-icon { animation: motion-icon-swap var(--motion-focus) var(--motion-ease) both; }
+.trace-subagent-row-icon { flex: 0 0 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-tertiary); }
+.trace-subagent-row.running .trace-subagent-row-icon { color: var(--accent); }
+.trace-subagent-row.done .trace-subagent-row-icon { color: var(--success); }
+.trace-subagent-row.failed .trace-subagent-row-icon { color: var(--danger); }
+.trace-subagent-row-name { flex: 0 0 auto; font-weight: 600; color: var(--text-primary); }
+.trace-subagent-row-task { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); }
+.trace-subagent-row-meta { flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.trace-subagent-row.failed .trace-subagent-row-meta { color: var(--danger); }
+.trace-subagent-row-time { color: var(--text-tertiary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.trace-subagent-row-chevron { flex: 0 0 auto; color: var(--text-tertiary); transition: transform var(--motion-hover) ease-out; }
+.trace-subagent-row.active .trace-subagent-row-chevron { transform: rotate(180deg); }
+
+/* 子代理详情面板：沿用右侧面板骨架，正文是几段带小标题的记录 */
+.subagent-panel { z-index: 24; }
+.subagent-panel-scroll { min-height: 0; flex: 1; overflow-y: auto; padding: 4px 14px 24px; }
+.subagent-panel-section { padding: 12px 2px; border-bottom: 1px solid var(--border); }
+.subagent-panel-section:last-of-type { border-bottom: 0; }
+.subagent-panel-section h3 { margin: 0 0 8px; color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.subagent-panel-live { display: flex; align-items: center; gap: 6px; color: var(--text-primary); font-size: 12px; }
+.subagent-panel-live .spin { color: var(--accent); }
+.subagent-panel-task { max-height: 280px; margin: 0; overflow-y: auto; color: var(--text-body); font-size: 12px; line-height: 19px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.subagent-panel-error { margin: 0; color: var(--danger); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.subagent-panel-muted { margin: 0; color: var(--text-tertiary); font-size: 11.5px; }
+.subagent-panel-calls { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.subagent-panel-call { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 3px 4px; border-radius: 5px; font-size: 11.5px; line-height: 17px; }
+.subagent-panel-call:hover { background: var(--hover); }
+.subagent-panel-call-icon { flex: 0 0 14px; display: inline-flex; justify-content: center; color: var(--success); }
+.subagent-panel-call.running .subagent-panel-call-icon, .subagent-panel-call.waiting_permission .subagent-panel-call-icon { color: var(--accent); }
+.subagent-panel-call.failed .subagent-panel-call-icon, .subagent-panel-call.denied .subagent-panel-call-icon, .subagent-panel-call.timeout .subagent-panel-call-icon, .subagent-panel-call.cancelled .subagent-panel-call-icon { color: var(--danger); }
+.subagent-panel-call-name { flex: 0 0 auto; color: var(--text-primary); font-weight: 500; }
+.subagent-panel-call-args { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-tertiary); font: 10.5px "JetBrains Mono", Consolas, monospace; }
+.subagent-panel-call-meta { flex: 0 0 auto; color: var(--text-tertiary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.subagent-panel-handoff { display: grid; gap: 10px; margin: 0; }
+.subagent-panel-handoff div { display: grid; gap: 3px; }
+.subagent-panel-handoff dt { color: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+.subagent-panel-handoff dd { margin: 0; padding-left: 10px; border-left: 2px solid var(--border); color: var(--text-body); font-size: 11.5px; line-height: 18px; overflow-wrap: anywhere; }
+.subagent-panel-note { margin: 10px 2px 0; color: var(--text-tertiary); font-size: 10.5px; }
 
 .trace-text { min-width: 0; display: grid; gap: 10px; padding: 6px 0 10px; }
 .trace-empty { min-height: 22px; display: flex; align-items: center; color: var(--text-tertiary); font-size: 11px; }
 
-.artifact-panel { width: 480px; min-width: 320px; flex: 0 0 480px; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); position: relative; animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) both; }
-/* 面板是 flex 兄弟，宽度占位只能瞬时生效；靠自身右滑淡入把这一下切换带过去 */
+.artifact-panel { width: 480px; min-width: 320px; flex: 0 0 480px; display: flex; flex-direction: column; background: var(--surface); border-left: 1px solid var(--border); position: relative; animation: motion-resource-enter var(--motion-sidebar) var(--motion-ease) backwards; }
+/* 面板是 flex 兄弟，宽度占位只能瞬时生效；靠自身右滑淡入把这一下切换带过去。
+   填充模式只能用 backwards：用 both 的话动画结束后 transform 仍处于「填充中」，
+   面板会一直是 fixed 定位的包含块，面板里的右键菜单会被平移到屏幕外。 */
 @keyframes motion-resource-enter { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 .inspector-panel { position: relative; z-index: 24; }
 .inspector-scroll { min-height: 0; overflow-y: auto; padding: 16px 14px 24px; }
@@ -1313,29 +1479,34 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 .context-source-heading { width: 100%; min-height: 26px; display: flex; align-items: center; gap: 8px; padding: 2px 0; background: transparent; border: none; color: var(--text-secondary); text-align: left; font: inherit; font-size: 12px; cursor: pointer; }
 .context-source-heading:hover { color: var(--text-primary); }
 .context-source-icon { flex: 0 0 auto; display: inline-flex; align-items: center; }
-.context-source-label { font-weight: 600; }
+.context-source-label { font-weight: 500; }
 .context-source-count { color: var(--text-tertiary); font-size: 11px; }
 .context-source-chevron { flex: 0 0 auto; color: var(--text-tertiary); transition: transform var(--motion-hover) ease-out; }
 .context-source-heading[aria-expanded="true"] .context-source-chevron { transform: rotate(90deg); }
-.context-source-details { padding: 4px 0 2px; display: grid; gap: 8px; }
+.context-source-details { padding: 6px 0 2px var(--turn-indent); display: grid; gap: 14px; }
 .context-source-collapse { justify-self: start; min-height: 24px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 0; background: transparent; color: var(--text-tertiary); font-size: 11px; }
 .context-source-collapse:hover { color: var(--text-primary); }
 .context-source-empty { color: var(--text-tertiary); font-size: 11px; }
-.context-source-group { display: grid; gap: 4px; }
+.context-source-group { display: grid; gap: 6px; }
 .context-source-group-title { display: flex; align-items: baseline; gap: 8px; color: var(--text-tertiary); font-size: 10px; }
 .context-source-group-title em { min-width: 0; font-style: normal; overflow-wrap: anywhere; }
-.context-source-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 6px; border-radius: 6px; background: var(--surface); font-size: 11px; }
-/* Skill 行整行可点：正文在能力页看，这里只留标题与去向箭头 */
-.context-source-link { width: 100%; border: 0; color: inherit; text-align: left; font: inherit; font-size: 11px; cursor: pointer; }
+/* 整组一张列表卡：行与行只用一条分隔线隔开，几十条 Skill 也不会散成一屏白条 */
+.context-source-items { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: clip; }
+.context-source-item { width: 100%; min-height: 30px; display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: transparent; font-size: 11px; }
+.context-source-items > * + * { border-top: 1px solid var(--border); }
+.context-source-link { border: 0; color: inherit; text-align: left; font: inherit; font-size: 11px; cursor: pointer; }
 .context-source-link:hover { background: var(--hover); }
 .context-source-link:hover .context-source-title { color: var(--accent-calm); }
 .context-source-link .context-source-title { flex: 1 1 auto; max-width: none; }
-.context-source-go { margin-left: auto; flex: 0 0 auto; align-self: center; color: var(--text-tertiary); }
-.context-source-more { justify-self: start; padding: 2px 0; background: transparent; color: var(--text-tertiary); font-size: 11px; }
-.context-source-more:hover { color: var(--text-primary); }
-.context-source-title { flex: 0 0 auto; max-width: 40%; color: var(--text-primary); overflow-wrap: anywhere; }
+.context-source-go { margin-left: auto; flex: 0 0 auto; color: var(--text-tertiary); }
+/* 「展开其余 N 条」作为列表最后一行，视觉上仍属于这张卡 */
+.context-source-more { width: 100%; min-height: 28px; display: flex; align-items: center; gap: 5px; padding: 4px 10px; background: transparent; color: var(--text-tertiary); text-align: left; font-size: 11px; cursor: pointer; }
+.context-source-more:hover { background: var(--hover); color: var(--text-primary); }
+.context-source-more-icon { flex: 0 0 auto; transition: transform var(--motion-hover) ease-out; }
+.context-source-more-icon.open { transform: rotate(90deg); }
+.context-source-title { flex: 0 0 auto; max-width: 46%; color: var(--text-primary); overflow-wrap: anywhere; }
 .context-source-detail { flex: 1 1 auto; min-width: 0; color: var(--text-tertiary); overflow-wrap: anywhere; }
-.context-source-open { flex: 0 0 auto; display: inline-flex; padding: 2px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; }
+.context-source-open { flex: 0 0 auto; display: inline-flex; margin-left: auto; padding: 2px; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; }
 .context-source-open:hover { color: var(--accent-calm); }
 /* 用量统计：KPI 带、逐日柱状图与模型排行 */
 .usage-range { display: inline-flex; border: 1px solid var(--border-strong); border-radius: 7px; overflow: hidden; }
@@ -1554,6 +1725,12 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 .tool-call-waiting { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 15%, transparent); animation: activity-pulse 1.4s ease-in-out infinite; }
 /* 轨迹里的缩进已由 .trace-group-detail 给足，卡片自身不再叠一档（chat 的分析面板仍保留 21px） */
 .trace-group-detail .tool-call-card { margin-left: 0; }
+/* 工具行列表：整组一张卡，行与行之间只有一条分隔线，不再每条各自描边各自留缝 */
+.trace-tool-list { min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); overflow: clip; }
+.trace-tool-list .tool-call-card { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.trace-tool-list .tool-call-card + .tool-call-card { border-top: 1px solid var(--border); }
+.trace-tool-list .tool-call-summary { min-height: 36px; padding: 0 10px 0 8px; }
+.trace-tool-list .tool-call-detail { border-top: 1px solid var(--border); }
 .tool-call-detail { display: grid; gap: 8px; padding: 4px 10px 10px 14px; min-width: 0; border-top: 1px solid var(--border); }
 .tool-call-error { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; color: var(--danger); font-size: 11px; line-height: 17px; }
 .tool-call-error svg { flex: 0 0 auto; margin-top: 2px; }
@@ -1954,11 +2131,17 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
 
 /* 每段一块：只用背景深浅区分提问 / 执行 / 回答，不画卡片边框，免得盖过文字缩影本身 */
 .minimap-pages { position: absolute; inset: 0; }
-.minimap-seg { position: absolute; left: 5px; right: 5px; min-height: 3px; border-radius: 3px; overflow: hidden; }
-.minimap-seg.user { background: color-mix(in srgb, var(--text-primary) 14%, transparent); }
-.minimap-seg.assistant { background: transparent; }
-.minimap-seg.activity { background: color-mix(in srgb, var(--accent-tech) 11%, transparent); }
-.minimap-seg.failed { background: color-mix(in srgb, var(--danger) 13%, transparent); }
+.minimap-seg {
+  position: absolute; left: 4px; right: 4px; min-height: 3px;
+  border-radius: 4px; border-left: 2px solid transparent; padding-left: 2px;
+  overflow: hidden;
+  transition: background var(--motion-hover) var(--motion-ease);
+}
+.minimap-seg.user { background: color-mix(in srgb, var(--text-primary) 7%, transparent); border-left-color: color-mix(in srgb, var(--text-primary) 42%, transparent); }
+.minimap-seg.assistant { background: transparent; border-left-color: color-mix(in srgb, var(--text-tertiary) 26%, transparent); }
+.minimap-seg.activity { background: color-mix(in srgb, var(--accent-tech) 6%, transparent); border-left-color: color-mix(in srgb, var(--accent-tech) 55%, transparent); }
+.minimap-seg.failed { background: color-mix(in srgb, var(--danger) 7%, transparent); border-left-color: color-mix(in srgb, var(--danger) 60%, transparent); }
+.conversation-minimap:hover .minimap-seg:hover { background: color-mix(in srgb, var(--accent-tech) 12%, transparent); }
 
 /* 缩影内层按正文宽度排版再整体缩放：先有正常的行长与换行，再变小。
    直接用轨道宽度排会变成每行两三个字，形态全丢。--minimap-scale 同时决定内层宽度与缩放比，
@@ -1988,9 +2171,16 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
   white-space: pre-wrap; overflow: hidden;
 }
 
-/* 取景框：框外轻微淡化、框内淡 accent 填充 + 细描边，底下的文字仍然透得出来 */
-.minimap-shade { position: absolute; left: 1px; right: 1px; background: color-mix(in srgb, var(--bg) 38%, transparent); pointer-events: none; }
-.minimap-lens { position: absolute; left: 1px; right: 1px; min-height: 14px; border: 1px solid color-mix(in srgb, var(--accent-tech) 50%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--accent-tech) 6%, transparent); box-shadow: 0 1px 6px color-mix(in srgb, var(--accent-tech) 16%, transparent); pointer-events: none; }
+/* 取景框：框外压暗一档，框内保持原样并描一道 accent 边，当前位置一眼可见 */
+.minimap-shade { position: absolute; left: 0; right: 0; background: color-mix(in srgb, var(--bg) 46%, transparent); pointer-events: none; transition: opacity var(--motion-hover) var(--motion-ease); }
+.minimap-lens {
+  position: absolute; left: 1px; right: 1px; min-height: 16px;
+  border: 1.5px solid color-mix(in srgb, var(--accent-tech) 62%, transparent); border-radius: 7px;
+  background: color-mix(in srgb, var(--accent-tech) 5%, transparent);
+  box-shadow: 0 1px 8px color-mix(in srgb, var(--accent-tech) 20%, transparent);
+  pointer-events: none;
+  transition: top var(--motion-hover) linear, height var(--motion-hover) linear;
+}
 
 /* 悬停预览：正常字号，补上缩影里读不清的那部分。
    渲染在 body 上（见 ConversationMinimap 的注释），所以用 fixed + 视口坐标，
@@ -2013,7 +2203,11 @@ button.trace-group-summary:hover .trace-group-label { color: var(--text-primary)
    滚动条(8) + 偏移(4) + 轨道 + 与正文净空(8)。解 (W - 900) / 2 >= 20 + 轨道 得各档下限：
    轨道 52 → 1044，68 → 1076，84 → 1108，100 → 1140。
    放不下最窄档就整个不显示，宁可没有也不要压字。 */
-@container conversation-body (max-width: 1044px) { .conversation-minimap { display: none; } }
+/* 开着资源面板时对话区收窄到放不下轨道，此前整条隐藏——点了缩略图按钮什么都不出现。
+   改成给正文两侧多留出轨道的位置（正文与输入框共用 --conversation-gutter，一起收窄，对齐不变）。
+   正文本来就是 min(900px, 100% - gutter)，对话区够宽时这个加宽不生效，只在真收窄时起作用。 */
+.conversation.minimap-on.with-artifact { --conversation-gutter: 144px; }
+@container conversation-body (max-width: 1044px) { .conversation:not(.minimap-on.with-artifact) .conversation-minimap { display: none; } }
 @container conversation-body (min-width: 1076px) { .conversation-minimap { --minimap-track: 68px; --minimap-scale: .21; } }
 @container conversation-body (min-width: 1108px) { .conversation-minimap { --minimap-track: 84px; --minimap-scale: .24; } }
 @container conversation-body (min-width: 1140px) { .conversation-minimap { --minimap-track: 100px; --minimap-scale: .27; } }
@@ -3078,8 +3272,8 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 }
 
 /* ===== Git 面板：三栏工作台（分支 / 提交时间线 / 详情与改动） ===== */
-.git-panel-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 28px; background: color-mix(in srgb, #000 28%, transparent); animation: motion-popover-enter var(--motion-popover) var(--motion-ease) both; }
-.git-panel { width: min(1240px, 100%); height: min(760px, 100%); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-3); }
+.git-panel-overlay { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 28px; background: color-mix(in srgb, #000 28%, transparent); }
+.git-panel { width: min(1240px, 100%); height: min(760px, 100%); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-3); animation: motion-dialog-enter var(--motion-popover) var(--motion-ease) both; }
 .git-panel-head { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); background: var(--surface-soft); }
 .git-panel-head > svg:first-child { color: var(--text-tertiary); }
 .git-panel-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
@@ -3117,6 +3311,8 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 
 .git-branch-row { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 3px 4px 3px 6px; border-radius: var(--r-sm); }
 .git-branch-row:hover { background: var(--hover); }
+.git-branch-row, .git-commit-row, .git-file-row, .git-pick-item { transition: background var(--motion-hover) var(--motion-ease), color var(--motion-hover) var(--motion-ease), transform var(--motion-press) var(--motion-ease); }
+.git-branch-row:active, .git-commit-row:active, .git-file-row:active, .git-pick-item:active { transform: scale(.995); }
 .git-branch-row.selected { background: var(--accent-soft); }
 .git-branch-row.current .git-branch-main { color: var(--text-primary); font-weight: 500; }
 .git-branch-main { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; padding: 4px 2px; background: transparent; color: var(--text-body); text-align: left; font-size: 12px; }
@@ -3179,6 +3375,9 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 .git-view-switch-item.on { background: var(--surface); color: var(--text-primary); box-shadow: var(--shadow-1); }
 /* 目录行：缩进由内联 padding-left 给，这里只管图标与计数 */
 .git-dir-row .git-file-main { font-weight: 500; }
+.git-dir-toggle, .git-dir-toggle-spacer { flex: 0 0 15px; width: 15px; height: 15px; }
+.git-dir-toggle { display: grid; place-items: center; border-radius: 4px; background: transparent; color: var(--text-tertiary); }
+.git-dir-toggle:hover { background: var(--surface-soft); color: var(--text-body); }
 .git-dir-caret, .git-dir-icon { flex: 0 0 auto; color: var(--text-tertiary); }
 .git-dir-count { flex: 0 0 auto; padding: 0 5px; border-radius: 8px; background: var(--surface-soft); color: var(--text-tertiary); font-size: 10px; }
 .git-status-group { display: contents; }
@@ -3198,7 +3397,7 @@ html[data-glass="true"] .sidebar { background: color-mix(in srgb, var(--sidebar)
 
 .git-commit-box { flex: 0 0 auto; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px; border-top: 1px solid var(--border); background: var(--surface-soft); }
 .git-commit-input { min-height: 58px; max-height: 160px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-primary); font-family: inherit; font-size: 12px; resize: vertical; outline: none; }
-.git-commit-input:focus { border-color: var(--accent); box-shadow: var(--ring-focus); }
+.git-commit-input:focus { border-color: var(--accent); }
 .git-commit-actions { display: flex; align-items: center; gap: 6px; }
 
 .git-prompt-field { display: flex; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: 12px; }
