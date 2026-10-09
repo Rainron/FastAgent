@@ -6,8 +6,8 @@ describe('settings navigation', () => {
     expect(settingsNavigation('permissions').primary.map((item) => item.key)).toEqual(['permissions', 'models', 'memory', 'knowledge', 'prompts'])
   })
   it('keeps every existing category reachable, including deep links', () => {
-    // 公开版没有 Computer Use，分类比私有少一个（私有是 16）
-    expect(new Set(settingsCategories.map((item) => item.key)).size).toBe(15)
+    // 公开版没有 Computer Use，分类比私有少一个（私有是 17）
+    expect(new Set(settingsCategories.map((item) => item.key)).size).toBe(16)
     for (const category of settingsCategories) {
       const result = settingsNavigation(category.key)
       expect(result.active.key).toBe(category.key)

@@ -1,5 +1,5 @@
-export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor'
-export type SettingsGroup = 'workspace' | 'security'
+export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor' | 'about'
+export type SettingsGroup = 'workspace' | 'security' | 'about'
 
 export const settingsCategories: Array<{ key: SettingsCategory; label: string; desc: string; eyebrow: string; group?: SettingsGroup }> = [
   { key: 'permissions', label: 'Agent 与权限', desc: '为 Agent 设定清晰的行动边界，在效率与安全之间找到适合你的工作方式。', eyebrow: 'AGENT CONTROL' },
@@ -16,7 +16,8 @@ export const settingsCategories: Array<{ key: SettingsCategory; label: string; d
   { key: 'storage', label: '数据与存储', desc: '数据目录与存储占用。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },
   { key: 'sandbox', label: '安全与沙箱', desc: '沙箱与命令执行防护。', eyebrow: 'SECURITY & DIAGNOSTICS', group: 'security' },
   { key: 'runtime', label: '开发环境', desc: '本地命令与运行时路径。', eyebrow: 'SECURITY & DIAGNOSTICS', group: 'security' },
-  { key: 'doctor', label: '环境体检', desc: '环境自检与修复。', eyebrow: 'SECURITY & DIAGNOSTICS', group: 'security' }
+  { key: 'doctor', label: '环境体检', desc: '环境自检与修复。', eyebrow: 'SECURITY & DIAGNOSTICS', group: 'security' },
+  { key: 'about', label: '关于 FastAgent', desc: '版本、作者与应用能力介绍。', eyebrow: 'ABOUT FASTAGENT', group: 'about' }
 ]
 
 export function settingsNavigation(category: SettingsCategory) {

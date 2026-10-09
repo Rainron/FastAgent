@@ -21,6 +21,7 @@ import { SandboxSettings } from './SandboxSettings'
 import { DoctorSettings } from './DoctorSettings'
 import { RuntimeSettings } from './RuntimeSettings'
 import { ShellCommandSettings } from './ShellCommandSettings'
+import { AboutSettings } from './AboutSettings'
 import { UsageSettings } from './UsageSettings'
 import { RunLimitSettings } from './RunLimitSettings'
 
@@ -42,6 +43,8 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
           <div className="settings-nav-label">应用</div>
           <button className={`snav${active.group === 'workspace' ? ' on' : ''}`} onClick={() => setCategory('general')} aria-current={active.group === 'workspace' ? 'page' : undefined}><Settings size={16} />工作区偏好</button>
           <button className={`snav${active.group === 'security' ? ' on' : ''}`} onClick={() => setCategory('sandbox')} aria-current={active.group === 'security' ? 'page' : undefined}><Shield size={16} />安全与诊断</button>
+
+          <button className={`snav${active.group === 'about' ? ' on' : ''}`} onClick={() => setCategory('about')} aria-current={active.group === 'about' ? 'page' : undefined}><Shield size={16} />安全与诊断</button>
         </div>
       </nav>
       <div className="settings-content" ref={contentRef}><div className="settings-content-inner">
@@ -61,6 +64,7 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'knowledge' && settings && <KnowledgeSettings settings={settings} currentProjectId={currentProjectId} onChange={onSettingsChange} onNotice={onNotice} onNavigate={setCategory} />}
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'runtime' && settings && <><RuntimeSettings onNotice={onNotice} /><ShellCommandSettings settings={settings} onChange={onSettingsChange} /></>}
+            {category === 'about' && <AboutSettings onNotice={onNotice} />}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}
             {category === 'prompts' && <PromptSettings prompts={modePrompts} onChange={onModePromptChange} onReset={onResetModePrompts} />}
             {category === 'keybindings' && settings && <KeybindingSettings settings={settings} onChange={onSettingsChange} onNotice={onNotice} />}
