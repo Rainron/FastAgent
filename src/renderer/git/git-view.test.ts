@@ -66,16 +66,17 @@ describe('状态码', () => {
   })
 })
 
+// 实现按本机时区格式化，用例统一用不带偏移的本地时间字符串，避免在非 +08:00 的机器（CI）上失败。
 describe('commitDateText', () => {
-  const now = new Date('2026-09-12T10:00:00+08:00')
+  const now = new Date('2026-09-12T10:00:00')
 
   it('当天显示时分', () => {
-    expect(commitDateText('2026-09-12T08:30:00+08:00', now)).toBe('08:30')
+    expect(commitDateText('2026-09-12T08:30:00', now)).toBe('08:30')
   })
 
   it('同年省略年份，跨年补上年份', () => {
-    expect(commitDateText('2026-09-10T14:22:00+08:00', now)).toBe('09-10 14:22')
-    expect(commitDateText('2025-12-31T23:00:00+08:00', now)).toBe('2025-12-31 23:00')
+    expect(commitDateText('2026-09-10T14:22:00', now)).toBe('09-10 14:22')
+    expect(commitDateText('2025-12-31T23:00:00', now)).toBe('2025-12-31 23:00')
   })
 
   it('非法时间原样返回', () => {
