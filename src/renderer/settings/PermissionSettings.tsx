@@ -1,11 +1,11 @@
+import { usePermissionSettings } from './hooks/use-permission-settings'
+import { permissionProtectionSummary, permissionSummary } from './permission-summary'
 import { useEffect, useState } from 'react'
-import { FolderOpen, Plus, RotateCcw, Shield, ShieldAlert, ShieldCheck, TerminalSquare, Trash2, X } from 'lucide-react'
-import type { AppSettings, StoredPermissionRule } from '../../shared/types'
+import { Check, FolderOpen, Plus, RotateCcw, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, TerminalSquare, Trash2, X } from 'lucide-react'
+import type { AppSettings } from '../../shared/types'
 import type { LogicalToolKey, PermissionAction, PermissionRuleSet } from '../../shared/permission-rules'
-import { SUBAGENT_DEFAULT_MAX_TOOL_CALLS, SUBAGENT_MAX_TOOL_CALLS_CEILING } from '../../shared/subagent'
 import {
   BUILTIN_PRESET_IDS,
-  BUILTIN_PROFILE_META,
   effectiveRuleSet,
   removeProfileRule,
   resetProfileToolKey,
@@ -15,6 +15,7 @@ import {
   type BuiltinPermissionPreset,
   type PermissionProfile
 } from '../../shared/permission-profiles'
+import { CenterDialog } from '../components/CenterDialog'
 import { SubAgentSettings } from './SubAgentSettings'
 
 const TOOL_KEY_LABELS: Record<LogicalToolKey, string> = {
@@ -27,7 +28,7 @@ const TOOL_KEY_LABELS: Record<LogicalToolKey, string> = {
   mcp_read: 'mcp_read（MCP 只读工具）',
   mcp_write: 'mcp_write（MCP 写入工具）',
   external_directory: 'external_directory（工作区外）',
-  secret_file: 'secret_file（密钥文件）'
+  secret_file: 'secret_file（密钥文件）',
 }
 
 const ACTION_LABELS: Record<PermissionAction, string> = { allow: '允许', ask: '询问', deny: '拒绝' }
@@ -119,7 +120,7 @@ function ProfileRules({ profile, onOverridesChange }: { profile: PermissionProfi
         </div>
       </div>
     })}
-    <p className="settings-hint">规则按顺序匹配，最后一条命中的生效；`*` 是该工具的默认动作。`rm -rf *`、`git push --force*`、`shutdown*`、`format *` 是全局禁止项，删掉也会被自动补回。</p>
+    <p className="settings-hint">规则按顺序匹配，最后一条命中的生效；`*` 是该工具的默认动作。完全访问档也遵循这里配置的规则。</p>
   </div>
 }
 
@@ -144,7 +145,7 @@ function NewProfileForm({ existing, onCreate, onCancel }: { existing: Permission
       </select>
     </div>
     <input value={hint} onChange={(event) => setHint(event.target.value)} placeholder="一行说明，显示在输入区的档位菜单里" aria-label="档位说明" />
-    {error && <p className="settings-hint permission-form-error">{error}</p>}
+    {error && <p className="settings-hint permission-form-error" role="alert">{error}</p>}
     <div className="ability-empty-actions">
       <button className="quick-secondary" onClick={submit}>创建档位</button>
       <button className="quick-secondary" onClick={onCancel}>取消</button>
@@ -172,137 +173,87 @@ function UserRuleForm({ onAdd, onCancel }: { onAdd: (rule: { toolKey: string; pa
 }
 
 export function PermissionSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
-  const [profiles, setProfiles] = useState<PermissionProfile[] | null>(null)
-  const [userRules, setUserRules] = useState<StoredPermissionRule[] | null>(null)
-  const [creating, setCreating] = useState(false)
-  const [addingUserRule, setAddingUserRule] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // bash 路径输入框的草稿：打字过程中不写库，失焦或回车才提交。
-  const [bashPathDraft, setBashPathDraft] = useState(settings.bashPath)
+  const { busy, reload, profiles, userRules, creating, setCreating, addingUserRule, setAddingUserRule, setEditingProfileId, browsingUserRules, setBrowsingUserRules, error, bashPathDraft, setBashPathDraft, commitBashPath, pickBashExecutable, saveProfile, createProfile, removeProfile, addUserRule, removeRule, editingProfile, selectedProfile, setSelectedProfileId } = usePermissionSettings(settings, onChange)
 
-  useEffect(() => { setBashPathDraft(settings.bashPath) }, [settings.bashPath])
-  useEffect(() => {
-    void window.fastAgent.conversations.listPermissionRules().then(setUserRules).catch(() => setUserRules([]))
-    void window.fastAgent.conversations.listPermissionProfiles().then(setProfiles).catch(() => setProfiles([]))
-  }, [])
-
-  function commitBashPath() {
-    const trimmed = bashPathDraft.trim()
-    if (trimmed !== settings.bashPath) onChange({ bashPath: trimmed })
-    setBashPathDraft(trimmed)
-  }
-
-  function pickBashExecutable() {
-    void window.fastAgent.settings.pickBashExecutable().then((picked) => {
-      if (picked) {
-        setBashPathDraft(picked)
-        onChange({ bashPath: picked })
-      }
-    })
-  }
-
-  function saveProfile(profile: PermissionProfile, patch: Partial<Pick<PermissionProfile, 'label' | 'hint' | 'overrides'>>) {
-    setError(null)
-    void window.fastAgent.conversations.savePermissionProfile({
-      id: profile.id,
-      label: patch.label ?? profile.label,
-      hint: patch.hint ?? profile.hint,
-      base: profile.base,
-      builtin: profile.builtin,
-      overrides: patch.overrides ?? profile.overrides,
-      position: profile.position
-    }).then(setProfiles).catch((cause) => setError(cause instanceof Error ? cause.message : '保存失败'))
-  }
-
-  function createProfile(draft: { id: string; label: string; hint: string; base: BuiltinPermissionPreset }) {
-    setError(null)
-    void window.fastAgent.conversations.savePermissionProfile({ ...draft, builtin: false, overrides: {}, position: (profiles?.length ?? 0) })
-      .then((next) => { setProfiles(next); setCreating(false) })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : '创建失败'))
-  }
-
-  function removeProfile(profile: PermissionProfile) {
-    setError(null)
-    void window.fastAgent.conversations.removePermissionProfile(profile.id).then(setProfiles).catch(() => undefined)
-  }
-
-  function addUserRule(rule: { toolKey: string; pattern: string; action: PermissionAction }) {
-    void window.fastAgent.conversations.upsertPermissionRule(rule)
-      .then((next) => { setUserRules(next); setAddingUserRule(false) })
-      .catch(() => setAddingUserRule(false))
-  }
-
-  function removeRule(toolKey: string, pattern: string) {
-    void window.fastAgent.conversations.removePermissionRule(toolKey, pattern)
-      .then(() => setUserRules((current) => (current ?? []).filter((rule) => !(rule.toolKey === toolKey && rule.pattern === pattern))))
-      .catch(() => undefined)
-  }
-
-  return <section className="settings-panel" aria-labelledby="settings-permissions">
+  return <fieldset className="settings-editable" disabled={busy}><section className="settings-panel" aria-labelledby="settings-permissions">
     <div className="settings-section-heading">
-      <div><h2 id="settings-permissions">Agent 执行权限</h2><p>档位决定各工具的默认动作。内置三档可以改规则并随时恢复出厂，也可以新建自己的档位，输入区的档位菜单会跟着列出。</p></div>
+      <div><h2 id="settings-permissions">权限档位</h2><p>选择档位查看与调整规则；执行时在对话输入区选择要使用的档位。</p></div>
       <button className="quick-secondary" onClick={() => setCreating((current) => !current)}><Plus size={13} />新建档位</button>
     </div>
-    {error && <p className="settings-hint permission-form-error">{error}</p>}
+    {error && <p className="settings-hint permission-form-error" role="alert">{error}<button className="small-control" onClick={reload}>重新加载</button></p>}
     {creating && profiles && <NewProfileForm existing={profiles} onCreate={createProfile} onCancel={() => setCreating(false)} />}
 
-    {profiles === null ? <div className="permission-user-empty">加载中…</div> : <div className="permission-presets">
-      {profiles.map((profile) => (
-        <details className="permission-preset" key={profile.id}>
-          <summary>
-            <span className={`permission-preset-icon ${profile.base}`}>{presetIcon(profile.base)}</span>
-            <strong>{profile.label}</strong>
-            <small>{profile.description}</small>
-          </summary>
-          <div className="permission-profile-meta">
-            <PatternInput value={profile.label} label={`${profile.label} 的名称`} onCommit={(label) => saveProfile(profile, { label })} />
-            {profile.builtin
-              // 改名也算改动：只看 overrides 的话，重命名过的内置档就没法恢复了。
-              ? (Object.keys(profile.overrides).length > 0 || profile.label !== BUILTIN_PROFILE_META[profile.base].label) &&
-                <button className="permission-toolkey-reset" onClick={() => removeProfile(profile)} title="丢弃全部改动，恢复出厂名称与规则"><RotateCcw size={11} />恢复出厂</button>
-              : <button className="permission-user-remove" onClick={() => removeProfile(profile)} aria-label={`删除档位 ${profile.label}`} title="删除档位"><Trash2 size={12} /></button>}
-          </div>
-          <ProfileRules profile={profile} onOverridesChange={(overrides) => saveProfile(profile, { overrides })} />
-        </details>
-      ))}
-    </div>}
+    <div className="permission-overview">
+      <div className="permission-presets" role="group" aria-label="查看权限档位">
+        {profiles === null ? <div className="permission-user-empty">加载中…</div> : profiles.map((profile) => <button className={`permission-profile-card${selectedProfile?.id === profile.id ? ' selected' : ''}`} key={profile.id} onClick={() => setSelectedProfileId(profile.id)} aria-pressed={selectedProfile?.id === profile.id}>
+          <span className="permission-preset-icon">{presetIcon(profile.base)}</span>
+          <span className="permission-preset-copy"><strong>{profile.label}</strong><small>{profile.hint}</small></span>
+          {selectedProfile?.id === profile.id && <Check size={15} />}
+        </button>)}
+      </div>
+      {selectedProfile && <div className="permission-rule-summary">
+        <h3>{selectedProfile.label} · 规则摘要</h3><p>自定义规则优先于档位规则生效</p>
+        {permissionSummary(selectedProfile).map((rule) => <div className="permission-summary-row" key={rule.toolKey}>
+          <code title={TOOL_KEY_LABELS[rule.toolKey]}>{rule.toolKey} · *</code>
+          <ActionSelect value={rule.action} label={`${selectedProfile.label} ${rule.toolKey} 默认动作`} onChange={(action) => saveProfile(selectedProfile, { overrides: upsertProfileRule(selectedProfile, rule.toolKey, { pattern: '*', action }, rule.index) })} />
+        </div>)}
+        <div className="permission-summary-actions"><button className="small-control" onClick={() => setEditingProfileId(selectedProfile.id)}><SlidersHorizontal size={13} />查看完整规则</button>
+          {selectedProfile.builtin ? <button className="small-control" onClick={() => removeProfile(selectedProfile)}><RotateCcw size={12} />恢复出厂</button> : <button className="small-control" onClick={() => removeProfile(selectedProfile)}><Trash2 size={12} />删除档位</button>}
+        </div>
+      </div>}
+    </div>
+    {editingProfile && <CenterDialog busy={busy}
+      title={`${editingProfile.label} · 权限规则`}
+      subtitle={editingProfile.description}
+      icon={<SlidersHorizontal size={16} />}
+      onClose={() => setEditingProfileId(null)}
+      footer={<button className="approval-primary" onClick={() => setEditingProfileId(null)}>完成</button>}
+    >
+      {error && <p role="alert" className="settings-hint permission-form-error">{error}</p>}
+      <div className="permission-profile-meta">
+        <PatternInput value={editingProfile.label} label={`${editingProfile.label} 的名称`} onCommit={(label) => saveProfile(editingProfile, { label })} />
+      </div>
+      <ProfileRules profile={editingProfile} onOverridesChange={(overrides) => saveProfile(editingProfile, { overrides })} />
+    </CenterDialog>}
 
+  </section>
+  <section className="settings-panel" aria-labelledby="settings-behavior">
+    <div className="settings-section-heading"><div><h2 id="settings-behavior">行为保护</h2><p>当前查看档位的访问边界；可在完整规则中调整具体匹配项。</p></div><span className="settings-badge">{selectedProfile?.label ?? '加载中'}</span></div>
+    {selectedProfile && permissionProtectionSummary(selectedProfile).map((row) => <div className="settings-row" key={row.toolKey}><div><strong>{row.label}</strong><span>{row.description}</span></div><span className="settings-badge">{row.action ? ACTION_LABELS[row.action] : '按具体规则'}</span></div>)}
     <div className="settings-section-heading" style={{ marginTop: 18 }}>
       <div><h2>你的自定义规则</h2><p>选择「始终允许」时写入，对所有档位生效且优先级高于档位规则。</p></div>
-      <button className="quick-secondary" onClick={() => setAddingUserRule((current) => !current)}><Plus size={13} />添加规则</button>
+      <button className="quick-secondary" onClick={() => setBrowsingUserRules(true)}><SlidersHorizontal size={13} />管理规则（{userRules?.length ?? 0}）</button>
     </div>
-    {addingUserRule && <UserRuleForm onAdd={addUserRule} onCancel={() => setAddingUserRule(false)} />}
-    {userRules === null ? <div className="permission-user-empty">加载中…</div> : userRules.length === 0 ? <div className="permission-user-empty">还没有自定义规则。</div> : (
-      <div className="permission-user-rules">
-        {userRules.map((rule) => (
-          <div className="permission-user-rule" key={`${rule.toolKey}\t${rule.pattern}`}>
-            <span className="permission-user-key">{TOOL_KEY_LABELS[rule.toolKey as LogicalToolKey] ?? rule.toolKey}</span>
-            <code className="permission-user-pattern">{rule.pattern}</code>
-            <ActionSelect value={rule.action} label={`${rule.pattern} 的动作`} onChange={(action) => addUserRule({ toolKey: rule.toolKey, pattern: rule.pattern, action })} />
-            <button className="permission-user-remove" onClick={() => removeRule(rule.toolKey, rule.pattern)} aria-label={`删除规则 ${rule.pattern}`} title="删除规则"><Trash2 size={12} /></button>
-          </div>
-        ))}
-      </div>
-    )}
+    {browsingUserRules && <CenterDialog busy={busy}
+      title="你的自定义规则"
+      subtitle={`${userRules?.length ?? 0} 条 · 对所有档位生效`}
+      icon={<SlidersHorizontal size={16} />}
+      onClose={() => { setAddingUserRule(false); setBrowsingUserRules(false) }}
+      footer={<>
+        <button className="approval-secondary" onClick={() => setAddingUserRule((current) => !current)}><Plus size={13} />添加规则</button>
+        <button className="approval-primary" onClick={() => { setAddingUserRule(false); setBrowsingUserRules(false) }}>完成</button>
+      </>}
+    >
+      {addingUserRule && <UserRuleForm onAdd={addUserRule} onCancel={() => setAddingUserRule(false)} />}
+      {userRules === null ? <div className="permission-user-empty">加载中…</div> : userRules.length === 0 ? <div className="permission-user-empty">还没有自定义规则。</div> : (
+        <div className="permission-user-rules">
+          {userRules.map((rule) => (
+            <div className="permission-user-rule" key={`${rule.toolKey}\t${rule.pattern}`}>
+              <span className="permission-user-key">{TOOL_KEY_LABELS[rule.toolKey as LogicalToolKey] ?? rule.toolKey}</span>
+              <code className="permission-user-pattern">{rule.pattern}</code>
+              <ActionSelect value={rule.action} label={`${rule.pattern} 的动作`} onChange={(action) => addUserRule({ toolKey: rule.toolKey, pattern: rule.pattern, action })} />
+              <button className="permission-user-remove" onClick={() => removeRule(rule.toolKey, rule.pattern)} aria-label={`删除规则 ${rule.pattern}`} title="删除规则"><Trash2 size={12} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </CenterDialog>}
 
-    <div className="settings-section-heading" style={{ marginTop: 18 }}><div><h2>Sub-agent</h2><p>只读 Sub-agent 仅用于独立调查和验证；关闭后主 Agent 无法调用该能力。</p></div></div>
+  </section>
+  <section className="settings-panel">
+    <div className="settings-section-heading"><div><h2>Sub-agent</h2><p>只读 Sub-agent 仅用于独立调查和验证；关闭后主 Agent 无法调用该能力。</p></div></div>
     <label className="switch-row" style={{ marginTop: 8 }}><input type="checkbox" checked={settings.subAgentEnabled} onChange={(event) => onChange({ subAgentEnabled: event.target.checked })} /><span className="switch-visual" /><span><strong>启用只读 Sub-agent</strong><small>允许主 Agent 委派 read、grep、find、ls 调查任务</small></span></label>
-    {settings.subAgentEnabled && <div className="settings-row">
-      <div>
-        <strong>单个子任务的工具调用上限</strong>
-        <span>推荐 {SUBAGENT_DEFAULT_MAX_TOOL_CALLS} 次。达到上限即中止该子任务并记为超时，已产出的内容仍会回传。范围很广的调查任务可以调高；自定义角色单独声明的值优先于这里。</span>
-      </div>
-      <input
-        className="settings-number-input"
-        type="number"
-        min={1}
-        max={SUBAGENT_MAX_TOOL_CALLS_CEILING}
-        value={settings.subAgentMaxToolCalls}
-        onChange={(event) => onChange({ subAgentMaxToolCalls: Number(event.target.value) })}
-        aria-label="单个子任务的工具调用上限"
-      />
-    </div>}
-    {settings.subAgentEnabled && <SubAgentSettings settings={settings} onChange={onChange} />}
+    {settings.subAgentEnabled && <details className="settings-shell-advanced"><summary>管理自定义 Sub-agent</summary><SubAgentSettings settings={settings} onChange={onChange} /></details>}
 
     <div className="settings-section-heading" style={{ marginTop: 18 }}><div><h2>Shell 偏好</h2><p>agent 模式下使用的命令工具；Windows 默认 Git Bash，探测不到可用 bash 时自动改用 PowerShell。</p></div></div>
     <div className="settings-segmented settings-shell-segmented" role="group" aria-label="Shell 偏好">
@@ -312,6 +263,7 @@ export function PermissionSettings({ settings, onChange }: { settings: AppSettin
         </button>
       ))}
     </div>
+    <details className="settings-shell-advanced"><summary>自定义 Shell 路径</summary>
     <div className="settings-bash-path">
       <input
         value={bashPathDraft}
@@ -326,5 +278,6 @@ export function PermissionSettings({ settings, onChange }: { settings: AppSettin
       {settings.bashPath && <button type="button" className="icon-button" onClick={() => { setBashPathDraft(''); onChange({ bashPath: '' }) }} aria-label="清除 bash 路径" title="清除，恢复自动探测"><X size={13} /></button>}
     </div>
     <p className="settings-hint">Windows 上若 bash 指向未安装的 WSL，命令会全部失败；可在这里手动指定 bash.exe（如 Git Bash 或 MSYS2）。切换后下一轮对话生效。Skill 与 MCP Server 本身在「能力」页安装、配置与启停；这里只决定它们提供的工具是否放行。</p>
-  </section>
+    </details>
+  </section></fieldset>
 }

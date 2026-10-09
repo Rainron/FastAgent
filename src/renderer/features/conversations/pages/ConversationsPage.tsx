@@ -5,6 +5,7 @@ import type { ConversationScope } from '../../../workspace-data'
 import { Pagination } from '../../../components/Pagination'
 import { useDebounced } from '../../../use-debounced'
 import { usePagination } from '../../../use-pagination'
+import '../../feature-page.css'
 
 type StatusFilter = TurnStatus | 'idle' | 'all'
 
@@ -87,25 +88,32 @@ export function ConversationsPage({ models, projects, onOpenInspector, onNotice 
     { label: '最近失败', value: stats.failed, icon: XCircle, tone: stats.failed ? 'danger' : '' }
   ]
 
-  return <section className="conversations-page" aria-labelledby="conversations-title">
-    <div className="section-list-header"><div><span className="eyebrow">WORKSPACE</span><h1 id="conversations-title">会话</h1><p>集中查找和管理所有会话。选择一项查看 Context、摘要、压缩历史与运行详情。</p></div></div>
-    <div className="conversation-stat-grid">{statCards.map(({ label, value, icon: Icon, tone }) => <div className={`conversation-stat-card ${tone}`} key={label}><Icon size={15} /><div><strong>{value}</strong><span>{label}</span></div></div>)}</div>
-    <div className="conversation-toolbar">
-      <div className="conversation-search"><Search size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="搜索会话标题" aria-label="搜索会话标题" /></div>
-      <select value={scope} onChange={(event) => { setScope(event.target.value as ConversationScope); setPage(1) }} aria-label="按项目归属筛选"><option value="all">所有项目</option><option value="unassigned">快速对话</option>{projects.filter((project) => !project.archived).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
-      <select value={mode} onChange={(event) => { setMode(event.target.value as ConversationMode | 'all'); setPage(1) }} aria-label="按模式筛选"><option value="all">所有模式</option>{(['chat', 'agent'] as ConversationMode[]).map((item) => <option key={item} value={item}>{modeLabels[item]}</option>)}</select>
-      <select value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1) }} aria-label="按状态筛选"><option value="all">所有状态</option>{(['idle', 'working', 'completed', 'failed', 'cancelled'] as Array<TurnStatus | 'idle'>).map((item) => <option key={item} value={item}>{statusLabels[item]}</option>)}</select>
-      <label className="conversation-archive-toggle"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setPage(1) }} /><span>含归档</span></label>
+  return <section className="section-view fp-shell" aria-labelledby="conversations-title">
+    <div className="fp-page">
+      <div className="fp-head">
+        <div>
+          <h1 id="conversations-title">会话</h1>
+          <p>集中查找和管理所有会话。选择一项查看 Context、摘要、压缩历史与运行详情。</p>
+        </div>
+      </div>
+      <div className="fp-stat-grid">{statCards.map(({ label, value, icon: Icon, tone }) => <div className="fp-stat" key={label}><span className={`fp-stat-icon ${tone}`}><Icon size={15} /></span><div><strong>{value}</strong><span>{label}</span></div></div>)}</div>
+      <div className="fp-toolbar">
+        <div className="fp-search"><Search size={14} /><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1) }} placeholder="搜索会话标题" aria-label="搜索会话标题" /></div>
+        <select value={scope} onChange={(event) => { setScope(event.target.value as ConversationScope); setPage(1) }} aria-label="按项目归属筛选"><option value="all">所有项目</option><option value="unassigned">快速对话</option>{projects.filter((project) => !project.archived).map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+        <select value={mode} onChange={(event) => { setMode(event.target.value as ConversationMode | 'all'); setPage(1) }} aria-label="按模式筛选"><option value="all">所有模式</option>{(['chat', 'agent'] as ConversationMode[]).map((item) => <option key={item} value={item}>{modeLabels[item]}</option>)}</select>
+        <select value={status} onChange={(event) => { setStatus(event.target.value as StatusFilter); setPage(1) }} aria-label="按状态筛选"><option value="all">所有状态</option>{(['idle', 'working', 'completed', 'failed', 'cancelled'] as Array<TurnStatus | 'idle'>).map((item) => <option key={item} value={item}>{statusLabels[item]}</option>)}</select>
+        <label className="fp-check"><input type="checkbox" checked={showArchived} onChange={(event) => { setShowArchived(event.target.checked); setPage(1) }} /><span>含归档</span></label>
+      </div>
+      <div className="fp-panel">
+        <div className="fp-panel-heading"><div><h2>{total} 个会话</h2><p>按最近更新时间排列</p></div></div>
+        {items.map((item) => { const currentStatus = item.runtime.status ?? 'idle'; return <button className={`fp-conv-row ${item.archived ? 'archived' : ''}`} key={item.id} onClick={() => onOpenInspector(item.id)}>
+          <div className="fp-conv-main"><div className="fp-conv-title"><span className={`fp-dot ${currentStatus}`} /><strong>{item.title}</strong>{item.archived && <span className="fp-conv-archived"><Archive size={11} />已归档</span>}</div><div className="fp-conv-meta"><span><FolderKanban size={12} />{projectName(item)}</span><span>{item.runtime.mode ? modeLabels[item.runtime.mode] : '未运行'}</span><span>{modelName(item)}</span></div></div>
+          <div className="fp-conv-context"><span>Context</span><strong>{contextLabel(item)}</strong><small>{compactionLabel(item)}</small></div>
+          <div className={`fp-conv-status ${currentStatus}`}><span>{statusLabels[currentStatus]}</span><small>{formatUpdatedAt(item.updatedAt)}</small></div>
+        </button> })}
+        {items.length === 0 && !loading && <div className="fp-empty"><CheckCircle2 size={20} /><strong>没有符合条件的会话</strong><span>试试清除筛选条件，或搜索其他标题。</span></div>}
+      </div>
+      <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />
     </div>
-    <div className="conversation-list-heading"><span>{total} 个会话</span><small>按最近更新时间排列</small></div>
-    <div className="conversation-card-list" aria-label="会话列表">
-      {items.map((item) => { const currentStatus = item.runtime.status ?? 'idle'; return <button className={`conversation-card ${item.archived ? 'archived' : ''}`} key={item.id} onClick={() => onOpenInspector(item.id)}>
-        <div className="conversation-card-main"><div className="conversation-card-title"><span className={`conversation-status-dot ${currentStatus}`} /><strong>{item.title}</strong>{item.archived && <span className="conversation-archived-label"><Archive size={11} />已归档</span>}</div><div className="conversation-card-meta"><span><FolderKanban size={12} />{projectName(item)}</span><span>{item.runtime.mode ? modeLabels[item.runtime.mode] : '未运行'}</span><span>{modelName(item)}</span></div></div>
-        <div className="conversation-card-context"><span>Context</span><strong>{contextLabel(item)}</strong><small>{compactionLabel(item)}</small></div>
-        <div className={`conversation-card-status ${currentStatus}`}><span>{statusLabels[currentStatus]}</span><small>{formatUpdatedAt(item.updatedAt)}</small></div>
-      </button> })}
-      {items.length === 0 && !loading && <div className="conversation-empty"><CheckCircle2 size={20} /><strong>没有符合条件的会话</strong><span>试试清除筛选条件，或搜索其他标题。</span></div>}
-    </div>
-    <Pagination page={page} pageSize={pageSize} total={total} disabled={loading} onPageChange={setPage} onPageSizeChange={setPageSize} />
   </section>
 }

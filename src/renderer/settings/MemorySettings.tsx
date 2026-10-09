@@ -1,13 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Check, Pencil, Trash2, X } from 'lucide-react'
-import type { AppSettings, MemoryRecord, MemoryType, ModelOption, PageResult, ProjectRecord } from '../../shared/types'
-import { DEFAULT_PAGE_SIZE } from '../../shared/pagination'
+import { useMemorySettings } from './hooks/use-memory-settings'
+import { Pencil, Trash2 } from 'lucide-react'
+import type { AppSettings, MemoryType, ModelOption } from '../../shared/types'
+import { CenterDialog } from '../components/CenterDialog'
 import { Pagination } from '../components/Pagination'
-import { describeMemoryClearTarget, describeMemoryScope, memoryClearTarget, memoryExtractModelChoices, memoryListQuery, type MemoryScopeFilter } from './memory-filter'
+import { describeMemoryScope } from './memory-filter'
 
 const TYPE_LABEL: Record<MemoryType, string> = { preference: '偏好', fact: '事实', decision: '决定', experience: '经验' }
 
-const EMPTY_PAGE: PageResult<MemoryRecord> = { items: [], total: 0, page: 1, pageSize: DEFAULT_PAGE_SIZE }
 
 function formatTime(value: number): string {
   return new Date(value).toLocaleString()
@@ -19,81 +18,16 @@ export function MemorySettings({ settings, models, onChange, onNotice }: {
   onChange: (patch: Partial<AppSettings>) => void
   onNotice: (notice: string) => void
 }) {
-  const [projects, setProjects] = useState<ProjectRecord[]>([])
-  const [filter, setFilter] = useState<MemoryScopeFilter>({ kind: 'all' })
-  const [keyword, setKeyword] = useState('')
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE)
-  const [data, setData] = useState<PageResult<MemoryRecord>>(EMPTY_PAGE)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [draft, setDraft] = useState('')
-  // 原生 confirm 关闭后不把焦点还给 webContents，改用两段式确认。
-  const [confirmingClear, setConfirmingClear] = useState(false)
+  const { busy, projects, keyword, setKeyword, setPage, setPageSize, data, editingId, setEditingId, draft, setDraft, confirmingClear, setConfirmingClear, projectNames, extractModelChoices, changeFilter, startEdit, saveEdit, remove, clear, selected, clearLabel, loading, error, load } = useMemorySettings(settings, models, onNotice)
 
-  const projectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.id, project.name])), [projects])
-  const extractModelChoices = useMemo(() => memoryExtractModelChoices(models, settings.memory.extractModelId), [models, settings.memory.extractModelId])
-
-  const load = useCallback(() => {
-    void window.fastAgent.memories.list(memoryListQuery(filter, page, pageSize, keyword))
-      .then(setData)
-      .catch(() => onNotice('记忆列表加载失败'))
-  }, [filter, page, pageSize, keyword, onNotice])
-
-  useEffect(() => { void window.fastAgent.projects.list().then(setProjects).catch(() => undefined) }, [])
-  useEffect(() => { load() }, [load])
-  useEffect(() => window.fastAgent.memories.onChanged(() => load()), [load])
-
-  const changeFilter = (value: string) => {
-    setPage(1)
-    setConfirmingClear(false)
-    setFilter(value === 'all' ? { kind: 'all' } : value === 'global' ? { kind: 'global' } : { kind: 'project', projectId: value })
-  }
-
-  const startEdit = (memory: MemoryRecord) => {
-    setEditingId(memory.id)
-    setDraft(memory.content)
-  }
-
-  const saveEdit = async () => {
-    const content = draft.trim()
-    if (!editingId || !content) return
-    try {
-      await window.fastAgent.memories.update(editingId, { content })
-      setEditingId(null)
-      load()
-    } catch {
-      onNotice('记忆保存失败')
-    }
-  }
-
-  const remove = async (id: string) => {
-    try {
-      await window.fastAgent.memories.remove(id)
-      load()
-    } catch {
-      onNotice('记忆删除失败')
-    }
-  }
-
-  const clear = async () => {
-    const target = memoryClearTarget(filter)
-    try {
-      const removed = await window.fastAgent.memories.clear(target.scope, target.scopeId)
-      setConfirmingClear(false)
-      setPage(1)
-      load()
-      onNotice(`已清空 ${removed} 条记忆`)
-    } catch {
-      onNotice('清空记忆失败')
-    }
-  }
-
-  const selected = filter.kind === 'project' ? filter.projectId : filter.kind
-  const clearLabel = describeMemoryClearTarget(filter, filter.kind === 'project' ? projectNames[filter.projectId] : undefined)
-
-  return <section className="settings-panel" aria-labelledby="settings-memory">
+  return <fieldset className="settings-editable" disabled={busy}><section className="settings-panel" aria-labelledby="settings-memory">
     <div className="settings-section-heading">
-      <div><h2 id="settings-memory">记忆</h2><p>跨会话保存的长期信息。召回按「当前项目 + 全局」过滤，未归属项目的会话只使用全局记忆。</p></div>
+      <div><h2 id="settings-memory">记忆策略</h2><p>控制哪些信息进入长期记忆，以及每轮对话注入多少条。</p></div>
+    </div>
+    <div className="settings-stat-grid">
+      <div className="settings-stat"><span>已保存记忆 · 当前筛选</span><strong>{loading ? '—' : data.total}</strong><small>{clearLabel}</small></div>
+      <div className="settings-stat"><span>自动提取</span><strong>{settings.memory.enabled && settings.memory.autoExtract ? '已开启' : '已关闭'}</strong><small>每轮结束后判断长期信息</small></div>
+      <div className="settings-stat"><span>单轮注入</span><strong>{settings.memory.maxRecall}</strong><small>每轮最多召回条数</small></div>
     </div>
     <label className="switch-row">
       <input type="checkbox" checked={settings.memory.enabled} onChange={(event) => onChange({ memory: { ...settings.memory, enabled: event.target.checked } })} />
@@ -122,62 +56,29 @@ export function MemorySettings({ settings, models, onChange, onNotice }: {
         type="number"
         min={3}
         max={8}
+        aria-label="单轮注入条数"
         value={settings.memory.maxRecall}
         disabled={!settings.memory.enabled}
-        onChange={(event) => onChange({ memory: { ...settings.memory, maxRecall: Number(event.target.value) } })}
+        onChange={(event) => onChange({ memory: { ...settings.memory, maxRecall: Math.max(3, Math.min(8, Number(event.target.value) || 3)) } })}
       />
     </div>
-    <div className="settings-form-grid">
-      <label className="settings-inline-field">
-        <span>作用域</span>
-        <select value={selected} onChange={(event) => changeFilter(event.target.value)}>
-          <option value="all">全部</option>
-          <option value="global">全局</option>
-          {projects.map((project) => <option key={project.id} value={project.id}>项目 · {project.name}</option>)}
-        </select>
-      </label>
-      <label className="settings-inline-field">
-        <span>搜索</span>
-        <input value={keyword} onChange={(event) => { setPage(1); setKeyword(event.target.value) }} placeholder="按内容筛选" />
-      </label>
-    </div>
-    {data.items.length === 0
-      ? <div className="section-list-empty">还没有记忆</div>
-      : data.items.map((memory) => <div className="settings-row settings-row-stack" key={memory.id}>
-          <div>
-            {editingId === memory.id
-              ? <textarea rows={3} value={draft} onChange={(event) => setDraft(event.target.value)} />
-              : <strong>{memory.content}</strong>}
-            <span>{TYPE_LABEL[memory.type]} · {describeMemoryScope(memory, projectNames)} · 更新于 {formatTime(memory.updatedAt)}</span>
-            <small>{memory.sourceConversationId ? `来源会话 ${memory.sourceConversationId}` : '手动添加'}</small>
-          </div>
-          <div className="model-settings-actions">
-            {editingId === memory.id
-              ? <>
-                  <button className="small-control" onClick={() => void saveEdit()}><Check size={13} />保存</button>
-                  <button className="small-control" onClick={() => setEditingId(null)}><X size={13} />取消</button>
-                </>
-              : <>
-                  <button className="small-control" onClick={() => startEdit(memory)}><Pencil size={13} />编辑</button>
-                  <button className="small-control" onClick={() => void remove(memory.id)}><Trash2 size={13} />删除</button>
-                </>}
-          </div>
-        </div>)}
-    <Pagination
-      page={data.page}
-      pageSize={data.pageSize}
-      total={data.total}
-      onPageChange={setPage}
-      onPageSizeChange={(size) => { setPage(1); setPageSize(size) }}
-    />
-    <div className="settings-row">
-      <div><strong>清空记忆</strong><span>将删除{clearLabel}，不可恢复</span></div>
-      {confirmingClear
-        ? <div className="model-settings-actions">
-            <button className="quick-primary" onClick={() => void clear()}>确认清空</button>
-            <button className="quick-secondary" onClick={() => setConfirmingClear(false)}>取消</button>
-          </div>
-        : <button className="quick-secondary" onClick={() => setConfirmingClear(true)}>清空</button>}
-    </div>
   </section>
+  <section className="settings-panel" aria-labelledby="saved-memories">
+    <div className="settings-section-heading"><div><h2 id="saved-memories">已保存的记忆</h2><p>按作用域筛选与搜索；修改会影响后续对话。</p></div><button className="quick-secondary" onClick={() => setConfirmingClear(true)}>清空记忆</button></div>
+    <div className="memory-toolbar">
+      <select value={selected} onChange={(event) => changeFilter(event.target.value)} aria-label="记忆作用域"><option value="all">全部</option><option value="global">全局</option>{projects.map((project) => <option key={project.id} value={project.id}>项目 · {project.name}</option>)}</select>
+      <input value={keyword} onChange={(event) => { setPage(1); setKeyword(event.target.value) }} placeholder="搜索记忆内容" aria-label="搜索记忆内容" />
+    </div>
+    {error ? <div className="section-list-empty" role="alert">{error}<button className="small-control" onClick={load}>重试</button></div> : loading ? <div className="section-list-empty" role="status">加载中…</div> : <div className="memory-table">
+      <div className="memory-table-head"><span>内容</span><span>类型</span><span>作用域</span><span>操作</span></div>
+      {data.items.length === 0 ? <div className="section-list-empty">{keyword ? '没有匹配的记忆' : '当前作用域还没有记忆'}</div> : data.items.map((memory) => <div className="memory-table-row" key={memory.id}>
+        <div><strong>{memory.content}</strong><small>更新于 {formatTime(memory.updatedAt)} · {memory.sourceConversationId ? `来源：对话 ${memory.sourceConversationId}` : '手动添加'}</small></div>
+        <span className="settings-badge">{TYPE_LABEL[memory.type]}</span><span className="settings-badge muted" title={describeMemoryScope(memory, projectNames)}>{describeMemoryScope(memory, projectNames)}</span>
+        <div className="model-settings-actions"><button className="small-control" onClick={() => startEdit(memory)}>编辑</button><button className="small-control" onClick={() => void remove(memory.id)} aria-label={`删除记忆：${memory.content}`}><Trash2 size={12} /></button></div>
+      </div>)}
+    </div>}
+    <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size) }} />
+    {editingId && <CenterDialog busy={busy} title="编辑记忆" subtitle="修改后会影响后续相关对话的召回结果" icon={<Pencil size={16} />} onClose={() => setEditingId(null)} footer={<><button className="approval-secondary" onClick={() => setEditingId(null)}>取消</button><button className="approval-primary" disabled={!draft.trim()} onClick={() => void saveEdit()}>保存记忆</button></>}><label className="settings-inline-field"><span>记忆内容</span><textarea rows={6} value={draft} onChange={(event) => setDraft(event.target.value)} /></label></CenterDialog>}
+    {confirmingClear && <CenterDialog busy={busy} title="清空记忆？" subtitle="此操作不可撤销，请确认删除范围" onClose={() => setConfirmingClear(false)} footer={<><button className="approval-secondary" onClick={() => setConfirmingClear(false)}>取消</button><button className="approval-primary" onClick={() => void clear()}>确认清空</button></>}><p>将永久删除{clearLabel}。搜索关键词不会缩小删除范围，对话记录不受影响。</p></CenterDialog>}
+  </section></fieldset>
 }

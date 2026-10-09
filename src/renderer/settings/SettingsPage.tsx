@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Boxes, Brain, ChartColumn, Database, FileText, Keyboard, LibraryBig, LockKeyhole, MessagesSquare, Palette, Server, Settings, Shield, ShieldCheck, Stethoscope, Terminal } from 'lucide-react'
-import type { ComponentType } from 'react'
-import type { AppSettings, AppTheme, AuthSnapshot, ConversationMode,  LocalModelSummary, LocalModelTestResult, ModelOption } from '../../shared/types'
+import { useMemo } from 'react'
+import { Boxes, Brain, FileText, LibraryBig, Settings, Shield, ShieldCheck } from 'lucide-react'
+import './settings-redesign.css'
+import { settingsNavigation } from './settings-navigation'
+import { useSettingsNavigation } from './hooks/use-settings-navigation'
+export type { SettingsCategory } from './settings-navigation'
+import type { SettingsPageProps } from './settings-page-types'
 import { mergeModelOptions } from '../model-picker'
-import type { ModePrompts } from '../mode-prompts'
 import { AppearanceSettings } from './AppearanceSettings'
 import { ConnectionSettings } from './ConnectionSettings'
 import { ContextSettings } from './ContextSettings'
@@ -22,71 +24,29 @@ import { ShellCommandSettings } from './ShellCommandSettings'
 import { UsageSettings } from './UsageSettings'
 import { RunLimitSettings } from './RunLimitSettings'
 
-export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor'
-
-const categories: Array<{ key: SettingsCategory; label: string; desc: string; icon: ComponentType<{ size?: number }>; group: string }> = [
-  { key: 'general', label: '常规', desc: '启动、后台与基础行为偏好。', icon: Settings, group: '通用' },
-  { key: 'appearance', label: '外观', desc: '主题、强调色与界面密度。', icon: Palette, group: '通用' },
-  { key: 'keybindings', label: '快捷键', desc: '应用内与全局快捷键绑定。', icon: Keyboard, group: '通用' },
-  { key: 'connection', label: 'FastAgent 服务器', desc: '登录状态与服务连接。', icon: Server, group: '运行时' },
-  { key: 'models', label: '模型服务', desc: '模型选择、收藏与本地模型。', icon: Boxes, group: '运行时' },
-  { key: 'usage', label: '用量统计', desc: '模型调用量与 token 消耗。', icon: ChartColumn, group: '运行时' },
-  { key: 'context', label: '对话与上下文', desc: '压缩策略与上下文窗口占用。', icon: MessagesSquare, group: '运行时' },
-  { key: 'permissions', label: 'Agent 与权限', desc: 'Agent 执行权限档位。', icon: ShieldCheck, group: '运行时' },
-  { key: 'memory', label: '记忆', desc: '记忆提取与注入。', icon: Brain, group: '运行时' },
-  { key: 'knowledge', label: '项目知识库', desc: '人工维护的项目背景与约定。', icon: LibraryBig, group: '运行时' },
-  { key: 'sandbox', label: '安全与沙箱', desc: '沙箱与命令执行防护。', icon: Shield, group: '系统' },
-  { key: 'prompts', label: '提示词', desc: '各模式提示词覆写。', icon: FileText, group: '系统' },
-  { key: 'storage', label: '数据与存储', desc: '数据目录与存储占用。', icon: Database, group: '系统' },
-  { key: 'runtime', label: '开发环境', desc: '本地命令与运行时路径。', icon: Terminal, group: '系统' },
-  { key: 'doctor', label: '环境体检', desc: '环境自检与修复。', icon: Stethoscope, group: '系统' }
-]
-
-// 分组渲染顺序：导航按组分段，组内保持上面数组的相对顺序
-const groupOrder = ['通用', '运行时', '系统']
-
-export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onNotice, onLock, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue }: {
-  settings: AppSettings | null
-  theme: AppTheme
-  models: ModelOption[]
-  localModels: LocalModelSummary[]
-  auth: AuthSnapshot
-  modePrompts: ModePrompts
-  onSettingsChange: (patch: Partial<AppSettings>) => void
-  onThemeChange: (theme: AppTheme) => void
-  onModePromptChange: (mode: ConversationMode, value: string) => void
-  onResetModePrompts?: () => void
-  onNotice: (notice: string) => void
-  onLock: () => Promise<void>
-  requestedCategory: SettingsCategory
-  /** 计数器变化即表示外部又发起了一次跳转，重复点同一分类也能生效。 */
-  categoryRequest: number
-  selectedModelId: number | null
-  defaultModelId: number | null
-  favoriteModelIds: number[]
-  onSelectModel: (modelId: number) => void
-  onToggleFavoriteModel: (modelId: number) => void
-  onTestDialogue: (id: number) => Promise<LocalModelTestResult>
-}) {
-  const [category, setCategory] = useState<SettingsCategory>(requestedCategory)
-  // 记忆页的提取模型下拉要能选到本地模型，云端列表里没有它们。
+export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onResetModePrompts, onNotice, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue }: SettingsPageProps) {
+  const { category, setCategory, contentRef } = useSettingsNavigation(requestedCategory, categoryRequest)
   const selectableModels = useMemo(() => mergeModelOptions(models, localModels), [models, localModels])
+  const { active, primary, tabs } = settingsNavigation(category)
+  const icons = { permissions: ShieldCheck, models: Boxes, memory: Brain, knowledge: LibraryBig, prompts: FileText }
 
-  useEffect(() => { setCategory(requestedCategory) }, [categoryRequest])
-
-  const active = categories.find((item) => item.key === category) ?? categories[0]
-
-  return <div className="settings-page">
+  return <div className="settings-page settings-redesign">
     <div className="settings-layout">
       <nav className="settings-nav" aria-label="设置分类">
-        {groupOrder.map((group) => <div key={group}>
-          <div className="settings-nav-label">{group}</div>
-          {categories.filter((item) => item.group === group).map((item) => { const Icon = item.icon; return <button key={item.key} className={`snav${category === item.key ? ' on' : ''}`} onClick={() => setCategory(item.key)} aria-current={category === item.key}><Icon size={15} />{item.label}</button> })}
-        </div>)}
-
+        <div className="settings-nav-title">设置</div>
+        <div className="settings-nav-group">
+          <div className="settings-nav-label">智能体</div>
+          {primary.map((item) => { const Icon = icons[item.key as keyof typeof icons]; return <button key={item.key} className={`snav${category === item.key ? ' on' : ''}`} onClick={() => setCategory(item.key)} aria-current={category === item.key ? 'page' : undefined}><Icon size={16} />{item.label}{item.key === 'models' && <span className="settings-nav-count">{selectableModels.length}</span>}</button> })}
+        </div>
+        <div className="settings-nav-group">
+          <div className="settings-nav-label">应用</div>
+          <button className={`snav${active.group === 'workspace' ? ' on' : ''}`} onClick={() => setCategory('general')} aria-current={active.group === 'workspace' ? 'page' : undefined}><Settings size={16} />工作区偏好</button>
+          <button className={`snav${active.group === 'security' ? ' on' : ''}`} onClick={() => setCategory('sandbox')} aria-current={active.group === 'security' ? 'page' : undefined}><Shield size={16} />安全与诊断</button>
+        </div>
       </nav>
-      <div className="settings-content">
-        <div className="set-head"><span className="eyebrow">PREFERENCES</span><h1>{active.label}</h1><p>{active.desc}</p></div>
+      <div className="settings-content" ref={contentRef}><div className="settings-content-inner">
+        <div className="set-head"><h1>{active.label}</h1><p>{active.desc}</p></div>
+        {tabs.length > 0 && <div className="settings-category-tabs" role="navigation" aria-label={active.group === 'workspace' ? '工作区偏好分类' : '安全与诊断分类'}>{tabs.map((item) => <button key={item.key} className={category === item.key ? 'active' : ''} aria-current={category === item.key ? 'page' : undefined} onClick={() => setCategory(item.key)}>{item.label}</button>)}</div>}
         {!settings && category !== 'prompts' && category !== 'models'
           ? <div className="section-list-empty">设置加载中</div>
           : <>
@@ -102,16 +62,11 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'runtime' && settings && <><RuntimeSettings onNotice={onNotice} /><ShellCommandSettings settings={settings} onChange={onSettingsChange} /></>}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}
-            {category === 'prompts' && <PromptSettings prompts={modePrompts} onChange={onModePromptChange} />}
+            {category === 'prompts' && <PromptSettings prompts={modePrompts} onChange={onModePromptChange} onReset={onResetModePrompts} />}
             {category === 'keybindings' && settings && <KeybindingSettings settings={settings} onChange={onSettingsChange} onNotice={onNotice} />}
             {category === 'storage' && <DataStorageSettings onNotice={onNotice} />}
           </>}
-        {/* 只有登录了后端账号才有「锁定」可言；纯本地模型连接下点它既没有效果、还会中止所有运行中的任务。 */}
-        {auth.user && <div className="settings-account">
-          <div><strong>账户安全</strong><span>锁定后需要重新验证才能继续使用。</span></div>
-          <button className="quick-secondary" onClick={() => void onLock()}><LockKeyhole size={14} />锁定账户</button>
-        </div>}
-      </div>
+      </div></div>
     </div>
   </div>
 }

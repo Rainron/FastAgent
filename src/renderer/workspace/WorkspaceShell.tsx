@@ -130,7 +130,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
   const { abilities, refresh: refreshAbilities } = useAbilities()
   const abilityAlerts = useMemo(() => abilitiesNeedingAttention(abilities ?? []).length, [abilities])
   useEffect(() => { void refreshAbilities() }, [section, refreshAbilities])
-  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('general')
+  const [settingsCategory, setSettingsCategory] = useState<SettingsCategory>('permissions')
   const [skillDraft, setSkillDraft] = useState<SkillDraft | null>(null)
   const [settingsRequest, setSettingsRequest] = useState(0)
   // 从回合来源清单深链到「能力」页；nonce 保证连点同一个 Skill 也能重新展开详情。
@@ -1445,7 +1445,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     }
   })
   const handleStepHistory = useEventCallback((direction: -1 | 1) => stepHistory(direction))
-  const handleOpenGeneralSettings = useEventCallback(() => openSettings('general'))
+  const handleOpenSettings = useEventCallback(() => openSettings('permissions'))
   const handleToggleTheme = useEventCallback((next: AppTheme) => {
     onThemeChange(next)
     setNotice(next === 'dark' ? '已切换到深色主题' : '已切换到浅色主题')
@@ -1524,7 +1524,7 @@ export function WorkspaceShell({ auth, theme, onThemeChange, settings, onSetting
     <div className="app-shell">
       <WorkspaceTitlebar section={section} canGoBack={navigation.index > 0} canGoForward={navigation.index < navigation.entries.length - 1}
         workspaceRoot={workspaceRoot} effectiveDark={effectiveDark} onToggleSidebar={handleToggleSidebar}
-        onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenGeneralSettings} onToggleTheme={handleToggleTheme} />
+        onStepHistory={handleStepHistory} onNavigate={handleNavigate} onOpenSettings={handleOpenSettings} onToggleTheme={handleToggleTheme} />
       <div className="shell-body">
         <Sidebar collapsed={sidebarCollapsed} sectionStates={sidebarSections} onToggleSection={handleToggleSection} section={section} projects={projectItems} conversations={scopedConversations} runStates={runStates} compactionStates={compactionStates} onReadRun={handleReadRun} selectedProjectId={selectedProjectId} selectedConversationId={selectedConversationId} onInspectConversation={handleOpenInspector} onStartBatch={handleStartBatch} onDeleteProject={handleDeleteProject} onArchiveProject={handleArchiveProject} onOpenProjectFolder={handleOpenProjectFolder} onOpenConversationFolder={handleOpenConversationFolder} onDeleteConversation={handleDeleteConversation} onArchiveConversation={handleArchiveConversation} onRenameConversation={handleRenameConversation} onExportConversation={handleExportConversation} onDistillSkill={handleDistillSkill} onNavigate={handleNavigate} onOpenConversations={handleOpenConversations} onNewChat={handleNewChat} onNewChatInSection={handleNewChatInContext} onNewChatInProject={handleNewChatInProject} onToggle={handleToggleSidebar} onPickWorkspace={handlePickWorkspace} onSelectConversation={handleSelectConversation} onSelectProject={handleSelectProject} onAccountAction={handleAccountAction} auth={auth} abilityAlerts={abilityAlerts} />
         <main className={`conversation ${artifactOpen ? 'with-artifact' : ''}`}>

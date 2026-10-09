@@ -40,6 +40,7 @@ import { abilitiesService } from '../services/abilities-service'
 import { hubService } from '../../hub/services/hub-service'
 import { mcpService } from '../../mcp/services/mcp-service'
 import type { SkillImportFormat } from '../../skills/services/skills-service'
+import '../../feature-page.css'
 
 // 「发现」会发起多源网络请求，组件树也不小，不跟能力列表一起进首屏 chunk。
 const DiscoverTab = React.lazy(() => import('../../hub/pages/DiscoverTab').then(({ DiscoverTab }) => ({ default: DiscoverTab })))
@@ -179,13 +180,14 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
     if (result) onNotice(result)
   }
 
-  return <div className="capabilities-page">
-    <div className="capabilities-header">
+  return <div className="section-view fp-shell">
+    <div className="fp-page">
+    <div className="fp-head">
       <div>
         <h1>能力</h1>
         <p>为对话与任务添加技能和工具。</p>
       </div>
-      <div className="capabilities-actions">
+      <div className="fp-head-actions">
         <button className="quick-secondary" onClick={() => void checkUpdates()} disabled={actions.isPending('check-updates')}>
           {actions.isPending('check-updates') ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}检查更新
         </button>
@@ -205,7 +207,7 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
       </div>
     </div>
 
-    <nav className="capabilities-tabs" role="tablist" aria-label="能力分区">
+    <nav className="fp-tabs" role="tablist" aria-label="能力分区">
       {TABS.map(([key, label]) => (
         <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? 'active' : ''} onClick={() => switchTab(key)}>{label}</button>
       ))}
@@ -254,8 +256,8 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
                 </select>
               </label>
             </div>
-            {showSkillsSection && <section className="cap-mine-section">
-              {typeFilter !== 'skill' && <div className="cap-section-heading"><span>Skills</span><small>{filteredSkillCount}</small></div>}
+            {showSkillsSection && <section className="fp-panel">
+              {typeFilter !== 'skill' && <div className="fp-panel-heading"><div><h2>Skills</h2></div><small>{filteredSkillCount}</small></div>}
               <SkillList
                 embedded
                 skills={visibleSkills}
@@ -267,8 +269,8 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
                 onInspect={(ability) => setOverlay({ kind: 'skill-detail', ability })}
               />
             </section>}
-            {showServersSection && <section className="cap-mine-section">
-              {typeFilter !== 'mcp' && <div className="cap-section-heading"><span>MCP Servers</span><small>{filteredServerCount}</small></div>}
+            {showServersSection && <section className="fp-panel">
+              {typeFilter !== 'mcp' && <div className="fp-panel-heading"><div><h2>MCP Servers</h2></div><small>{filteredServerCount}</small></div>}
               <McpServerList
                 embedded
                 servers={visibleServers}
@@ -287,6 +289,7 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
           <DiscoverTab onNotice={onNotice} onOpenAbility={openAbilityById} />
         </React.Suspense>}
       </>}
+    </div>
     </div>
 
     {overlay?.kind === 'skill-form' && <SkillCreateForm
@@ -333,16 +336,17 @@ export function AbilitiesPage({ onNotice, focusRequest = null, onInsertComposer 
 function AbilitySummary({ abilities }: { abilities: Ability[] }) {
   const stats = mineStats(abilities)
   const cards = [
-    { label: '已安装', value: stats.total, icon: <Boxes size={15} /> },
-    { label: '已启用', value: stats.enabled, icon: <CircleCheck size={15} />, tone: 'success' },
-    { label: '待处理', value: stats.attention, icon: <AlertTriangle size={15} />, tone: stats.attention ? 'warning' : 'muted' },
-    { label: '可更新', value: stats.updates, icon: <RefreshCw size={15} />, tone: stats.updates ? 'warning' : 'muted' },
-    { label: 'Skills', value: stats.skills, icon: <Wrench size={15} /> },
-    { label: 'MCP', value: stats.mcp, icon: <Plug size={15} /> }
+    { label: '已安装', value: stats.total, icon: Boxes, tone: '' },
+    { label: '已启用', value: stats.enabled, icon: CircleCheck, tone: 'success' },
+    { label: '待处理', value: stats.attention, icon: AlertTriangle, tone: stats.attention ? 'warning' : '' },
+    { label: '可更新', value: stats.updates, icon: RefreshCw, tone: stats.updates ? 'warning' : '' },
+    { label: 'Skills', value: stats.skills, icon: Wrench, tone: '' },
+    { label: 'MCP', value: stats.mcp, icon: Plug, tone: '' }
   ]
-  return <div className="cap-summary" aria-label="能力统计">
-    {cards.map((card) => <div className={`cap-summary-card ${card.tone ?? ''}`} key={card.label}>
-      <span className="cap-summary-icon">{card.icon}</span><span><strong>{card.value}</strong><small>{card.label}</small></span>
+  return <div className="fp-stat-grid cols-6" aria-label="能力统计">
+    {cards.map((card) => <div className="fp-stat" key={card.label}>
+      <span className={`fp-stat-icon ${card.tone}`}><card.icon size={15} /></span>
+      <div><strong>{card.value}</strong><span>{card.label}</span></div>
     </div>)}
   </div>
 }

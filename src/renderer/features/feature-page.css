@@ -1,0 +1,180 @@
+/* 功能分区页（搜索 / 会话 / 工作区 / 能力 / 插件）统一沿用设置页 settings-redesign 的版式语言：
+   1000px 居中内容列、页头 h1+描述、pill Tab、面板分组、分隔线行、34px 控件。
+   颜色一律走主题 token，这里只定义布局与层次，不覆盖外观偏好。 */
+
+/* —— 页面骨架：fp-shell 挂在滚动容器上（通常与 .section-view 同元素），fp-page 是内容列 —— */
+.fp-shell { container: fp / inline-size; }
+.fp-page { width: min(1000px, 100%); min-width: 0; margin-inline: auto; padding: 32px 36px 48px; display: flex; flex-direction: column; text-align: left; }
+
+/* —— 页头：与 .set-head 同构，右侧可挂动作按钮 —— */
+.fp-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.fp-head h1 { margin: 0 0 6px; font-size: 24px; font-weight: 650; letter-spacing: -.025em; line-height: 1.3; }
+.fp-head p { margin: 0; max-width: 660px; color: var(--text-secondary); font-size: 12px; }
+.fp-head-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 6px; }
+
+/* —— Tab：与 .settings-category-tabs 同一形态 —— */
+.fp-tabs { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 14px; margin-bottom: 8px; }
+.fp-tabs button { white-space: nowrap; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 12px; }
+.fp-tabs button:hover { color: var(--text-primary); }
+.fp-tabs button.active { border-color: transparent; background: var(--accent-soft); color: var(--accent-calm); font-weight: 600; }
+
+/* —— 工具栏：搜索框 / 下拉 / 筛选 chips 统一 34px 高，与设置页输入件一致 —— */
+.fp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 14px; }
+.fp-search { flex: 1 1 220px; min-width: 0; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-tertiary); }
+.fp-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text-primary); font: inherit; font-size: 12px; }
+.fp-search input::placeholder { color: var(--text-tertiary); }
+.fp-search:focus-within { border-color: var(--border-strong); }
+.fp-page .cap-search:focus-within { border-color: var(--border-strong); }
+.fp-toolbar select { box-sizing: border-box; min-height: 34px; height: 34px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); font: inherit; font-size: 12px; line-height: normal; }
+.fp-chips { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.fp-chips button { padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.fp-chips button:hover { color: var(--text-primary); }
+.fp-chips button.active { background: var(--accent-soft); color: var(--accent-calm); font-weight: 600; }
+.fp-check { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 4px; color: var(--text-secondary); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.fp-check input { accent-color: var(--accent-tech); }
+
+/* —— 统计卡：与 .settings-stat 同构（surface-2 底 + 大数字），列数由修饰类决定 —— */
+.fp-stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0 0 14px; }
+.fp-stat-grid.cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.fp-stat-grid.cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.fp-stat { min-width: 0; display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.fp-stat > div { min-width: 0; display: grid; gap: 2px; }
+.fp-stat span { overflow: hidden; color: var(--text-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fp-stat strong { color: var(--text-primary); font-size: 20px; font-weight: 600; letter-spacing: -.02em; line-height: 1.2; }
+.fp-stat small { overflow: hidden; color: var(--text-tertiary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.fp-stat strong.text { font-size: 13px; letter-spacing: 0; white-space: nowrap; }
+.fp-stat-icon { width: 28px; height: 28px; flex: 0 0 28px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; background: var(--surface); color: var(--text-secondary); }
+.fp-stat-icon.success { background: color-mix(in srgb, var(--success) 11%, transparent); color: var(--success); }
+.fp-stat-icon.warning { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+.fp-stat-icon.danger { background: color-mix(in srgb, var(--danger) 11%, transparent); color: var(--danger); }
+.fp-stat-icon.running { background: var(--accent-soft); color: var(--accent-calm); }
+.fp-stat-icon.agent { background: color-mix(in srgb, var(--warning) 12%, transparent); color: var(--warning); }
+
+/* —— 面板：与 .settings-panel 同构；行用分隔线，不再各自成卡 —— */
+.fp-panel { min-width: 0; margin: 0 0 14px; padding: 0 20px 5px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.fp-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 -20px; padding: 16px 20px 14px; border-bottom: 1px solid var(--border); }
+.fp-panel-heading h2 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; }
+.fp-panel-heading p { margin: 0; font-size: 11.5px; color: var(--text-secondary); }
+.fp-panel-heading > small { flex: none; padding-top: 3px; color: var(--text-tertiary); font-size: 11px; }
+.fp-row { padding: 13px 0; border-bottom: 1px solid var(--border); }
+.fp-row:last-child { border-bottom: 0; }
+.fp-empty { display: grid; gap: 6px; justify-items: center; padding: 42px 16px; color: var(--text-tertiary); text-align: center; font-size: 12px; }
+.fp-empty strong { color: var(--text-secondary); font-size: 12.5px; font-weight: 600; }
+.fp-empty span { font-size: 11px; }
+.fp-hint { margin: 12px 0 0; color: var(--text-tertiary); font-size: 11px; line-height: 1.6; }
+.fp-badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 7px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-calm); font-size: 10px; font-weight: 600; white-space: nowrap; }
+.fp-badge.muted { background: var(--surface-2); color: var(--text-secondary); }
+
+/* —— 控件：按设置页口径统一高度与配色（作用域限定在 fp-page 内，不影响其他界面） —— */
+.fp-page :is(button, input, select, textarea) { background-image: none; border-image: none; }
+.fp-page .primary-button { min-height: 32px; height: auto; padding: 7px 12px; border: 0; border-radius: var(--r-sm); background: var(--accent-tech); color: #fff; font-size: 12px; font-weight: 500; line-height: 1.35; }
+.fp-page .primary-button:hover:not(:disabled) { opacity: .92; }
+.fp-page :is(.quick-secondary, .small-control) { min-height: 30px; height: auto; padding: 6px 9px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); font-size: 11px; font-weight: 500; line-height: 1.35; white-space: nowrap; }
+.fp-page :is(.quick-secondary, .small-control):hover { background: var(--surface-2); color: var(--text-primary); }
+.fp-page .small-control { min-height: 28px; padding: 4px 8px; }
+.fp-page .ability-menu-trigger { min-height: 30px; height: auto; padding: 6px 10px; border-radius: var(--r-sm); font-size: 11px; }
+.fp-page button:disabled { opacity: .5; cursor: not-allowed; }
+.fp-page button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent-tech) 45%, transparent); outline-offset: 2px; }
+/* 输入件与下拉聚焦改为边框变色，不再画外框；文本框的全局 none 规则特异性更高，双保险 */
+.fp-page :is(input, select, textarea):focus { border-color: var(--accent-tech); }
+.fp-page select:focus-visible { outline: none; }
+/* 开关放大到设置页尺寸，行内文字与操作按钮基线对齐 */
+.fp-page .switch-visual { width: 38px; height: 22px; padding: 3px; }
+.fp-page .switch-visual::after { width: 16px; height: 16px; }
+.fp-page .switch-row input:checked + .switch-visual::after { transform: translateX(16px); }
+
+/* —— 搜索结果行 —— */
+.fp-result { width: 100%; min-width: 0; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.fp-result-icon { display: inline-flex; color: var(--accent-tech); }
+.fp-result-copy { min-width: 0; display: grid; gap: 3px; }
+.fp-result-copy strong { overflow: hidden; color: var(--text-primary); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.fp-result-copy small { overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fp-result-copy small > * + * { margin-left: 8px; }
+.fp-result-snippet { color: var(--text-secondary); }
+.fp-result:hover .fp-result-copy strong { color: var(--accent-calm); }
+
+/* —— 会话行：三段网格（主体 / Context / 状态时间），分隔线行样式 —— */
+.fp-conv-row { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, .6fr) 100px; gap: 16px; align-items: center; padding: 13px 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text-secondary); text-align: left; }
+.fp-conv-row:last-child { border-bottom: 0; }
+.fp-conv-row:hover { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+.fp-conv-row.archived { opacity: .68; }
+.fp-conv-main, .fp-conv-title, .fp-conv-meta, .fp-conv-context, .fp-conv-status { min-width: 0; }
+.fp-conv-title { display: flex; align-items: center; gap: 7px; }
+.fp-conv-title strong { overflow: hidden; color: var(--text-primary); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.fp-dot { width: 7px; height: 7px; flex: 0 0 7px; border-radius: 50%; background: var(--text-tertiary); }
+.fp-dot.working { background: var(--accent-calm); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-calm) 14%, transparent); }
+.fp-dot.failed { background: var(--danger); }
+.fp-conv-archived { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; color: var(--text-tertiary); font-size: 10px; }
+.fp-conv-meta { display: flex; gap: 10px; margin-top: 5px; overflow: hidden; color: var(--text-tertiary); font-size: 10.5px; }
+.fp-conv-meta span { display: inline-flex; align-items: center; gap: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-conv-context, .fp-conv-status { display: grid; gap: 3px; }
+.fp-conv-context span, .fp-conv-context small, .fp-conv-status small { color: var(--text-tertiary); font-size: 10px; }
+.fp-conv-context strong { overflow: hidden; color: var(--text-secondary); font: 10.5px "JetBrains Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.fp-conv-status { text-align: right; }
+.fp-conv-status span { color: var(--text-secondary); font-size: 11px; }
+.fp-conv-status.working span { color: var(--accent-calm); }
+.fp-conv-status.failed span { color: var(--danger); }
+
+/* —— 工作区项目行 —— */
+.fp-project-row { display: flex; align-items: center; gap: 4px; }
+.fp-project-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 5px 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.fp-project-main > span:last-child { min-width: 0; display: grid; gap: 3px; }
+.fp-project-main strong { overflow: hidden; color: var(--text-primary); font-size: 12.5px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.fp-project-main small { overflow: hidden; color: var(--text-tertiary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.fp-project-row.active .fp-project-main strong { color: var(--accent-calm); }
+.fp-project-row .project-dot { flex: 0 0 7px; }
+/* item-open-folder / item-actions-trigger 全局默认隐藏（服务侧栏 hover 场景），列表行里常显更直接 */
+.fp-project-row .item-open-folder, .fp-project-row .item-actions-trigger { opacity: .75; }
+.fp-project-row .item-open-folder:hover, .fp-project-row .item-actions-trigger:hover,
+.fp-project-row .item-actions-trigger[aria-expanded="true"] { opacity: 1; }
+
+/* —— 能力 / 插件：既有子组件（cap-* / ability-* / plugin-*）在 fp 页内退化为分隔行 —— */
+.fp-page .cap-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 14px; }
+.fp-page .cap-mine-toolbar { margin: 0 0 14px; }
+.fp-page .cap-search { flex: 1 1 220px; min-width: 0; height: 34px; padding: 0 10px; border-radius: var(--r-sm); }
+.fp-page .cap-toolbar :is(.quick-secondary, .primary-button) { height: auto; min-height: 32px; padding: 7px 11px; }
+.fp-page .cap-chips { gap: 5px; }
+.fp-page .cap-chips button { height: auto; min-height: 30px; padding: 6px 10px; border-color: transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 12px; }
+.fp-page .cap-chips button:hover { background: var(--surface-2); color: var(--text-primary); }
+.fp-page .cap-chips button.active { border-color: transparent; background: var(--accent-soft); color: var(--accent-calm); font-weight: 600; }
+.fp-page .ability-select { gap: 6px; color: var(--text-tertiary); font-size: 11px; }
+.fp-page .ability-select select { box-sizing: border-box; min-height: 34px; height: 34px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); color: var(--text-secondary); font-size: 12px; line-height: normal; }
+.fp-page .settings-shell-segmented { padding: 3px; border-color: var(--border); border-radius: 9px; background: var(--surface-2); }
+.fp-page .settings-shell-segmented button { height: 28px; border-radius: 6px; }
+.fp-page .settings-shell-segmented button.active { border-color: transparent; background: var(--surface); }
+.fp-page .cap-warn-block, .fp-page .cap-error-block { border-radius: var(--r-sm); }
+.fp-page .batch-toolbar { margin: 0 0 14px; }
+/* 能力/插件页外层不再叠一档 padding，发现 Tab 内部自己的那层保留 */
+.fp-page > .capabilities-content { padding-top: 0; }
+
+/* 能力 / 插件列表维持原有卡片网格（ability-list / plugin-list 的全局样式），
+   只对卡片内的控件尺寸做设置风对齐，不改变卡片形态 */
+.fp-page .ability-list, .fp-page .plugin-list { margin-bottom: 4px; }
+/* 面板是 surface 底，卡片用画布底色区分层次，保持卡片原本在页面上的观感 */
+.fp-panel .ability-row { background: var(--canvas); }
+
+/* —— 响应式：容器查询跟设置页同一思路，按内容区宽度收 —— */
+@container fp (max-width: 900px) {
+  .fp-page { padding: 28px 24px 40px; }
+  .fp-head { flex-wrap: wrap; }
+  .fp-head-actions { padding-top: 0; }
+  .fp-stat-grid.cols-5, .fp-stat-grid.cols-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .fp-conv-row { grid-template-columns: minmax(0, 1fr) 110px; }
+  .fp-conv-context { display: none; }
+}
+@container fp (max-width: 640px) {
+  .fp-page { padding: 24px 16px 32px; }
+  .fp-stat-grid, .fp-stat-grid.cols-5, .fp-stat-grid.cols-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fp-panel { padding: 0 14px 4px; }
+  .fp-panel-heading { margin: 0 -14px; padding: 14px 14px 12px; }
+  .fp-conv-row { grid-template-columns: minmax(0, 1fr); }
+  .fp-conv-status { text-align: left; }
+  .fp-result { grid-template-columns: minmax(0, 1fr); }
+  .fp-result .fp-badge { justify-self: start; }
+  /* 窄容器下卡片网格退到单列，操作区沉到卡底（与全局 860px 媒体查询同一形态） */
+  .fp-page .ability-row { grid-template-columns: auto minmax(0, 1fr); }
+  .fp-page .ability-row-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}
+
+/* 紧凑密度：行高对齐设置页的紧凑档 */
+html[data-density="compact"] .fp-row { padding-top: 9px; padding-bottom: 9px; }
