@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { POPOVER_EDGE_MARGIN, popoverShift } from './use-popover-clamp'
+import { POPOVER_EDGE_MARGIN, popoverShift, popoverPlacement } from './use-popover-clamp'
 
 describe('popoverShift', () => {
   it('完整落在视口内时不动', () => {
@@ -25,9 +25,15 @@ describe('popoverShift', () => {
   })
 })
 
-describe('popoverShift 带容器左边界', () => {
-  it('浮层在视口内但被容器左缘裁掉时，按容器边界右移', () => {
-    // 主区从 x=60 开始、overflow 裁剪：浮层 left=20 在视口里，肉眼却缺了一块
-    expect(popoverShift({ left: 20, right: 300 }, 760, POPOVER_EDGE_MARGIN, 60)).toBe(60 + POPOVER_EDGE_MARGIN - 20)
+describe('popoverPlacement', () => {
+  const preferred = { width: 380, maxHeight: 620, upwards: true, rightAligned: true }
+  it('窄窗口同时限制宽度和高度', () => {
+    expect(popoverPlacement({ left: 200, right: 260, top: 180, bottom: 210 }, { width: 300, height: 260 }, preferred)).toEqual({ width: 284, maxHeight: 164, left: 8, up: true })
+  })
+  it('向上空间不足时翻转向下', () => {
+    expect(popoverPlacement({ left: 200, right: 260, top: 30, bottom: 60 }, { width: 900, height: 700 }, preferred)).toMatchObject({ up: false, maxHeight: 620 })
+  })
+  it('Git 顶栏向下菜单贴底时翻转向上', () => {
+    expect(popoverPlacement({ left: 800, right: 860, top: 580, bottom: 610 }, { width: 900, height: 650 }, { ...preferred, upwards: false, rightAligned: false })).toMatchObject({ up: true, left: 512, maxHeight: 564 })
   })
 })

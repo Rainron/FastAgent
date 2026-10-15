@@ -2,6 +2,7 @@ import { useKnowledgeSettings } from './hooks/use-knowledge-settings'
 import { MarkdownRenderer } from '../resource-panel/MarkdownRenderer'
 import { FileText, FolderPlus, LoaderCircle, Pencil, Plus, RefreshCw, Trash2, Unlink } from 'lucide-react'
 import { CenterDialog } from '../components/CenterDialog'
+import { MOTION_DURATIONS, usePresence } from '../motion'
 import { describePreview, describeSource, describeUnlink, entryOrigin, sourceStatusLabel, sourceStatusTone } from './kb-source-view'
 import type { AppSettings } from '../../shared/types'
 import { KB_RECALL_LIMITS } from '../../shared/knowledge-settings'
@@ -26,6 +27,10 @@ export function KnowledgeSettings({ settings, currentProjectId, onChange, onNoti
   onNavigate: (category: SettingsCategory) => void
 }) {
   const { confirmingUnlink, setConfirmingUnlink, loading, error, reload, projects, projectId, setProjectId, entries, selectedId, draft, setDraft, saving, confirmingDelete, setConfirmingDelete, sources, pending, setPending, busy, selected, save, remove, pickSource, confirmImport, refreshSource, removeSource, pick } = useKnowledgeSettings(onNotice, currentProjectId)
+  // 三个弹层关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const pendingPresence = usePresence(pending, MOTION_DURATIONS.dialogClose)
+  const draftPresence = usePresence(draft, MOTION_DURATIONS.dialogClose)
+  const unlinkPresence = usePresence(confirmingUnlink, MOTION_DURATIONS.dialogClose)
 
   return <>
   <ContextSourcesGuide active="knowledge" onNavigate={onNavigate} onNotice={onNotice} />
@@ -57,17 +62,17 @@ export function KnowledgeSettings({ settings, currentProjectId, onChange, onNoti
         <button className="small-control primary" disabled={busy || loading} onClick={() => { setDraft({ ...EMPTY_DRAFT }); setConfirmingDelete(false) }}><Plus size={13} />新增条目</button>
       </div>}
     </div>
-    {pending && <CenterDialog title="导入知识来源" subtitle="确认文件范围后开始解析与索引" busy={busy} onClose={() => setPending(null)}><div className="kb-import-preview">
+    {pendingPresence.item && <CenterDialog title="导入知识来源" subtitle="确认文件范围后开始解析与索引" busy={busy} open={!pendingPresence.closing} onClose={() => setPending(null)}><div className="kb-import-preview">
       <div className="kb-import-head">
-        <strong>{pending.path}</strong>
-        <span>{describePreview(pending)}</span>
+        <strong>{pendingPresence.item.path}</strong>
+        <span>{describePreview(pendingPresence.item)}</span>
       </div>
-      {pending.skipped.length > 0 && <ul className="kb-import-skipped">
-        {pending.skipped.map((group) => <li key={group.reason}>{group.label}：{group.count}</li>)}
+      {pendingPresence.item.skipped.length > 0 && <ul className="kb-import-skipped">
+        {pendingPresence.item.skipped.map((group) => <li key={group.reason}>{group.label}：{group.count}</li>)}
       </ul>}
       <div className="model-settings-actions">
         <button className="small-control" onClick={() => setPending(null)}>取消</button>
-        <button className="small-control primary" disabled={busy || pending.files.length === 0} onClick={() => void confirmImport()}>{busy ? '索引中' : '确认导入'}</button>
+        <button className="small-control primary" disabled={busy || pendingPresence.item.files.length === 0} onClick={() => void confirmImport()}>{busy ? '索引中' : '确认导入'}</button>
       </div>
     </div></CenterDialog>}
     {sources.length > 0 && <div className="kb-sources">
@@ -113,16 +118,16 @@ export function KnowledgeSettings({ settings, currentProjectId, onChange, onNoti
         </div>
       </div>
     }
-    {draft && <CenterDialog title={draft.id ? '编辑知识条目' : '新建知识条目'} subtitle="手动维护的内容不会被重新索引覆盖" busy={saving} onClose={() => setDraft(null)}><div className="kb-editor">
-            <input value={draft.title} onChange={(event) => setDraft({ ...draft, title: event.target.value })} placeholder="标题，如：发布流程" aria-label="标题" />
-            <textarea value={draft.content} onChange={(event) => setDraft({ ...draft, content: event.target.value })} placeholder="内容：架构说明、接口细节、流程步骤……提问相关时会自动注入" aria-label="内容" rows={12} />
+    {draftPresence.item && <CenterDialog title={draftPresence.item.id ? '编辑知识条目' : '新建知识条目'} subtitle="手动维护的内容不会被重新索引覆盖" busy={saving} open={!draftPresence.closing} onClose={() => setDraft(null)}><div className="kb-editor">
+            <input value={draftPresence.item.title} onChange={(event) => { if (draft) setDraft({ ...draft, title: event.target.value }) }} placeholder="标题，如：发布流程" aria-label="标题" />
+            <textarea value={draftPresence.item.content} onChange={(event) => { if (draft) setDraft({ ...draft, content: event.target.value }) }} placeholder="内容：架构说明、接口细节、流程步骤……提问相关时会自动注入" aria-label="内容" rows={12} />
             <div className="model-settings-actions">
               <button className="small-control" disabled={saving} onClick={() => setDraft(null)}>取消</button>
-              <button className="small-control primary" disabled={!draft.title.trim() || !draft.content.trim() || saving} onClick={() => void save()}>{saving ? '保存中' : '保存'}</button>
+              <button className="small-control primary" disabled={!draftPresence.item.title.trim() || !draftPresence.item.content.trim() || saving} onClick={() => void save()}>{saving ? '保存中' : '保存'}</button>
             </div>
           </div>
     </CenterDialog>}
-    {confirmingUnlink && <CenterDialog title="解绑知识来源？" subtitle="此操作不可撤销" busy={busy} icon={<Unlink size={16} />} onClose={() => setConfirmingUnlink(null)} footer={<><button className="approval-secondary" onClick={() => setConfirmingUnlink(null)}>取消</button><button className="approval-primary" disabled={busy} onClick={() => void removeSource(confirmingUnlink.id)}>解绑并删除条目</button></>}><p>{describeUnlink(confirmingUnlink)}</p></CenterDialog>}
+    {unlinkPresence.item && <CenterDialog title="解绑知识来源？" subtitle="此操作不可撤销" busy={busy} icon={<Unlink size={16} />} open={!unlinkPresence.closing} onClose={() => setConfirmingUnlink(null)} footer={<><button className="approval-secondary" onClick={() => setConfirmingUnlink(null)}>取消</button><button className="approval-primary" disabled={busy} onClick={() => { if (confirmingUnlink) void removeSource(confirmingUnlink.id) }}>解绑并删除条目</button></>}><p>{describeUnlink(unlinkPresence.item)}</p></CenterDialog>}
   </section>
   {projects && projects.length > 0 && <RecallPreviewPanel projects={projects} currentProjectId={projectId || currentProjectId} />}
   </>

@@ -23,6 +23,9 @@ else document.addEventListener('DOMContentLoaded', applyInitialTheme, { once: tr
 
 const api: FastAgentApi = {
   settings: {
+    getNetworkProxyState: () => ipcRenderer.invoke('settings:network-state'),
+    saveNetworkProxy: (settings) => ipcRenderer.invoke('settings:network-save', settings),
+    testNetworkProxy: (settings) => ipcRenderer.invoke('settings:network-test', settings),
     get: () => ipcRenderer.invoke('settings:get'),
     update: (patch: Partial<AppSettings>) => ipcRenderer.invoke('settings:update', patch),
     onChange: (listener) => {
@@ -286,7 +289,7 @@ const api: FastAgentApi = {
     reveal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:reveal', path),
     exists: (path: string): Promise<boolean> => ipcRenderer.invoke('workspace:exists', path),
     absolutePath: (path: string): Promise<string> => ipcRenderer.invoke('workspace:absolute-path', path),
-    openExternal: (path: string): Promise<string> => ipcRenderer.invoke('workspace:open-external', path),
+    openExternal: (path: string, expectedWorkspaceRoot?: string): Promise<string> => ipcRenderer.invoke('workspace:open-external', path, expectedWorkspaceRoot),
     openTerminal: (): Promise<string> => ipcRenderer.invoke('workspace:open-terminal'),
     delete: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('workspace:delete', path),
     move: (sources: string[], targetDir: string): Promise<Array<{ ok: true; from: string; to: string } | { ok: false; error: string }>> => ipcRenderer.invoke('workspace:move', sources, targetDir)

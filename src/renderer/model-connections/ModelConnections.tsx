@@ -6,6 +6,7 @@ import { connectionPatchFromDraft, draftFromSource, type ModelParameterDraft } f
 import { inferContextWindow } from '../../shared/model-context-windows'
 import { addModel, connectionDraft, mergeModels, selectConnectionId, type ModelConnectionFocus } from './form-state'
 import { CenterDialog } from '../components/CenterDialog'
+import { MOTION_DURATIONS, usePresence } from '../motion'
 import { ConnectionExportDialog } from './ConnectionExportDialog'
 import { ConnectionImportDialog } from './ConnectionImportDialog'
 import { DiscoveredModelsDialog } from './DiscoveredModelsDialog'
@@ -17,7 +18,8 @@ type Provider = Awaited<ReturnType<Api['providers']>>[number]
 type Login = Awaited<ReturnType<Api['startLogin']>>
 type Input = Parameters<Api['save']>[0]
 
-export function ModelConnections({ entering = false, selectedModelId, focusModel, onSelectModel, onChanged }: {
+export function ModelConnections({ entering = false, selectedModelId, focusModel, onSelectModel, onChanged, onOpenNetwork }: {
+  onOpenNetwork?: () => void
   entering?: boolean
   selectedModelId?: number | null
   onSelectModel?: (id: number) => void
@@ -32,6 +34,9 @@ export function ModelConnections({ entering = false, selectedModelId, focusModel
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
   const [archiveDialog, setArchiveDialog] = useState<'export' | 'import' | null>(null)
+  // 两个归档弹层关闭后保留一小段，让 Overlay 播完退场再卸载
+  const exportArchivePresence = usePresence(archiveDialog === 'export' ? true : null, MOTION_DURATIONS.dialogClose)
+  const importArchivePresence = usePresence(archiveDialog === 'import' ? true : null, MOTION_DURATIONS.dialogClose)
   const [notice, setNotice] = useState('')
   const changedRef = useRef(onChanged)
   changedRef.current = onChanged
@@ -73,11 +78,11 @@ export function ModelConnections({ entering = false, selectedModelId, focusModel
         </button>)}
         <button type="button" onClick={() => setAdding(true)}><Plus size={14} />添加模型服务</button>
       </nav>}
-      <ConnectionForm key={`${current?.id ?? 'new'}-${revision}-${focusModel?.modelId ?? 'none'}`} initial={current} providers={providers} entering={entering} selectedModelId={selectedModelId} focusModelId={focusModel?.modelId} onSelectModel={onSelectModel} onChanged={changed} />
+      <ConnectionForm onOpenNetwork={onOpenNetwork} key={`${current?.id ?? 'new'}-${revision}-${focusModel?.modelId ?? 'none'}`} initial={current} providers={providers} entering={entering} selectedModelId={selectedModelId} focusModelId={focusModel?.modelId} onSelectModel={onSelectModel} onChanged={changed} />
     </>}
     {notice && <p className="model-connection-notice" role="status">{notice}</p>}
-    {archiveDialog === 'export' && <ConnectionExportDialog connections={connections} providers={providers} onClose={() => setArchiveDialog(null)} onNotice={setNotice} />}
-    {archiveDialog === 'import' && <ConnectionImportDialog providers={providers} onClose={() => setArchiveDialog(null)} onNotice={setNotice} onImported={() => load()} />}
+    {exportArchivePresence.item && <ConnectionExportDialog open={!exportArchivePresence.closing} connections={connections} providers={providers} onClose={() => setArchiveDialog(null)} onNotice={setNotice} />}
+    {importArchivePresence.item && <ConnectionImportDialog open={!importArchivePresence.closing} providers={providers} onClose={() => setArchiveDialog(null)} onNotice={setNotice} onImported={() => load()} />}
   </div>
 }
 
@@ -118,7 +123,8 @@ function ConnectionModelParameters({ model, onPatch }: {
   />
 }
 
-function ConnectionForm({ initial, providers, entering, selectedModelId, focusModelId, onSelectModel, onChanged }: {
+function ConnectionForm({ initial, providers, entering, selectedModelId, focusModelId, onSelectModel, onChanged, onOpenNetwork }: {
+  onOpenNetwork?: () => void
   initial: Connection | null
   providers: Provider[]
   entering: boolean
@@ -149,6 +155,9 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, focusMo
   const [modelTests, setModelTests] = useState<Record<string, { status: 'running' | 'ok' | 'failed'; text: string }>>({})
   const [error, setError] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
+  // 「管理已添加」与「选择模型」两个弹层关闭后保留一小段，让 Overlay 播完退场再卸载
+  const managePresence = usePresence(manageOpen ? true : null, MOTION_DURATIONS.dialogClose)
+  const pickerPresence = usePresence(pickerOpen ? true : null, MOTION_DURATIONS.dialogClose)
   const loginRef = useRef<Login | null>(null)
   const focusedModelRef = useRef<HTMLLIElement | null>(null)
   loginRef.current = login
@@ -282,6 +291,7 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, focusMo
         <p>{login.status === 'success' ? login.message ?? '账号授权成功，可以选择模型。' : login.error ?? login.message ?? (login.status === 'pending' ? '已在系统浏览器打开授权页，请完成授权…' : login.status === 'cancelled' ? '已取消授权' : login.status === 'expired' ? '授权已过期，请重新登录' : '等待账号授权')}</p>
         {login.url && <p className="model-login-url">未自动打开可手动访问：{login.url}</p>}
         {login.userCode && <p>设备验证码：<strong>{login.userCode}</strong> <button type="button" className="small-control" onClick={() => void navigator.clipboard?.writeText(login.userCode!)}>复制</button></p>}
+        {login.status === 'error' && onOpenNetwork && <button type="button" className="small-control" onClick={onOpenNetwork}>检查网络代理</button>}
         {login.status === 'input-required' && login.prompt?.options && <div className="model-connection-actions">{login.prompt.options.map((option) => <button type="button" className="small-control" disabled={busy} key={option.id} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, option.id); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>{option.label}</button>)}</div>}
         {login.status === 'input-required' && <label className="model-connection-field">{login.prompt?.message ?? '输入验证码'}<input value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={login.prompt?.placeholder} /><button type="button" className="small-control" disabled={busy || (!answer.trim() && !login.prompt?.allowEmpty)} onClick={() => void run(async () => { await window.fastAgent.modelConnections.answerLogin(login.sessionId, answer); setAnswer(''); setLogin(await window.fastAgent.modelConnections.authState(login.sessionId)) })}>提交验证码</button></label>}
         {authorizing && <button type="button" className="small-control" onClick={() => void run(async () => { await window.fastAgent.modelConnections.cancelLogin(login.sessionId); setLogin({ ...login, status: 'cancelled' }) })}>取消授权</button>}
@@ -305,12 +315,13 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, focusMo
     {confirmDelete && initial && <div className="model-connection-delete" role="alert"><p>删除“{initial.name}”及其中 {initial.models.length} 个模型？历史会话会保留。</p><button type="button" className="small-control danger" disabled={busy} onClick={() => void run(async () => { await window.fastAgent.modelConnections.remove(initial.id); await onChanged() })}>确认删除连接和 {initial.models.length} 个模型</button><button type="button" className="small-control" disabled={busy} onClick={() => setConfirmDelete(false)}>取消</button></div>}
     {busy && <p role="status"><LoaderCircle size={14} className="spin" />正在处理…</p>}
     {message && <p role="status">{message}</p>}
-    {error && <p className="auth-error" role="alert">{error}</p>}
-    {manageOpen && <CenterDialog
+    {error && <p className="auth-error" role="alert">{error}{mode === 'oauth' && onOpenNetwork && <button type="button" className="small-control" onClick={onOpenNetwork}>检查网络代理</button>}</p>}
+    {managePresence.item && <CenterDialog
       title="连接内模型"
       subtitle={`${models.length} 个模型 · 改动要回到表单点保存才落库`}
       icon={<SlidersHorizontal size={16} />}
       busy={busy}
+      open={!managePresence.closing}
       onClose={() => setManageOpen(false)}
       footer={<button type="button" className="approval-primary" onClick={() => setManageOpen(false)}>完成</button>}
     >
@@ -328,6 +339,6 @@ function ConnectionForm({ initial, providers, entering, selectedModelId, focusMo
       {error && <p className="auth-error" role="alert">{error}</p>}
       {message && <p role="status">{message}</p>}
     </CenterDialog>}
-    {pickerOpen && <DiscoveredModelsDialog discovered={discovered} existing={models.map((model) => model.modelId)} onClose={() => setPickerOpen(false)} onAdd={addPicked} />}
+    {pickerPresence.item && <DiscoveredModelsDialog open={!pickerPresence.closing} discovered={discovered} existing={models.map((model) => model.modelId)} onClose={() => setPickerOpen(false)} onAdd={addPicked} />}
   </div>
 }

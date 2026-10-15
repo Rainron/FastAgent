@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { motionEnabled } from './motion'
+import { motionEnabled } from './runtime'
 
 export type UnmountDecision = 'keep' | 'immediate' | 'delayed'
 
@@ -14,7 +14,8 @@ export function unmountDecision(open: boolean, mounted: boolean, duration: numbe
 
 /**
  * 条件渲染 `{open && ...}` 的动效版：open 变 false 后延迟 duration 毫秒才真正卸载，
- * 期间调用方给元素挂 closing class 播退场动画。动效偏好关闭时不延迟，避免可见的关不干净。
+ * 期间调用方给元素挂 closing class（或交给 Motion 的退场）播退场动画。
+ * 动效偏好关闭时不延迟，避免可见的关不干净。
  */
 export function useDelayedUnmount(open: boolean, duration: number): boolean {
   const [mounted, setMounted] = useState(open)

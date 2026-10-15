@@ -14,9 +14,11 @@ const SECRET_OPTIONS: Array<[BundleSecretMode, string, string]> = [
 ]
 
 /** 模型服务导出：按厂商、再按连接内模型两级勾选，并决定密钥怎么处理。 */
-export function ConnectionExportDialog({ connections, providers, onClose, onNotice }: {
+export function ConnectionExportDialog({ connections, providers, open, onClose, onNotice }: {
   connections: ModelConnectionSummary[]
   providers: ModelProviderPreset[]
+  /** 退场由 Overlay 播，调用方需要留出窗口（见调用点的 usePresence）。 */
+  open?: boolean
   onClose: () => void
   onNotice: (notice: string) => void
 }) {
@@ -62,6 +64,7 @@ export function ConnectionExportDialog({ connections, providers, onClose, onNoti
     subtitle={`已选择 ${count.entries} / ${entries.length} 个厂商 · ${count.models} 个模型`}
     icon={<Upload size={16} />}
     busy={busy}
+    open={open}
     onClose={onClose}
     footer={<>
       <button type="button" className="approval-secondary" onClick={onClose} disabled={busy}>取消</button>

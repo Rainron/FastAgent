@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { motionEnabled } from './motion'
+import { motionEnabled } from './runtime'
 import { useDelayedUnmount } from './use-delayed-unmount'
 
 /**
  * 条件渲染的退场版本，带「最后一份内容」：value 变成 null 之后再保留 duration 毫秒，
  * 这段时间里 item 仍是关闭前那份值（面板的数据、附件、选中的子代理），调用方挂 closing 播退场。
+ *
+ * 这里没有换成 Motion 的 AnimatePresence：退场壳必须是 display: contents（见 Presence.tsx 的说明），
+ * 而 Motion 的 motion.div 要生成盒子才能做 transform / opacity，用上去会改掉 shell-body 的 flex 布局。
  *
  * suppressExit：同一个位置马上有别的东西顶上（右侧从一个面板切到另一个）时不播退场、直接卸载，
  * 否则新旧两个面板会并排挤在右侧一瞬。一旦在退场中被压下，本次退场就不再恢复。

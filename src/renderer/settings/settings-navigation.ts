@@ -1,4 +1,4 @@
-export type SettingsCategory = 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor' | 'about'
+export type SettingsCategory = 'network' | 'general' | 'connection' | 'appearance' | 'models' | 'usage' | 'context' | 'permissions' | 'memory' | 'knowledge' | 'sandbox' | 'prompts' | 'storage' | 'keybindings' | 'runtime' | 'doctor' | 'about'
 export type SettingsGroup = 'workspace' | 'security' | 'about'
 
 export const settingsCategories: Array<{ key: SettingsCategory; label: string; desc: string; eyebrow: string; group?: SettingsGroup }> = [
@@ -7,6 +7,7 @@ export const settingsCategories: Array<{ key: SettingsCategory; label: string; d
   { key: 'memory', label: '记忆', desc: '让 FastAgent 记住你的偏好、项目事实和已确认的决策；你始终可以查看、编辑或清除。', eyebrow: 'LONG-TERM CONTEXT' },
   { key: 'knowledge', label: '项目知识库', desc: '存放按需检索的项目参考资料：架构说明、接口文档、流程手册。提问相关时自动注入，不占用每一轮的上下文。', eyebrow: 'PROJECT SOURCE OF TRUTH' },
   { key: 'prompts', label: '提示词', desc: '为不同工作模式补充你的工作方式。固定系统提示词始终保留，这里的内容会追加在其后。', eyebrow: 'BEHAVIOR LAYER' },
+  { key: 'network', label: '网络代理', desc: '模型请求与账号授权的代理设置及连接诊断。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },
   { key: 'general', label: '常规', desc: '启动、后台与基础行为偏好。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },
   { key: 'appearance', label: '外观', desc: '主题、强调色与界面密度。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },
   { key: 'keybindings', label: '快捷键', desc: '应用内与全局快捷键绑定。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },

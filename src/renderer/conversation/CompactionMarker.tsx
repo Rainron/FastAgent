@@ -3,7 +3,7 @@ import { ChevronRight, Minimize2 } from 'lucide-react'
 import type { CompactionHistory } from '../../shared/types'
 import { compactionDeltaLabel, compactionTriggerLabel } from './compaction-marker'
 import { formatMessageTime } from './message-time'
-import { Collapse } from '../Collapse'
+import { Collapse } from '../motion'
 
 /**
  * 会话时间线上的压缩分隔卡。

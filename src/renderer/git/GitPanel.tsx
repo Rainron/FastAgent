@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { ArrowDown, ArrowUp, GitBranch, GitMerge, GitPullRequestArrow, History, Link, Loader2, Package, Plus, RefreshCw, RefreshCcw, Send, Terminal, X } from 'lucide-react'
 import type { GitCommitDetail, GitOperationResult, GitWorkspaceState } from '../../shared/types'
+import { MOTION_DURATIONS, Overlay, usePresence } from '../motion'
 import { useEventCallback } from '../use-event-callback'
 import { GitBranchColumn } from './GitBranchColumn'
 import { GitCommitColumn } from './GitCommitColumn'
@@ -51,6 +52,11 @@ export const GitPanel = React.memo(function GitPanel(props: GitPanelProps) {
   const [prompt, setPrompt] = useState<GitPromptRequest | null>(null)
   const [pick, setPick] = useState<GitPickRequest | null>(null)
   const [stashPreview, setStashPreview] = useState<{ ref: string; patch: string } | null>(null)
+  // 四个子弹层关闭后保留最后一份，让 Overlay 播完退场再卸载（opening 动画不受影响）
+  const confirmPresence = usePresence(confirm, MOTION_DURATIONS.dialogClose)
+  const promptPresence = usePresence(prompt, MOTION_DURATIONS.dialogClose)
+  const pickPresence = usePresence(pick, MOTION_DURATIONS.dialogClose)
+  const stashPreviewPresence = usePresence(stashPreview, MOTION_DURATIONS.dialogClose)
   const [syncing, setSyncing] = useState(false)
 
   // 历史视图总要有一条提交在右栏：进来时、换分支后选中的提交不在新列表里时，都落到最新一条
@@ -303,7 +309,6 @@ export const GitPanel = React.memo(function GitPanel(props: GitPanelProps) {
     })
   })
 
-  if (!props.open) return null
   const sync = syncLabel(props.state?.sync)
   const busy = panel.busy || syncing
   const changedCount = panel.changes.staged.length + panel.changes.unstaged.length
@@ -318,9 +323,9 @@ export const GitPanel = React.memo(function GitPanel(props: GitPanelProps) {
     { key: 'remote', label: '添加远程仓库…', icon: <Link size={14} />, disabled: busy, onSelect: handleAddRemote }
   ]
 
-  return <div className="git-panel-overlay" role="dialog" aria-modal="true" aria-label="Git 面板"
-    onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) props.onClose() }}>
-    <div className="git-panel">
+  return <>
+    <Overlay open={props.open} className="git-panel-overlay" panelClassName="git-panel" label="Git 面板"
+      onBackdropPointerDown={() => { if (!busy) props.onClose() }}>
       <div className="git-panel-head">
         <GitBranchSwitcher label={headLabel(props.state)} open={branchMenuOpen} onOpenChange={setBranchMenuOpen}>
           <GitBranchColumn branches={panel.branches} remoteBranches={panel.remoteBranches} remoteInfos={panel.remoteInfos}
@@ -379,20 +384,21 @@ export const GitPanel = React.memo(function GitPanel(props: GitPanelProps) {
           ? <GitWorkingDiff active={activeChange} file={activeFile} />
           : <GitCommitDetailView detail={panel.target.kind === 'commit' ? panel.detail : null} empty={!panel.commits.length} onCopyHash={handleCopyHash} onAskModel={handleAskAboutCommit} />}
       </div>
-    </div>
-    {confirm && <GitConfirmDialog request={confirm} busy={busy} onCancel={() => setConfirm(null)} />}
-    {prompt && <GitPromptDialog request={prompt} busy={busy} onCancel={() => setPrompt(null)} />}
-    {pick && <GitPickDialog request={pick} busy={busy} onCancel={() => setPick(null)} />}
-    {stashPreview && <div className="approval-overlay" role="dialog" aria-modal="true" aria-label="stash 内容"
-      onPointerDown={(event) => { if (event.target === event.currentTarget) setStashPreview(null) }}>
-      <div className="approval-dialog git-stash-preview">
+    </Overlay>
+    {/* 面板关闭时连同弹层一起收起：原先靠早退 return null 达到同样效果 */}
+    {props.open && <>
+      {confirmPresence.item && <GitConfirmDialog request={confirmPresence.item} busy={busy} open={!confirmPresence.closing} onCancel={() => setConfirm(null)} />}
+      {promptPresence.item && <GitPromptDialog request={promptPresence.item} busy={busy} open={!promptPresence.closing} onCancel={() => setPrompt(null)} />}
+      {pickPresence.item && <GitPickDialog request={pickPresence.item} busy={busy} open={!pickPresence.closing} onCancel={() => setPick(null)} />}
+      {stashPreviewPresence.item && <Overlay open={!stashPreviewPresence.closing} panelClassName="approval-dialog git-stash-preview" label="stash 内容"
+        onBackdropPointerDown={() => setStashPreview(null)}>
         <div className="approval-header">
           <span className="approval-icon"><GitBranch size={16} /></span>
-          <div className="approval-heading"><strong>{stashPreview.ref}</strong><small>stash 内容预览</small></div>
+          <div className="approval-heading"><strong>{stashPreviewPresence.item.ref}</strong><small>stash 内容预览</small></div>
           <button className="icon-button" aria-label="关闭" title="关闭" onClick={() => setStashPreview(null)}><X size={14} /></button>
         </div>
-        <div className="approval-body"><GitDiffView patch={stashPreview.patch} empty="这条 stash 没有文本改动" /></div>
-      </div>
-    </div>}
-  </div>
+        <div className="approval-body"><GitDiffView patch={stashPreviewPresence.item.patch} empty="这条 stash 没有文本改动" /></div>
+      </Overlay>}
+    </>}
+  </>
 })

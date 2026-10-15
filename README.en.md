@@ -192,6 +192,7 @@ We are grateful to the maintainers and contributors of the following open-source
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | Local database | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | Global keyboard and mouse hooks | MIT |
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | PDF text extraction for the knowledge base | Apache-2.0 |
+| [motion](https://github.com/motiondivision/motion) | UI enter/exit and collapse animations | MIT |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | Bundled command-line toolchain | Respective licenses; included under `resources/runtime/*/licenses/` |
 
 For each bundled tool, the original license files are distributed with the packaged application where applicable. Thank you to all upstream maintainers and contributors who make this project possible.

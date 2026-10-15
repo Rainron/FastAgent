@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { applyProjectOrder, moveProjectId, shiftDirection, sortDropIndex, PROJECT_ORDER_KEY, readProjectOrder, writeProjectOrder } from './project-order'
+import type { ConversationRunState } from '../../shared/types'
+import type { CompactionStates } from '../conversation/compaction-state'
+import { activeProjectIdsFromStates, applyProjectOrder, groupProjectsByActivity, moveProjectId, moveVisibleProjectWithinGroups, shiftDirection, sortDropIndex, PROJECT_ORDER_KEY, readProjectOrder, writeProjectOrder } from './project-order'
 
 const projects = [
   { id: 'c', name: 'charlie' },
@@ -20,6 +22,31 @@ describe('侧栏项目排序', () => {
     const input = projects.slice()
     applyProjectOrder(input, ['b', 'a', 'c'])
     expect(input).toEqual(projects)
+  })
+
+  it('只把活动工作区临时提到前面，组内保持基础顺序', () => {
+    expect(groupProjectsByActivity(applyProjectOrder(projects, ['c', 'b', 'a']), new Set(['a', 'b'])).map((item) => item.id)).toEqual(['b', 'a', 'c'])
+  })
+
+  it('活动映射检查全量运行状态和压缩状态，排除暂停与终态', () => {
+    const states: ConversationRunState[] = [
+      { conversationId: 'old-running', projectId: 'a', status: 'running', hasUnreadResult: false, updatedAt: 0 },
+      { conversationId: 'waiting', projectId: 'b', status: 'waiting_user', hasUnreadResult: false, updatedAt: 0 },
+      { conversationId: 'paused', projectId: 'c', status: 'paused', hasUnreadResult: false, updatedAt: 0 },
+      { conversationId: 'idle-compaction', projectId: 'd', status: 'idle', hasUnreadResult: false, updatedAt: 0 },
+      { conversationId: 'done', projectId: 'e', status: 'completed', hasUnreadResult: false, updatedAt: 0 }
+    ]
+    const compactions: CompactionStates = {
+      'idle-compaction': { status: 'running', taskId: 'c-1', modelId: null, progress: 0, phase: '', startedAt: 0 },
+      'without-run-state': { status: 'running', taskId: 'c-2', modelId: null, progress: 0, phase: '', startedAt: 0 }
+    }
+    const ids = activeProjectIdsFromStates(states, compactions, { 'without-run-state': 'f' })
+    expect(ids).toEqual(new Set(['a', 'b', 'd', 'f']))
+  })
+
+  it('折叠列表拖动只改同组可见槽位，隐藏项与其他组不变', () => {
+    expect(moveVisibleProjectWithinGroups(['a', 'hidden', 'b', 'active'], ['a', 'b'], 'a', 2, { a: 'idle', hidden: 'idle', b: 'idle', active: 'active' })).toEqual(['b', 'hidden', 'a', 'active'])
+    expect(moveVisibleProjectWithinGroups(['a', 'b'], ['a', 'b'], 'a', 2, { a: 'idle', b: 'active' })).toBeNull()
   })
 
   it('实时换位：拖过半个身位就占到相邻项的位置', () => {

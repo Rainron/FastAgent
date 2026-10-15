@@ -10,6 +10,7 @@ import { useResponseActions } from '../ai-response/response-context'
 import { WorkspaceTree } from './WorkspaceTree'
 import { ArtifactsTree } from './ArtifactsTree'
 import { FileViewer, IMAGE_PATH_RE, MARKDOWN_PATH_RE, type FilePreviewMeta } from './FileViewer'
+import { OpenLocalFileButton } from './OpenLocalFileButton'
 
 interface ResourcePanelProps {
   workspaceRoot: string | null
@@ -132,7 +133,7 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
 
   if (previewSource) {
     return <aside className={`artifact-panel resource-panel preview-panel${maximized ? ' maximized' : ''}`} style={maximized ? undefined : { width: panelState.width, flexBasis: panelState.width }}>
-      <PreviewPane source={previewSource} maximized={maximized} onToggleMaximize={toggleMaximize} onBack={preview ? onClosePreview : onCloseFile} onClose={onClose} onNotice={onNotice} />
+      <PreviewPane source={previewSource} workspaceRoot={workspaceRoot} maximized={maximized} onToggleMaximize={toggleMaximize} onBack={preview ? onClosePreview : onCloseFile} onClose={onClose} onNotice={onNotice} />
       {!maximized && <div className="resource-resizer" onPointerDown={startResize} aria-hidden="true" />}
     </aside>
   }
@@ -164,6 +165,7 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
             </div>}
             {showWrap && <button className={`icon-button ${wrap ? 'active' : ''}`} onClick={() => setWrap((value) => !value)} aria-pressed={wrap} aria-label="自动换行" title="自动换行"><WrapText size={14} /></button>}
             {!isImage && <button className="icon-button" disabled={!previewMeta} onClick={() => actions.copyText(previewMeta?.content ?? '')} aria-label="复制文件内容" title="复制文件内容"><Copy size={14} /></button>}
+            <OpenLocalFileButton key={`${workspaceRoot}:${file.path}`} path={file.path} workspaceRoot={workspaceRoot} onNotice={onNotice} />
             <button className="icon-button" aria-label="关闭资源面板" title="关闭资源面板" onClick={onClose}><X size={16} /></button>
           </div>
         </>

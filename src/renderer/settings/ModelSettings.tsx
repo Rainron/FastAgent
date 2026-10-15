@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { Check, ChevronRight, LoaderCircle, Plug, Star } from 'lucide-react'
 import type { LocalModelSummary, ModelOption } from '../../shared/types'
 import { CenterDialog } from '../components/CenterDialog'
+import { MOTION_DURATIONS, usePresence } from '../motion'
 import { mergeModelOptions } from '../model-picker'
 import { useModelSettings } from './hooks/use-model-settings'
 import { ModelConnections } from '../model-connections/ModelConnections'
@@ -50,7 +51,8 @@ function CloudModelParameters({ model, override, onSave, onNotice }: {
   </div>
 }
 
-export function ModelSettings({ models, selectedModelId, defaultModelId, favoriteModelIds, localModels, onSelectModel, onToggleFavorite, onTestDialogue, onNotice }: {
+export function ModelSettings({ models, selectedModelId, defaultModelId, favoriteModelIds, localModels, onSelectModel, onToggleFavorite, onTestDialogue, onNotice, onOpenNetwork }: {
+  onOpenNetwork?: () => void
   models: ModelOption[]
   selectedModelId: number | null
   defaultModelId: number | null
@@ -73,6 +75,9 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
   const visibleCount = groups.reduce((total, group) => total + group.models.length, 0)
   const current = allModels.find((model) => model.id === (defaultModelId ?? selectedModelId))
   const editing = allModels.find((model) => model.id === editingModelId)
+  // 两个弹层关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const connectionsPresence = usePresence(connectionsOpen ? true : null, MOTION_DURATIONS.dialogClose)
+  const editingPresence = usePresence(editing ?? null, MOTION_DURATIONS.dialogClose)
 
   function toggleProvider(provider: string) {
     setExpandedProviders((currentProviders) => {
@@ -126,7 +131,7 @@ export function ModelSettings({ models, selectedModelId, defaultModelId, favorit
         </div>)}</div>}
       </div>
     }) : <div className="section-list-empty">{allModels.length ? '没有匹配的模型' : '还没有可用模型，请先添加模型连接'}</div>}</div>
-    {connectionsOpen && <CenterDialog title={connectionFocus ? '模型参数' : '模型连接'} subtitle={connectionFocus ? `已定位到 ${connectionFocus.modelId}` : '管理厂商账号、API Key 与连接内模型'} icon={<Plug size={16} />} onClose={closeConnections} footer={<button className="approval-primary" onClick={closeConnections}>完成</button>}><ModelConnections selectedModelId={selectedModelId} focusModel={connectionFocus} onSelectModel={onSelectModel} /></CenterDialog>}
-    {editing && <CenterDialog title={`${editing.name} · 参数`} subtitle="本地覆盖 · 清空后回落到 Provider 默认值" onClose={() => setEditingModelId(null)} footer={<button className="approval-primary" onClick={() => setEditingModelId(null)}>完成</button>}><CloudModelParameters key={editing.id} model={editing} override={overrides.get(overrideKey(editing.provider, editing.model_name))} onSave={saveOverride} onNotice={onNotice} /></CenterDialog>}
+    {connectionsPresence.item && <CenterDialog title={connectionFocus ? '模型参数' : '模型连接'} subtitle={connectionFocus ? `已定位到 ${connectionFocus.modelId}` : '管理厂商账号、API Key 与连接内模型'} icon={<Plug size={16} />} open={!connectionsPresence.closing} onClose={closeConnections} footer={<button className="approval-primary" onClick={closeConnections}>完成</button>}><ModelConnections onOpenNetwork={() => { closeConnections(); onOpenNetwork?.() }} selectedModelId={selectedModelId} focusModel={connectionFocus} onSelectModel={onSelectModel} /></CenterDialog>}
+    {editingPresence.item && <CenterDialog title={`${editingPresence.item.name} · 参数`} subtitle="本地覆盖 · 清空后回落到 Provider 默认值" open={!editingPresence.closing} onClose={() => setEditingModelId(null)} footer={<button className="approval-primary" onClick={() => setEditingModelId(null)}>完成</button>}><CloudModelParameters key={editingPresence.item.id} model={editingPresence.item} override={overrides.get(overrideKey(editingPresence.item.provider, editingPresence.item.model_name))} onSave={saveOverride} onNotice={onNotice} /></CenterDialog>}
   </section>
 }

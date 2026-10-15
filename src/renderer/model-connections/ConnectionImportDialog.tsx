@@ -8,8 +8,10 @@ import type { ArchiveEntry, ArchiveSelection } from './archive-selection'
 import { selectAll, selectedCount } from './archive-selection'
 
 /** 模型服务导入：选文件 → 预览（必要时输口令）→ 按厂商与模型两级勾选 → 落地为新连接。 */
-export function ConnectionImportDialog({ providers, onClose, onNotice, onImported }: {
+export function ConnectionImportDialog({ providers, open, onClose, onNotice, onImported }: {
   providers: ModelProviderPreset[]
+  /** 退场由 Overlay 播，调用方需要留出窗口（见调用点的 usePresence）。 */
+  open?: boolean
   onClose: () => void
   onNotice: (notice: string) => void
   onImported: () => Promise<void> | void
@@ -56,6 +58,7 @@ export function ConnectionImportDialog({ providers, onClose, onNotice, onImporte
     subtitle={path ?? '选择一个 FastAgent 模型服务归档（.json）'}
     icon={<Download size={16} />}
     busy={busy}
+    open={open}
     onClose={onClose}
     footer={<>
       <button type="button" className="approval-secondary" onClick={onClose} disabled={busy}>取消</button>

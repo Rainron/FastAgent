@@ -57,8 +57,14 @@ function App() {
     const apply = () => { root.dataset.theme = next }
     // 切主题整页交叉淡化：逐个元素做颜色过渡会先后不齐，还会让每个带 transition 的元素各算一遍。
     // 首次加载（preload 已写好 data-theme）与关闭动效时直接切。
-    if (root.dataset.theme && motionEnabled() && typeof document.startViewTransition === 'function') document.startViewTransition(apply)
-    else apply()
+    if (root.dataset.theme && motionEnabled() && typeof document.startViewTransition === 'function') {
+      // 窗口被隐藏或上一次切换还没播完时，浏览器会把过渡作废并让这几个 promise 拒绝；
+      // 切换本身（apply）照常完成，作废只是少了淡化，不该冒成未捕获错误。
+      const transition = document.startViewTransition(apply)
+      void transition.ready.catch(() => undefined)
+      void transition.finished.catch(() => undefined)
+      void transition.updateCallbackDone.catch(() => undefined)
+    } else apply()
   }, [theme])
 
   useEffect(() => {

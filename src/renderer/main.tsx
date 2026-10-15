@@ -2,6 +2,7 @@ import React, { Suspense, lazy } from 'react'
 import ReactDOM from 'react-dom/client'
 import { QuickChat } from './quick/QuickChat'
 import { RootErrorBoundary, showFatalError } from './root-error'
+import { MotionProvider } from './motion'
 import './styles.css'
 
 // 快速对话小窗与主窗口共用入口：App 只在主窗口渲染时才拉取对应 chunk，
@@ -47,13 +48,15 @@ try {
   ReactDOM.createRoot(container).render(
     <React.StrictMode>
       <RootErrorBoundary>
-        {isQuickWindow
-          ? <QuickChat />
-          : (
-            <Suspense fallback={null}>
-              <App />
-            </Suspense>
-            )}
+        <MotionProvider>
+          {isQuickWindow
+            ? <QuickChat />
+            : (
+              <Suspense fallback={null}>
+                <App />
+              </Suspense>
+              )}
+        </MotionProvider>
       </RootErrorBoundary>
     </React.StrictMode>
   )

@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check } from 'lucide-react'
-import { Copy, MoreHorizontal, RotateCw, Share2, Trash2 } from 'lucide-react'
+import { Check, Copy, MoreHorizontal, RotateCw, Share2, Trash2 } from 'lucide-react'
 import { useResponseActions } from './response-context'
 import { useDismiss } from '../use-dismiss'
 import { usePopoverClamp } from '../use-popover-clamp'
-import { useDelayedUnmount } from '../use-delayed-unmount'
-import { MOTION_DURATIONS } from '../motion'
-
+import { MOTION_DURATIONS, useDelayedUnmount } from '../motion'
 /** 常驻只留复制与重新生成，其余进「···」，避免底部堆一排按钮。 */
 export function MessageActions({ markdown, plainText, onRegenerate, onDelete, onCopyPair }: {
   /** 完整正文（Markdown 原文） */

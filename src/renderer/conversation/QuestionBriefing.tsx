@@ -1,4 +1,4 @@
-import { useHeightAnimation } from '../use-height-animation'
+import { Overlay, useHeightAnimation } from '../motion'
 import { AlertTriangle, ChevronDown } from 'lucide-react'
 import { useState, type RefObject } from 'react'
 import type { QuestionItem } from '../../shared/types'
@@ -82,20 +82,19 @@ export function BriefingPanel({ questions, drafts, answeredRequired, requiredCou
 }
 
 /** 弃用确认：居中警示弹窗。默认焦点落在「取消」，危险按钮文案明说后果。 */
-export function DiscardConfirmModal({ onCancel, onDiscard, cancelRef }: {
+export function DiscardConfirmModal({ open, onCancel, onDiscard, cancelRef }: {
+  open: boolean
   onCancel: () => void
   onDiscard: () => void
   cancelRef: RefObject<HTMLButtonElement | null>
 }) {
-  return <div className="question-discard-layer" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
-    <div className="question-discard-modal" role="alertdialog" aria-modal="true" aria-label="放弃本次确认">
-      <span className="question-discard-icon"><AlertTriangle size={16} /></span>
-      <strong className="question-discard-title">放弃本次确认？</strong>
-      <p className="question-discard-text">已填写的选择不会被保存。关闭后，Agent 将继续等待你的操作。</p>
-      <div className="question-discard-actions">
-        <button ref={cancelRef} className="question-secondary" onClick={onCancel}>取消</button>
-        <button className="question-danger" onClick={onDiscard}>放弃并关闭</button>
-      </div>
+  return <Overlay open={open} className="question-discard-layer" role="alertdialog" label="放弃本次确认" panelClassName="question-discard-modal" onBackdropPointerDown={onCancel}>
+    <span className="question-discard-icon"><AlertTriangle size={16} /></span>
+    <strong className="question-discard-title">放弃本次确认？</strong>
+    <p className="question-discard-text">已填写的选择不会被保存。关闭后，Agent 将继续等待你的操作。</p>
+    <div className="question-discard-actions">
+      <button ref={cancelRef} className="question-secondary" onClick={onCancel}>取消</button>
+      <button className="question-danger" onClick={onDiscard}>放弃并关闭</button>
     </div>
-  </div>
+  </Overlay>
 }

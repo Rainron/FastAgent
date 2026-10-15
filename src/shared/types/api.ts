@@ -27,8 +27,13 @@ import type { AppRuntimeInfo, AppSettings, ClientPreferences, DataStorageInfo, R
 import type { KbEntry, KbIndexResult, KbSource, KbSourceKind, KbSourcePreview } from './kb'
 import type { Artifact, ArtifactQuery, GitBranchInfo, GitCommitDetail, GitCommitSummary, GitIntegrationState, GitOperationResult, GitRemoteInfo, GitStashEntry, GitStatusEntry, GitWorkingChanges, GitWorkspaceState, InitProjectResult, ProjectRecord, WorkspaceFileContent, WorkspaceFileMatch, WorkspaceListing, WorkspaceSnapshot } from './workspace'
 
+import type { NetworkProxySettings, NetworkProxyState, NetworkProxyTestResult } from './network'
+
 export interface FastAgentApi {
   settings: {
+    getNetworkProxyState(): Promise<NetworkProxyState>
+    saveNetworkProxy(settings: NetworkProxySettings): Promise<NetworkProxyState>
+    testNetworkProxy(settings: NetworkProxySettings): Promise<NetworkProxyTestResult[]>
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
     onChange(listener: (settings: AppSettings) => void): () => void
@@ -419,7 +424,7 @@ export interface FastAgentApi {
     /** 把工作区内相对路径解析成绝对路径（空串表示根目录）；越界路径会 reject。 */
     absolutePath(path: string): Promise<string>
     /** 用系统默认应用打开工作区内文件/目录；成功返回空串，失败返回错误信息。 */
-    openExternal(path: string): Promise<string>
+    openExternal(path: string, expectedWorkspaceRoot?: string): Promise<string>
     /** 在项目根目录起一个系统终端窗口；成功返回空串，失败返回错误信息。 */
     openTerminal(): Promise<string>
     /** 删除工作区内文件/目录（目录递归）；成功返回 { ok: true }，失败返回错误信息。 */

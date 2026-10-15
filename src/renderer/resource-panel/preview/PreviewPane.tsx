@@ -6,6 +6,7 @@ import { computePreviewLayout, formatZoom, PREVIEW_DEVICE_ORDER, PREVIEW_DEVICES
 import { previewSubtitle } from './preview-target'
 import { usePreviewSource } from './use-preview-source'
 import { usePreviewView } from './use-preview-view'
+import { OpenLocalFileButton } from '../OpenLocalFileButton'
 
 const DEVICE_ICONS: Record<PreviewDevice, typeof Monitor> = { responsive: Scan, desktop: Monitor, tablet: Tablet, mobile: Smartphone }
 
@@ -22,6 +23,7 @@ export interface PreviewPaneSource {
 }
 
 interface PreviewPaneProps {
+  workspaceRoot: string | null
   source: PreviewPaneSource
   maximized: boolean
   onToggleMaximize: () => void
@@ -32,7 +34,7 @@ interface PreviewPaneProps {
 }
 
 /** 右栏的网页预览：标题栏（打开/最大化/关闭）+ 工具栏（预览源码/设备/缩放/刷新）+ 画布。 */
-export function PreviewPane({ source, maximized, onToggleMaximize, onBack, onClose, onNotice }: PreviewPaneProps) {
+export function PreviewPane({ source, workspaceRoot, maximized, onToggleMaximize, onBack, onClose, onNotice }: PreviewPaneProps) {
   const { url, error, loading, reloadKey, reload, retry } = usePreviewSource(source)
   const { view, updateView } = usePreviewView()
   const [viewMode, setViewMode] = useState<'preview' | 'source'>('preview')
@@ -84,6 +86,7 @@ export function PreviewPane({ source, maximized, onToggleMaximize, onBack, onClo
       <div className="file-preview-actions">
         <button className="icon-button" disabled={!url} onClick={() => void openExternal()} aria-label="在浏览器中打开" title="在浏览器中打开"><ExternalLink size={14} /></button>
         <button className={`icon-button ${maximized ? 'active' : ''}`} onClick={onToggleMaximize} aria-pressed={maximized} aria-label={maximized ? '还原' : '最大化'} title={maximized ? '还原（Esc）' : '最大化'}>{maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+        {source.path && <OpenLocalFileButton key={`${workspaceRoot}:${source.path}`} path={source.path} workspaceRoot={workspaceRoot} onNotice={onNotice} />}
         <button className="icon-button" aria-label="关闭资源面板" title="关闭资源面板" onClick={onClose}><X size={16} /></button>
       </div>
     </header>

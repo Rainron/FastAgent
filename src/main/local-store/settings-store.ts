@@ -1,3 +1,5 @@
+import { normalizeNetworkProxySettings } from '../../shared/network-settings'
+import { normalizeSidebarDisplay } from '../../shared/sidebar-display'
 import type Database from 'better-sqlite3'
 import type { AppSettings, ClientPreferences } from '../../shared/types'
 import { normalizeAttachmentPolicy } from '../../shared/attachment-policy'
@@ -18,14 +20,14 @@ export class SettingsStore {
     // sandbox 为嵌套对象，浅合并救不了缺字段的旧记录，单独归一化。
     // 上下文档位读一次收敛一次：旧库里「关了自动摘要但档位还在 auto」的组合会让整组阈值静默失效。
     const merged = { ...defaultSettings, ...stored }
-    return { ...merged, ...normalizeAttachmentPolicy(stored), ...normalizeContextSettings(migrateLegacyContextSettings(merged)), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), knowledge: normalizeKnowledgeSettings(stored.knowledge), limits: normalizeRunLimits(stored.limits), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(stored.subAgentMaxToolCalls) }
+    return { ...merged, sidebarDisplay: normalizeSidebarDisplay(stored.sidebarDisplay), networkProxy: normalizeNetworkProxySettings(stored.networkProxy), ...normalizeAttachmentPolicy(stored), ...normalizeContextSettings(migrateLegacyContextSettings(merged)), sandbox: normalizeSandboxSettings(stored.sandbox).settings, memory: normalizeMemorySettings(stored.memory), knowledge: normalizeKnowledgeSettings(stored.knowledge), limits: normalizeRunLimits(stored.limits), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(stored.subAgentMaxToolCalls) }
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const merged = { ...this.getSettings(), ...patch }
     // 写入侧只做归一（档位为准回填 autoSummary、阈值裁进区间），不再做旧记录迁移：
     // getSettings 已经迁过一次，这里再迁会把用户刚打开的开关又按回去。
-    const next = { ...merged, ...normalizeAttachmentPolicy(merged), ...normalizeContextSettings(merged), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(merged.subAgentMaxToolCalls) }
+    const next = { ...merged, sidebarDisplay: normalizeSidebarDisplay(merged.sidebarDisplay), networkProxy: normalizeNetworkProxySettings(merged.networkProxy), ...normalizeAttachmentPolicy(merged), ...normalizeContextSettings(merged), subAgentMaxToolCalls: clampSubAgentMaxToolCalls(merged.subAgentMaxToolCalls) }
     this.db.prepare(`
       INSERT INTO app_settings(key, payload, updated_at) VALUES ('global', ?, ?)
       ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at

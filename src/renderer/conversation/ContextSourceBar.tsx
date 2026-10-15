@@ -3,9 +3,7 @@ import { ChevronRight, ChevronUp, ExternalLink, Layers } from 'lucide-react'
 import type { TurnContextSource } from '../../shared/types'
 import { useResponseActions } from '../ai-response/response-context'
 import { CONTEXT_GROUP_PREVIEW, canOpenSource, groupContextSources, summarizeContextSources, visibleGroupItems, type ContextSourceGroup } from './context-sources'
-import { useScrollAnchor } from '../scroll-anchor'
-import { Collapse } from '../Collapse'
-import { useHeightAnimation } from '../use-height-animation'
+import { Collapse, useHeightAnimation, useScrollAnchor } from '../motion'
 
 /**
  * 回合级「本轮实际用了什么」：知识条目、项目规则、可选中的 Skill。

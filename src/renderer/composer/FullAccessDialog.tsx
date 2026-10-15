@@ -2,8 +2,9 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { CircleAlert, ShieldAlert, X } from 'lucide-react'
 import type { PermissionProfile } from '../../shared/permission-profiles'
+import { Overlay } from '../motion'
 
-export function FullAccessDialog({ profile, onRespond }: { profile: PermissionProfile; onRespond: (accepted: boolean) => void }) {
+export function FullAccessDialog({ profile, open = true, onRespond }: { profile: PermissionProfile; open?: boolean; onRespond: (accepted: boolean) => void }) {
   const summary = profile
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') onRespond(false) }
@@ -12,8 +13,7 @@ export function FullAccessDialog({ profile, onRespond }: { profile: PermissionPr
   }, [onRespond])
 
   // 输入区的入场动画会建立定位包含块，模态层必须脱离它才能覆盖整个窗口。
-  return createPortal(<div className="approval-overlay" role="dialog" aria-modal="true" aria-label={`启用${summary.label}`} onPointerDown={(event) => { if (event.target === event.currentTarget) onRespond(false) }}>
-    <div className="approval-dialog">
+  return createPortal(<Overlay open={open} label={`启用${summary.label}`} panelClassName="approval-dialog" onBackdropPointerDown={() => onRespond(false)}>
       <div className="approval-header">
         <span className="approval-icon doom_loop"><ShieldAlert size={16} /></span>
         <div className="approval-heading">
@@ -31,6 +31,5 @@ export function FullAccessDialog({ profile, onRespond }: { profile: PermissionPr
         <button className="approval-secondary" onClick={() => onRespond(false)}>取消</button>
         <button className="approval-primary" autoFocus onClick={() => onRespond(true)}>启用{summary.label}</button>
       </div>
-    </div>
-  </div>, document.body)
+  </Overlay>, document.body)
 }

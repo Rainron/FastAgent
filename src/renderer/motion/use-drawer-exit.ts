@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
-import { MOTION_DURATIONS, motionEnabled } from './motion'
+import { MOTION_DURATIONS } from './tokens'
+import { motionEnabled } from './runtime'
 
 /**
  * 抽屉内部退场：拦截 onClose（Esc / 遮罩 / 关闭按钮），先播滑出动画再真正卸载，
@@ -16,7 +17,7 @@ export function useDrawerExit(onClose: () => void, duration: number = MOTION_DUR
     if (!motionEnabled()) { onCloseRef.current(); return }
     pending.current = true
     setClosing(true)
-    // 略长于 CSS 时长，避免动画末帧被卸载截断
+    // 略长于动画时长，避免动画末帧被卸载截断
     setTimeout(() => onCloseRef.current(), duration + 40)
   }, [duration])
   return { closing, requestClose }

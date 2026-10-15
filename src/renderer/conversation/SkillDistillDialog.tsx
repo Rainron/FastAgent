@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Wand2 } from 'lucide-react'
 import type { SkillDraft } from '../../shared/types'
+import { Overlay } from '../motion'
 
 /**
  * 蒸馏草稿确认弹窗：模型出的草稿允许人工改完再落库。
  * 保存走 skills.create（装完默认停用，与导入一致），名字冲突由用户改名重试。
  */
-export function SkillDistillDialog({ draft, onClose, onSaved }: { draft: SkillDraft; onClose: () => void; onSaved: (name: string) => void }) {
+export function SkillDistillDialog({ draft, open = true, onClose, onSaved }: { draft: SkillDraft; open?: boolean; onClose: () => void; onSaved: (name: string) => void }) {
   const [name, setName] = useState(draft.name)
   const [description, setDescription] = useState(draft.description)
   const [instructions, setInstructions] = useState(draft.instructions)
@@ -37,8 +38,7 @@ export function SkillDistillDialog({ draft, onClose, onSaved }: { draft: SkillDr
     }
   }
 
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label="提炼技能">
-    <div className="approval-dialog skill-distill-dialog">
+  return <Overlay open={open} label="提炼技能" panelClassName="approval-dialog skill-distill-dialog">
       <div className="approval-header">
         <span className="approval-icon"><Wand2 size={15} /></span>
         <div className="approval-heading"><strong>提炼为技能</strong></div>
@@ -63,6 +63,5 @@ export function SkillDistillDialog({ draft, onClose, onSaved }: { draft: SkillDr
         <button className="quick-secondary" onClick={onClose}>取消</button>
         <button className="quick-secondary approval-primary" disabled={!canSave} onClick={() => void save()}>{saving ? '保存中…' : '保存技能'}</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }

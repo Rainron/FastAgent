@@ -67,6 +67,9 @@ export interface CompactionResult {
  * 而 IPC 在此之前就注册完了，按值传会永久捕获 undefined。函数与集合本身引用不变，直接传。
  */
 export interface MainContext {
+  getNetworkProxyState(): Promise<import('../shared/types').NetworkProxyState>
+  saveNetworkProxy(settings: import('../shared/types').NetworkProxySettings): Promise<import('../shared/types').NetworkProxyState>
+  testNetworkProxy(settings: import('../shared/types').NetworkProxySettings): Promise<import('../shared/types').NetworkProxyTestResult[]>
   readonly store: LocalStore
   readonly settings: AppSettings
   readonly client: ApiClient | null
@@ -147,7 +150,7 @@ export interface MainContext {
   removeArtifactsUnderPath(namespace: string, workspaceId: string, relative: string): boolean
   reportCrash(kind: CrashKind, detail: string | null, error?: { message: string; stack?: string | null; componentStack?: string | null }): void
   /** 数据目录迁移失败后的回滚：库已 close，必须重开。 */
-  reopenStore(): void
+  reopenStore(): Promise<void>
   requireClient(): ApiClient
   requireNamespace(): string
   resolveModelCredentials(modelId: number): ModelCredentials

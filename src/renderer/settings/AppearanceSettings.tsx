@@ -1,6 +1,7 @@
 import { Boxes, Check, Monitor, Moon, Sun } from 'lucide-react'
 import type { AppSettings, AppTheme } from '../../shared/types'
 import { clampSidebarTitleChars, SIDEBAR_TITLE_CHARS } from '../../shared/sidebar-title'
+import { SidebarDisplaySettings } from './SidebarDisplaySettings'
 
 const themes: Array<{ value: AppTheme; label: string; hint: string; Icon: typeof Sun }> = [
   { value: 'light', label: '浅色', hint: '明亮的纯白', Icon: Sun },
@@ -57,6 +58,7 @@ export function AppearanceSettings({ settings, theme, onThemeChange, onChange }:
         {accents.map((item) => <button key={item.value} className={`swatch${settings.accentColor === item.value ? ' on' : ''}`} style={{ '--swatch': item.swatch } as React.CSSProperties} onClick={() => onChange({ accentColor: item.value })} role="radio" aria-checked={settings.accentColor === item.value} aria-label={item.label} title={item.label}>{settings.accentColor === item.value && <Check size={11} />}</button>)}
       </div>
     </div>
+    <SidebarDisplaySettings value={settings.sidebarDisplay} onChange={(sidebarDisplay) => onChange({ sidebarDisplay })} />
     <div className="settings-row">
       <div><strong>侧栏毛玻璃</strong><span>窗口失焦或移动时透出桌面；性能优先可关闭。</span></div>
       <label className="switch-row"><input type="checkbox" checked={Boolean(settings.sidebarGlass)} onChange={(event) => onChange({ sidebarGlass: event.target.checked })} /><span className="switch-visual" aria-hidden="true" /></label>

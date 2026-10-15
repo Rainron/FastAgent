@@ -1,6 +1,5 @@
 import { memo, useEffect, useState } from 'react'
-import { useHeightAnimation } from '../../use-height-animation'
-import { alignStartIfAbove } from '../../scroll-anchor'
+import { alignStartIfAbove, useHeightAnimation } from '../../motion'
 import { Check, ChevronDown, Copy } from 'lucide-react'
 import type { CodeBlock as CodeBlockData } from '../blocks'
 import { highlightCode, isHighlightableLanguage } from '../highlight'

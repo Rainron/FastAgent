@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Collapse } from '../Collapse'
+import { Collapse } from '../motion'
 import { ChevronDown, Copy, ExternalLink, FileCode2, FileImage, FileText, FolderOpen, LoaderCircle, WrapText, X } from 'lucide-react'
 import type { Attachment } from '../../shared/types'
 import { languageFromPath } from '../ai-response/highlight'

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { AlertTriangle, Check, X } from 'lucide-react'
 import type { ApprovalDecision, ApprovalRequest, QuestionItem } from '../../shared/types'
+import { Overlay } from '../motion'
 import { OTHER_VALUE, needsBuiltinOther, normalizeOptions } from './question-options'
 import {
   draftAnswered, draftHasContent, draftToAnswer, emptyDraft, isRequired, isSelectType, navStatus,
@@ -20,9 +21,11 @@ const draftStore = new Map<string, QuestionDraft>()
 // 升级前的旧会话只存过纯文本答案，能还原就还原，避免重试时丢已有输入
 const effectiveDraft = (item: QuestionItem): QuestionDraft => draftStore.get(item.id) ?? emptyDraft()
 
-export function QuestionDialog({ request, questions, onRespond }: {
+export function QuestionDialog({ request, questions, open = true, onRespond }: {
   request: ApprovalRequest
   questions: QuestionItem[]
+  /** 答复后的退场由 Overlay 播，调用方需要留出这段窗口。 */
+  open?: boolean
   onRespond: (decision: ApprovalDecision, answer?: string) => void
 }) {
   const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>(() => Object.fromEntries(questions.map((item) => [item.id, effectiveDraft(item)])))
@@ -227,8 +230,7 @@ export function QuestionDialog({ request, questions, onRespond }: {
   // 只有一道题时导航没有切换对象，藏掉让填写区占满
   const showNav = questions.length > 1
 
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label="Agent 需要你的确认">
-    <div className="question-dialog">
+  return <Overlay open={open} label="Agent 需要你的确认" panelClassName="question-dialog">
       <header className="question-header">
         <div className="question-header-top">
           <div className="question-header-heading">
@@ -314,12 +316,12 @@ export function QuestionDialog({ request, questions, onRespond }: {
           <button className="question-primary" aria-disabled={!allAnswered || submitting} onClick={attemptSubmit}>提交并继续</button>
         </div>
       </footer>
-    </div>
 
-    {confirmDiscard && <DiscardConfirmModal
+    {<DiscardConfirmModal
+      open={confirmDiscard}
       onCancel={() => setConfirmDiscard(false)}
       onDiscard={() => onRespond('reject')}
       cancelRef={discardCancelRef}
     />}
-  </div>
+  </Overlay>
 }

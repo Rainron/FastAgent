@@ -1,6 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { useHeightAnimation } from '../../use-height-animation'
-import { alignStartIfAbove } from '../../scroll-anchor'
+import { alignStartIfAbove, useHeightAnimation } from '../../motion'
 import { ChevronDown, Copy } from 'lucide-react'
 import type { TerminalBlock as TerminalBlockData } from '../blocks'
 import { useResponseActions } from '../response-context'

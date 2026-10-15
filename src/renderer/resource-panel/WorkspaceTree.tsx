@@ -11,7 +11,7 @@ import { selectionMentionText, selectionSummary, topLevelSelection, type TreeSel
 import { canDropInto, dropDirFor, parentPath, remapMovedPath } from './tree-drag'
 import { useTreeSelection } from './use-tree-selection'
 import { TreeSelectionBar } from './TreeSelectionBar'
-import { Collapse } from '../Collapse'
+import { Collapse, MOTION_DURATIONS, usePresence } from '../motion'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const ROW_HEIGHT = 30
@@ -74,6 +74,8 @@ export function WorkspaceTree({ workspaceRoot, conversationId, tabState, onTabSt
   const refreshTimer = useRef<number | null>(null)
   const [menu, setMenu] = useState<TreeMenuState | null>(null)
   const [pendingDelete, setPendingDelete] = useState<TreeSelectionItem[] | null>(null)
+  // 确认弹窗关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const pendingDeletePresence = usePresence(pendingDelete, MOTION_DURATIONS.dialogClose)
   const selection = useTreeSelection(scrollRef, tabState.selected)
   const multi = selection.selection
   // 拖动中的项放 ref：dragover 每秒触发几十次，读 state 会拿到旧值，也不值得为它重渲染。
@@ -549,17 +551,18 @@ export function WorkspaceTree({ workspaceRoot, conversationId, tabState, onTabSt
         <button type="button" className="danger" onClick={() => setPendingDelete(topLevelSelection(multi))} title="删除选中项"><Trash2 size={13} />删除</button>
       </TreeSelectionBar>
     )}
-    {pendingDelete && (
+    {pendingDeletePresence.item && (
       <ConfirmDialog
-        title={`删除选中的 ${pendingDelete.length} 项？`}
+        title={`删除选中的 ${pendingDeletePresence.item.length} 项？`}
         lines={[
-          `${selectionSummary(pendingDelete)}会从磁盘上删除，目录连同其中的全部内容一起删除。`,
-          ...pendingDelete.slice(0, 5).map((entry) => `· ${entry.path}${entry.kind === 'dir' ? '/' : ''}`),
-          ...(pendingDelete.length > 5 ? [`· 以及另外 ${pendingDelete.length - 5} 项`] : [])
+          `${selectionSummary(pendingDeletePresence.item)}会从磁盘上删除，目录连同其中的全部内容一起删除。`,
+          ...pendingDeletePresence.item.slice(0, 5).map((entry) => `· ${entry.path}${entry.kind === 'dir' ? '/' : ''}`),
+          ...(pendingDeletePresence.item.length > 5 ? [`· 以及另外 ${pendingDeletePresence.item.length - 5} 项`] : [])
         ]}
         confirmLabel="删除"
         danger
-        onConfirm={() => { const items = pendingDelete; setPendingDelete(null); void deleteEntries(items) }}
+        open={!pendingDeletePresence.closing}
+        onConfirm={() => { const items = pendingDeletePresence.item; if (!items) return; setPendingDelete(null); void deleteEntries(items) }}
         onCancel={() => setPendingDelete(null)}
       />
     )}

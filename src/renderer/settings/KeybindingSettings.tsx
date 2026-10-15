@@ -30,6 +30,17 @@ const composerActions: Array<{ action: InAppShortcutAction; label: string; descr
   { action: 'composerRedo', label: '输入框重做', description: '恢复被撤销的输入框修改。' }
 ]
 
+const fixedComposerActions = [
+  { keys: 'Enter', label: '发送消息', description: '发送当前输入内容。' },
+  { keys: 'Shift + Enter', label: '插入换行', description: '在输入框内换行，不发送消息。' },
+  { keys: 'Esc', label: '停止生成', description: '有任务运行时停止当前生成。' },
+  { keys: '/', label: '选择技能', description: '打开技能补全列表。' },
+  { keys: '@', label: '引用文件', description: '打开项目文件补全列表。' },
+  { keys: '!', label: '执行命令', description: '启用输入框命令后，直接在当前项目中执行 Shell 命令。' },
+  { keys: 'Tab', label: '进入目录', description: '文件补全列表打开时进入选中的目录。' },
+  { keys: '拖入文件', label: '添加附件', description: '把文件拖入消息输入框即可附加。' }
+]
+
 const ACTION_LABELS: Record<string, string> = Object.fromEntries([
   ...globalActions.map((item) => [item.action, item.label] as const),
   ...inAppActions.map((item) => [item.action, item.label] as const),
@@ -189,6 +200,10 @@ export function KeybindingSettings({ settings, onChange, onNotice }: { settings:
         current={effectiveBinding(settings.shortcuts, 'inApp', item.action)}
         onChange={(value) => updateBinding('inApp', item.action, value)}
       />
+    </div>)}
+    {fixedComposerActions.map((item) => <div className="settings-row" key={item.keys}>
+      <div><strong>{item.label}</strong><span>{item.description}</span></div>
+      <code className="settings-keybinding-keys">{item.keys}</code>
     </div>)}
 
     <div className="settings-section-heading"><div><h2>应用控制</h2><p>重启会中断正在运行的任务，动作前会再确认一次。</p></div></div>

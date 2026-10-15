@@ -108,7 +108,7 @@ export function registerAppWindowIpc(handle: IpcRegistrar, ctx: MainContext) {
       app.exit(0)
       return { moved: true }
     } catch (error) {
-      ctx.reopenStore()
+      await ctx.reopenStore()
       throw error
     }
   })

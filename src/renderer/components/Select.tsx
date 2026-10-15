@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { useDismiss } from '../use-dismiss'
-import { useDelayedUnmount } from '../use-delayed-unmount'
-import { MOTION_DURATIONS } from '../motion'
+import { MOTION_DURATIONS, useDelayedUnmount } from '../motion'
 
 /**
  * 自绘下拉框。

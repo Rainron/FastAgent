@@ -188,7 +188,7 @@ npm run package:win
 
 ## 架构
 
-主进程按「生命周期 → IPC → 领域模块」分层，渲染层按「容器组件 → hooks → 纯逻辑模块」分层，纯逻辑模块配单元测试（当前 293 个测试文件、2836 个用例）。
+主进程按「生命周期 → IPC → 领域模块」分层，渲染层按「容器组件 → hooks → 纯逻辑模块」分层，纯逻辑模块配单元测试（当前 302 个测试文件、2877 个用例）。
 
 - `src/main/` 主进程：agent 引擎（工具运行时、权限引擎、安全守卫、沙箱）、`local-store` 数据层、能力注册表
 - `src/preload/` 上下文桥接，向渲染进程暴露类型化 API
@@ -212,6 +212,7 @@ npm run package:win
 | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | 本地数据库 | MIT |
 | [uiohook-napi](https://github.com/SnosMe/uiohook-napi) | 全局键鼠钩子 | MIT |
 | [pdfjs-dist](https://github.com/mozilla/pdf.js) | 知识库读取 PDF 文本 | Apache-2.0 |
+| [motion](https://github.com/motiondivision/motion) | 界面进出场与折叠动效 | MIT |
 | ripgrep / fd / jq / 7-Zip / MinGit / Bash | 内置工具链，构建时按固定版本下载 | 各自原许可，随包落到 `resources/runtime/*/licenses/` |
 
 打包应用会在适用情况下随对应工具分发原始许可证文件。感谢所有上游维护者和贡献者，他们的工作让 FastAgent 成为可能。

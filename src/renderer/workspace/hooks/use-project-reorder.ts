@@ -1,7 +1,7 @@
 import type React from 'react'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { moveProjectId, readProjectOrder, sortDropIndex, writeProjectOrder } from '../project-order'
+import { applyProjectOrder, moveVisibleProjectWithinGroups, readProjectOrder, sortDropIndex, writeProjectOrder } from '../project-order'
 
 /** 按下后移动超过这个距离才算拖拽，否则仍是一次点击（展开/收起项目）。 */
 const DRAG_THRESHOLD = 4
@@ -31,9 +31,10 @@ export interface ProjectDragState {
  * 挪动基于列表里实际渲染的顺序（data-project-id），不另传 id 数组：显示顺序本身依赖这里的 order，
  * 由调用方再传回来会绕成循环。搜索过滤时列表不完整，调用方应传 enabled=false。
  */
-export function useProjectReorder(enabled: boolean) {
+export function useProjectReorder(enabled: boolean, projects: Array<{ id: string; name: string }>, groupById: Readonly<Record<string, string>>) {
   const [order, setOrder] = useState<string[]>(() => readProjectOrder(window.localStorage))
   const [drag, setDrag] = useState<ProjectDragState | null>(null)
+  const [dragSnapshotIds, setDragSnapshotIds] = useState<string[] | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const suppressClick = useRef(false)
   const cleanupRef = useRef<(() => void) | null>(null)
@@ -78,6 +79,9 @@ export function useProjectReorder(enabled: boolean) {
     let frame = 0
     // 以下在拖拽开始那一刻量一次，之后都按「内容坐标」（视口坐标 + 滚动量）算，滚动时不失准
     let groups: HTMLElement[] = []
+    let visibleIds: string[] = []
+    let fullIds: string[] = []
+    let dragGroup = ''
     let from = -1
     let centers: number[] = []
     let draggedCenter = 0
@@ -86,8 +90,12 @@ export function useProjectReorder(enabled: boolean) {
 
     const begin = () => {
       groups = Array.from(list.querySelectorAll<HTMLElement>('[data-project-id]'))
+      visibleIds = groups.map((group) => group.dataset.projectId ?? '')
+      setDragSnapshotIds(visibleIds)
       from = groups.findIndex((group) => group.dataset.projectId === id)
       if (from < 0) return false
+      dragGroup = groupById[id] ?? ''
+      fullIds = applyProjectOrder(projects, order).map((project) => project.id)
       dragged = groups[from]
       // 展开的项目会带一长串会话，只按项目行本身的中心比较，否则落点离指针很远
       centers = groups.map((group) => {
@@ -108,7 +116,13 @@ export function useProjectReorder(enabled: boolean) {
     const update = () => {
       const offset = pointerY - startY + (scrollTop() - startScroll)
       if (dragged) dragged.style.transform = `translateY(${offset}px)`
-      const next = sortDropIndex(centers, from, draggedCenter + offset)
+      let next = sortDropIndex(centers, from, draggedCenter + offset)
+      const candidate = next > from ? next - 1 : next
+      if (candidate >= 0 && candidate < visibleIds.length && groupById[visibleIds[candidate]] !== dragGroup) {
+        const allowed = visibleIds.map((visibleId, index) => ({ visibleId, index })).filter(({ visibleId }) => groupById[visibleId] === dragGroup)
+        const closest = allowed.reduce((best, item) => Math.abs(centers[item.index] - (draggedCenter + offset)) < Math.abs(centers[best.index] - (draggedCenter + offset)) ? item : best, allowed[0])
+        next = closest.index > from ? closest.index + 1 : closest.index
+      }
       if (next !== dropIndex) {
         dropIndex = next
         setDrag({ id, from, dropIndex })
@@ -144,7 +158,9 @@ export function useProjectReorder(enabled: boolean) {
       // 松开时浏览器会在同一个按钮上补发 click，不挡掉就会顺带把项目展开/收起
       suppressClick.current = true
       window.setTimeout(() => { suppressClick.current = false }, 0)
-      const next = commit ? moveProjectId(groups.map((group) => group.dataset.projectId ?? ''), id, dropIndex) : null
+      const visibleGroupIds = visibleIds.filter((visibleId) => groupById[visibleId] === dragGroup)
+      const scopedDropIndex = visibleIds.slice(0, dropIndex).filter((visibleId) => groupById[visibleId] === dragGroup).length
+      const next = commit ? moveVisibleProjectWithinGroups(fullIds, visibleGroupIds, id, scopedDropIndex, groupById) : null
       if (!next) {
         // 取消或落回原位：先挂上过渡再撤 transform，被拖项目沿动画回到原处，让位的项目同样滑回去
         element.classList.add('settling')
@@ -185,6 +201,7 @@ export function useProjectReorder(enabled: boolean) {
       document.body.classList.remove('project-reordering')
       cleanupRef.current = null
       setDrag(null)
+      setDragSnapshotIds(null)
     }
     cleanupRef.current = cleanup
     window.addEventListener('pointermove', move)
@@ -200,5 +217,5 @@ export function useProjectReorder(enabled: boolean) {
     event.stopPropagation()
   }
 
-  return { order, drag, listRef, onPointerDown, onClickCapture }
+  return { order, setOrder, drag, dragSnapshotIds, listRef, onPointerDown, onClickCapture }
 }

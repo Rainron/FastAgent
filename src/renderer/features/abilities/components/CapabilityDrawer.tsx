@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { X } from 'lucide-react'
-import { useDrawerExit } from '../../../use-drawer-exit'
+import { useDrawerExit } from '../../../motion'
 
 /**
  * 右侧 Drawer：创建/编辑不在主页面驻留，点开临时覆盖在内容上方。

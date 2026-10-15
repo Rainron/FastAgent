@@ -5,10 +5,12 @@ import { CenterDialog } from '../components/CenterDialog'
 import { ModelPickList } from './ModelPickList'
 
 /** 「获取模型」的结果单独开一个居中弹层：厂商动辄上百个模型，塞在表单里挑不动。 */
-export function DiscoveredModelsDialog({ discovered, existing, onClose, onAdd }: {
+export function DiscoveredModelsDialog({ discovered, existing, open, onClose, onAdd }: {
   discovered: DiscoveredConnectionModel[]
   /** 已在连接里的模型 id，列表里禁用并标「已添加」。 */
   existing: string[]
+  /** 退场由 Overlay 播，调用方需要留出窗口（见调用点的 usePresence）。 */
+  open?: boolean
   onClose: () => void
   onAdd: (models: DiscoveredConnectionModel[]) => void
 }) {
@@ -26,6 +28,7 @@ export function DiscoveredModelsDialog({ discovered, existing, onClose, onAdd }:
     subtitle={`获取到 ${discovered.length} 个模型 · 已选 ${picked.size}`}
     icon={<ListPlus size={16} />}
     busy={false}
+    open={open}
     onClose={onClose}
     footer={<>
       <button type="button" className="approval-secondary" onClick={onClose}>取消</button>

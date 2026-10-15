@@ -1,3 +1,4 @@
+import type { NetworkProxySettings } from './network'
 import type { PermissionAction } from '../permission-rules'
 import type { SandboxSettings } from '../sandbox'
 import type { AgentAbilityPolicy } from './abilities'
@@ -7,6 +8,7 @@ import type { KnowledgeSettings } from './kb'
 import type { ShellCommandSettings } from './shell-command'
 import type { ShortcutSettings } from './shortcuts'
 import type { TraceDisplaySettings } from './trace-display'
+import type { SidebarDisplaySettings } from '../sidebar-display'
 
 export interface StoredPermissionRule {
   toolKey: string
@@ -132,6 +134,8 @@ export interface RunLimits {
 }
 
 export interface AppSettings {
+  sidebarDisplay?: SidebarDisplaySettings
+  networkProxy?: NetworkProxySettings
   motionPreference: MotionPreference
   startAtLogin: boolean
   showOnStartup: boolean

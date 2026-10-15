@@ -10,7 +10,7 @@ import { ArtifactVersions } from './ArtifactVersions'
 import { continueEditPrompt } from './artifact-versions'
 import { TreeContextMenu } from './TreeContextMenu'
 import { MENU_WIDTH, menuHeight, menuPosition } from './tree-menu'
-import { Collapse } from '../Collapse'
+import { Collapse, MOTION_DURATIONS, usePresence } from '../motion'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useTreeSelection } from './use-tree-selection'
 import { TreeSelectionBar } from './TreeSelectionBar'
@@ -58,6 +58,8 @@ export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabSt
   // 与 Workspace 同一套多选：选择键是产物 id（同一路径可能被不同会话各登记一条）。
   const selection = useTreeSelection(scrollRef, tabState.selected)
   const [pendingDelete, setPendingDelete] = useState<Artifact[] | null>(null)
+  // 确认弹窗关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const pendingDeletePresence = usePresence(pendingDelete, MOTION_DURATIONS.dialogClose)
 
   // 会话标题 → 任务组名：组名优先级「会话标题」在分组逻辑里通过该回调注入。
   // 只在挂载时拉一次不够：刚建的会话查不到标题，组名会回落成工具名，
@@ -295,17 +297,18 @@ export function ArtifactsTree({ workspaceRoot, conversationId, tabState, onTabSt
         {onDisk.length > 0 && <button type="button" className="danger" onClick={() => setPendingDelete(onDisk)} title="连文件一起删除"><Trash2 size={13} />删除文件</button>}
       </TreeSelectionBar>
     )}
-    {pendingDelete && (
+    {pendingDeletePresence.item && (
       <ConfirmDialog
-        title={`删除选中的 ${pendingDelete.length} 个产物文件？`}
+        title={`删除选中的 ${pendingDeletePresence.item.length} 个产物文件？`}
         lines={[
           '文件会从磁盘上删除，产物记录随之移除。',
-          ...pendingDelete.slice(0, 5).map((artifact) => `· ${artifact.path}`),
-          ...(pendingDelete.length > 5 ? [`· 以及另外 ${pendingDelete.length - 5} 个`] : [])
+          ...pendingDeletePresence.item.slice(0, 5).map((artifact) => `· ${artifact.path}`),
+          ...(pendingDeletePresence.item.length > 5 ? [`· 以及另外 ${pendingDeletePresence.item.length - 5} 个`] : [])
         ]}
         confirmLabel="删除"
         danger
-        onConfirm={() => { const items = pendingDelete; setPendingDelete(null); void deleteMany(items) }}
+        open={!pendingDeletePresence.closing}
+        onConfirm={() => { const items = pendingDeletePresence.item; if (!items) return; setPendingDelete(null); void deleteMany(items) }}
         onCancel={() => setPendingDelete(null)}
       />
     )}

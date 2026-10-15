@@ -1,3 +1,6 @@
+import type { ConversationRunState } from '../../shared/types'
+import type { CompactionStates } from '../conversation/compaction-state'
+
 /**
  * 侧栏工作区项目的手动排序。
  *
@@ -44,6 +47,25 @@ export function applyProjectOrder<T extends OrderableProject>(projects: T[], ord
   })
 }
 
+/** 活动置顶只改变展示顺序，原顺序仍由 order 决定，任务结束即可恢复。 */
+export function groupProjectsByActivity<T extends OrderableProject>(projects: T[], activeIds: ReadonlySet<string>): T[] {
+  return [...projects.filter((project) => activeIds.has(project.id)), ...projects.filter((project) => !activeIds.has(project.id))]
+}
+
+/** 活跃判定从全量运行状态与压缩状态合并，不能依赖最近会话预览。 */
+export function activeProjectIdsFromStates(states: ConversationRunState[], compactions: CompactionStates, projectByConversationId: Readonly<Record<string, string | null>> = {}): Set<string> {
+  const active = states.filter((state) => state.status === 'running' || state.status === 'waiting_user' || compactions[state.conversationId]?.status === 'running')
+  const ids = new Set(active.map((state) => state.projectId).filter((id): id is string => Boolean(id)))
+  const knownRunIds = new Set(states.map((state) => state.conversationId))
+  for (const [conversationId, compaction] of Object.entries(compactions)) {
+    if (compaction.status === 'running' && !knownRunIds.has(conversationId)) {
+      const projectId = projectByConversationId[conversationId]
+      if (projectId) ids.add(projectId)
+    }
+  }
+  return ids
+}
+
 /**
  * 实时换位排序的落点：被拖项目行的中心离哪一项的原始中心最近，就占到那一项的位置。
  * 比「越过中线才算」更跟手——拖过半个身位就让位，和系统列表的手感一致。
@@ -79,4 +101,20 @@ export function moveProjectId(ids: string[], id: string, dropIndex: number): str
   const next = ids.filter((item) => item !== id)
   next.splice(target > from ? target - 1 : target, 0, id)
   return next
+}
+
+/** 只重排可见项所在的同组槽位，隐藏项与其他组都保留原位置。 */
+export function moveVisibleProjectWithinGroups(allIds: string[], visibleIds: string[], id: string, dropIndex: number, groupById: Readonly<Record<string, string>>): string[] | null {
+  const group = groupById[id]
+  if (!group || visibleIds.some((visibleId) => groupById[visibleId] !== group)) return null
+  const moved = moveProjectId(visibleIds, id, dropIndex)
+  if (!moved) return null
+  const groupIds = allIds.filter((item) => groupById[item] === group)
+  const visibleSet = new Set(visibleIds)
+  const replacement = new Map<string, string>()
+  let visibleIndex = 0
+  for (const item of groupIds) {
+    if (visibleSet.has(item)) replacement.set(item, moved[visibleIndex++])
+  }
+  return allIds.map((item) => replacement.get(item) ?? item)
 }

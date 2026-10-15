@@ -17,6 +17,7 @@ import {
   type PermissionProfile
 } from '../../shared/permission-profiles'
 import { CenterDialog } from '../components/CenterDialog'
+import { MOTION_DURATIONS, usePresence } from '../motion'
 import { SubAgentSettings } from './SubAgentSettings'
 
 const TOOL_KEY_LABELS: Record<LogicalToolKey, string> = {
@@ -175,6 +176,9 @@ function UserRuleForm({ onAdd, onCancel }: { onAdd: (rule: { toolKey: string; pa
 
 export function PermissionSettings({ settings, onChange }: { settings: AppSettings; onChange: (patch: Partial<AppSettings>) => void }) {
   const { busy, reload, profiles, userRules, creating, setCreating, addingUserRule, setAddingUserRule, setEditingProfileId, browsingUserRules, setBrowsingUserRules, error, bashPathDraft, setBashPathDraft, commitBashPath, pickBashExecutable, saveProfile, createProfile, removeProfile, addUserRule, removeRule, editingProfile, selectedProfile, setSelectedProfileId } = usePermissionSettings(settings, onChange)
+  // 两个弹层关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const editingProfilePresence = usePresence(editingProfile, MOTION_DURATIONS.dialogClose)
+  const userRulesPresence = usePresence(browsingUserRules ? true : null, MOTION_DURATIONS.dialogClose)
 
   return <fieldset className="settings-editable" disabled={busy}><section className="settings-panel" aria-labelledby="settings-permissions">
     <div className="settings-section-heading">
@@ -203,18 +207,19 @@ export function PermissionSettings({ settings, onChange }: { settings: AppSettin
         </div>
       </div>}
     </div>
-    {editingProfile && <CenterDialog busy={busy}
-      title={`${editingProfile.label} · 权限规则`}
-      subtitle={editingProfile.description}
+    {editingProfilePresence.item && <CenterDialog busy={busy}
+      title={`${editingProfilePresence.item.label} · 权限规则`}
+      subtitle={editingProfilePresence.item.description}
       icon={<SlidersHorizontal size={16} />}
+      open={!editingProfilePresence.closing}
       onClose={() => setEditingProfileId(null)}
       footer={<button className="approval-primary" onClick={() => setEditingProfileId(null)}>完成</button>}
     >
       {error && <p role="alert" className="settings-hint permission-form-error">{error}</p>}
       <div className="permission-profile-meta">
-        <PatternInput value={editingProfile.label} label={`${editingProfile.label} 的名称`} onCommit={(label) => saveProfile(editingProfile, { label })} />
+        <PatternInput value={editingProfilePresence.item.label} label={`${editingProfilePresence.item.label} 的名称`} onCommit={(label) => { if (editingProfile) saveProfile(editingProfile, { label }) }} />
       </div>
-      <ProfileRules profile={editingProfile} onOverridesChange={(overrides) => saveProfile(editingProfile, { overrides })} />
+      <ProfileRules profile={editingProfilePresence.item} onOverridesChange={(overrides) => { if (editingProfile) saveProfile(editingProfile, { overrides }) }} />
     </CenterDialog>}
 
   </section>
@@ -225,10 +230,11 @@ export function PermissionSettings({ settings, onChange }: { settings: AppSettin
       <div><h2>你的自定义规则</h2><p>选择「始终允许」时写入，对所有档位生效且优先级高于档位规则。</p></div>
       <button className="quick-secondary" onClick={() => setBrowsingUserRules(true)}><SlidersHorizontal size={13} />管理规则（{userRules?.length ?? 0}）</button>
     </div>
-    {browsingUserRules && <CenterDialog busy={busy}
+    {userRulesPresence.item && <CenterDialog busy={busy}
       title="你的自定义规则"
       subtitle={`${userRules?.length ?? 0} 条 · 对所有档位生效`}
       icon={<SlidersHorizontal size={16} />}
+      open={!userRulesPresence.closing}
       onClose={() => { setAddingUserRule(false); setBrowsingUserRules(false) }}
       footer={<>
         <button className="approval-secondary" onClick={() => setAddingUserRule((current) => !current)}><Plus size={13} />添加规则</button>

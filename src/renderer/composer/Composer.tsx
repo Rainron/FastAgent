@@ -1,33 +1,29 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ArrowUp, ChevronDown, FileText, ListEnd, Paperclip, Pause, Play, X } from 'lucide-react'
+import { AlertTriangle, FileText, X } from 'lucide-react'
+import { motion } from 'motion/react'
 import type { Attachment, LocalSkillRecord, PermissionPreset, WorkspaceFileMatch } from '../../shared/types'
 import { findProfile } from '../../shared/permission-profiles'
 import { parseShellCommandInput, unescapeShellCommandInput } from '../../shared/shell-command'
-import { ContextHealth } from '../conversation/ContextHealth'
 import { AttachmentImage, formatAttachmentSize, isImageAttachment } from '../conversation/AttachmentImage'
 import { activeMentionQuery, applyMention, applySlashCommand, enterMentionDirectory, filterSkills, filterSlashCommands, SLASH_COMMANDS, type MentionQuery } from '../conversation/file-mention'
 import { FileMentionMenu } from '../conversation/FileMentionMenu'
-import { GitBranchTrigger } from '../conversation/GitBranchMenu'
-import { WorkspaceMenu } from './WorkspaceMenu'
 import { createComposerHistory } from '../conversation/composer-history'
 import { createLocalStoragePromptHistory, createPromptHistory } from '../conversation/prompt-history'
 import { SkillMentionMenu } from '../conversation/SkillMentionMenu'
 import { thinkingLevelsForModel } from '../model-picker'
 import { effectiveInAppBinding, matchKeyboardBinding } from '../shortcuts'
-import { nextConversationMode } from '../workspace-actions'
 import type { WorkspaceConversation } from '../workspace/workspace-types'
 import { appendAttachments, attachmentFromFile, droppedImageCount } from './attachments'
 import { clampComposerHeight } from './composer-height'
 import type { ComposerProps } from './composer-types'
-import { useComposerDensity } from './composer-density'
-import { MOTION_DURATIONS, motionEnabled } from '../motion'
-import { ComposerOverflow, ModelSelector, PermissionSelector, ReasoningSelector } from './ComposerSelectors'
+import { useComposerLayout } from './hooks/use-composer-layout'
+import { ComposerToolbar } from './ComposerToolbar'
+import { useEventCallback } from '../use-event-callback'
+import { MOTION_DURATIONS, motionEnabled, useMotionTransition, usePresence } from '../motion'
 import { FullAccessDialog } from './FullAccessDialog'
 import { ResumeMenu } from './ResumeMenu'
 import { clearComposerDraft, isStopConversationShortcut, lineBoundary } from './composer-shortcuts'
 import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidationError, type AttachmentPolicy } from '../../shared/attachment-policy'
-
-function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
 
 /** 输入区在流式输出期间与内容无关，靠 memo + 稳定回调挡住每帧重绘。 */
 export const Composer = React.memo(function Composer({ mode, planMode, onTogglePlanMode, agentAvailable, setMode, model, selectedModelId, models, favoriteModelIds, recentModelIds, onSelectModel, thinkingLevel, onThinkingLevelChange, onToggleFavorite, permission, permissionProfiles, onPermissionChange, onOpenPermissionSettings, attachmentRequest, runId, queue, onEnqueue, onSteer, onRemoveQueued, quoteRequest, prefillRequest, onSend, onCancel, paused, onPause, onResume, contextHealth, contextPolicy, compaction, onCompact, onCancelCompaction, onOpenCompactionHistory, onNewChat, onSelectConversation, onClearConversation, onInitProject, onRunShellCommand, currentProjectId, height, heightPinned, onHeightChange, onManageModels, onNotice, shortcuts, workspace, onRevealWorkspace, onCopyWorkspacePath, onChangeWorkspace, onOpenWorkspaceTerminal, workspaceTrust, onToggleWorkspaceTrust, gitState, gitAnyRunActive, onGitCheckout, onGitCreate, onGitStopAndCheckout, onOpenGitPanel }: ComposerProps) {
@@ -97,10 +93,11 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
   // 外部编辑会话：草稿路径在窗口重新聚焦时用来读回内容
   const externalEditRef = useRef<{ path: string } | null>(null)
   const lastAttachmentRequest = useRef(attachmentRequest)
-  const modeLabel = mode === 'chat' ? 'Chat' : 'Agent'
-  const density = useComposerDensity(composerRef)
-  const levels = thinkingLevelsForModel(model)
-  const overflowed = density === 'compact' && (Boolean(permission) || levels.length > 0)
+  const layout = useComposerLayout(composerRef, { running: Boolean(runId), hasDraft: text.length > 0 || attachments.length > 0, workspace: Boolean(workspace), branch: Boolean(gitState), permission: Boolean(permission), reasoning: thinkingLevelsForModel(model).length > 0, plan: planMode })
+  const handleAttach = useEventCallback(() => fileInputRef.current?.click())
+  const handleClear = useEventCallback(clearDraft)
+  const handleSubmit = useEventCallback(() => { void submit() })
+  const handlePermission = useEventCallback(choosePermission)
 
   /** 程序化改值：先记录变更前快照（强制独立撤销点），再改值并恢复光标。 */
   function setEditorText(next: string, caret?: number) {
@@ -187,10 +184,19 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
 
   // 跟随内容长高、删内容回缩，下限由 clampComposerHeight 兜住。手动拖过之后以用户高度为准。
   useLayoutEffect(() => {
-    if (heightPinned) return
     const composer = composerRef.current
     const area = textareaRef.current
     if (!composer || !area) return
+    if (heightPinned) {
+      // 固定高度仍需容纳一行文字，否则双行工具栏会把编辑区挤到零高度。
+      const containerStyle = getComputedStyle(composer)
+      const areaStyle = getComputedStyle(area)
+      const box = (style: CSSStyleDeclaration) => ['paddingTop', 'paddingBottom', 'borderTopWidth', 'borderBottomWidth'].reduce((sum, key) => sum + (parseFloat(style[key as keyof CSSStyleDeclaration] as string) || 0), 0)
+      const minimum = layout.toolbarHeight + (composer.querySelector<HTMLElement>('.composer-top')?.offsetHeight ?? 0) + box(containerStyle) + box(areaStyle) + parseFloat(areaStyle.lineHeight)
+      const next = clampComposerHeight(Math.max(height, minimum))
+      if (next !== height) onHeightChange(next, true)
+      return
+    }
     // 输入框高度是外面给的固定值，textarea 的 scrollHeight 会被它撑住量不出真实内容高度；
     // 先把两者放开量一次自然高度，再同步还原，整段都在 layout effect 里做，用户看不到中间态。
     const composerHeightStyle = composer.style.height
@@ -202,7 +208,7 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     area.style.height = areaHeightStyle
     const next = clampComposerHeight(needed)
     if (next !== height) onHeightChange(next, false)
-  }, [text, attachments.length, heightPinned, height, onHeightChange])
+  }, [text, attachments.length, queue.length, layout.toolbarHeight, heightPinned, height, onHeightChange])
 
   useEffect(() => {
     const onResize = () => onHeightChange(clampComposerHeight(height), heightPinned)
@@ -648,7 +654,12 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     return () => window.removeEventListener('fastagent:shortcut', onShortcut)
   }, [])
 
-  return <div className="composer-wrap"><div className={`conversation-content composer${dragDepth > 0 ? ' drag' : ''}`} ref={composerRef} style={{ height }}
+  // 空会话 ↔ 有会话时输入框在整体里换了位置（居中 → 贴底），用 layout 动画把它补过去
+  const layoutTransition = useMotionTransition(MOTION_DURATIONS.newConversation)
+  // 完全访问确认弹窗：关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const fullAccessPresence = usePresence(fullPrompt, MOTION_DURATIONS.dialogClose)
+
+  return <motion.div className="composer-wrap" layout transition={layoutTransition}><div className={`conversation-content composer${dragDepth > 0 ? ' drag' : ''}`} ref={composerRef} style={{ height }}
     onDragEnter={(event) => { event.preventDefault(); setDragDepth((depth) => depth + 1) }}
     onDragOver={(event) => event.preventDefault()}
     onDragLeave={(event) => { event.preventDefault(); setDragDepth((depth) => Math.max(0, depth - 1)) }}
@@ -709,34 +720,55 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       aria-label="消息输入"
       rows={1}
     />
-    <div className="composer-toolbar">
-      <button className="toolbar-icon" onClick={() => fileInputRef.current?.click()} aria-label="添加附件" title="添加附件"><Paperclip size={16} /></button>
-      <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.pdf" hidden onChange={(event) => { addFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
-      {/* 这一轮落在哪个项目、哪个分支：和右侧的运行配置对称，左边是「在哪做」，右边是「怎么做」 */}
-      {workspace && <WorkspaceMenu name={workspace.name} path={workspace.path} compact={density === 'compact'} onReveal={onRevealWorkspace} onCopyPath={onCopyWorkspacePath} onChangeFolder={onChangeWorkspace} onOpenTerminal={onOpenWorkspaceTerminal} trust={workspaceTrust} onToggleTrust={onToggleWorkspaceTrust} />}
-      {gitState && <GitBranchTrigger state={gitState} compact={density === 'compact'} anyRunActive={gitAnyRunActive} onCheckout={onGitCheckout} onCreate={onGitCreate} onStopAndCheckout={onGitStopAndCheckout} onOpenPanel={onOpenGitPanel} />}
-      <div className="toolbar-spacer" />
-      {planMode && <button className="composer-chip plan-chip" onClick={onTogglePlanMode} title="计划模式已开启：只产出实施计划，Shift+Tab 或点击退出">Plan</button>}
-      <ContextHealth data={contextHealth} policy={contextPolicy} onCompact={onCompact} onCancelCompaction={onCancelCompaction} onOpenHistory={onOpenCompactionHistory} compaction={compaction} />
-      <button className="composer-chip mode-chip" onClick={() => agentAvailable && setMode(nextConversationMode(mode))} disabled={!agentAvailable} title={agentAvailable ? `当前模式：${modeLabel}` : '快速对话仅支持 Chat，项目会话可用 Agent'}><span className={`mode-mark ${mode}`} />{modeLabel}<ChevronDown size={13} /></button>
-      {permission && !overflowed && <PermissionSelector value={permission} profiles={permissionProfiles} onChange={choosePermission} density={density} onOpenAdvanced={onOpenPermissionSettings} />}
-      <ModelSelector model={model} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} open={pickerOpen} onOpenChange={setPickerOpen} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavorite} onManageModels={onManageModels} />
-      {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} model={model} />}
-      {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} model={model} />}
-      {(text.length > 0 || attachments.length > 0) && <button className="toolbar-icon composer-clear" onClick={clearDraft} aria-label="清除输入" title="清除输入"><X size={16} /></button>}
-      {runId ? <>
-        {Boolean(text.trim()) && <button className="send-button queue" disabled={compacting} onClick={() => void submit()} aria-label="插入当前任务" title="插入当前任务：下一步开始前生效"><ListEnd size={16} /></button>}
-        {paused
-          ? <button className="send-button" onClick={onResume} aria-label="继续执行" title="继续执行"><Play size={15} /></button>
-          : <button className="send-button pause" onClick={onPause} disabled={compactingManually} aria-label="暂停" title="暂停：当前这一步跑完后停在下一次工具调用前"><Pause size={15} /></button>}
-        <button className="send-button stop" onClick={onCancel} disabled={compactingManually} aria-label="停止生成" title="停止生成"><SquareIcon /></button>
-      </> : <button className="send-button" onClick={() => void submit()} disabled={!text.trim() || compacting} aria-label="发送" title="发送"><ArrowUp size={16} /></button>}
-    </div>
+    <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.json,.csv,.pdf" hidden onChange={(event) => { void addFiles(event.currentTarget.files); event.currentTarget.value = '' }} />
+    <ComposerToolbar
+      mode={mode}
+      planMode={planMode}
+      onTogglePlanMode={onTogglePlanMode}
+      agentAvailable={agentAvailable}
+      setMode={setMode}
+      model={model}
+      selectedModelId={selectedModelId}
+      models={models}
+      favoriteModelIds={favoriteModelIds}
+      recentModelIds={recentModelIds}
+      onSelectModel={onSelectModel}
+      thinkingLevel={thinkingLevel}
+      onThinkingLevelChange={onThinkingLevelChange}
+      onToggleFavorite={onToggleFavorite}
+      permission={permission}
+      permissionProfiles={permissionProfiles}
+      onOpenPermissionSettings={onOpenPermissionSettings}
+      runId={runId}
+      paused={paused}
+      onPause={onPause}
+      onResume={onResume}
+      onCancel={onCancel}
+      contextHealth={contextHealth}
+      contextPolicy={contextPolicy}
+      compaction={compaction}
+      onCompact={onCompact}
+      onCancelCompaction={onCancelCompaction}
+      onOpenCompactionHistory={onOpenCompactionHistory}
+      onManageModels={onManageModels}
+      workspace={workspace}
+      onRevealWorkspace={onRevealWorkspace}
+      onCopyWorkspacePath={onCopyWorkspacePath}
+      onChangeWorkspace={onChangeWorkspace}
+      onOpenWorkspaceTerminal={onOpenWorkspaceTerminal}
+      workspaceTrust={workspaceTrust}
+      onToggleWorkspaceTrust={onToggleWorkspaceTrust}
+      gitState={gitState}
+      gitAnyRunActive={gitAnyRunActive}
+      onGitCheckout={onGitCheckout}
+      onGitCreate={onGitCreate}
+      onGitStopAndCheckout={onGitStopAndCheckout}
+      onOpenGitPanel={onOpenGitPanel}
+      layout={layout} pickerOpen={pickerOpen} setPickerOpen={setPickerOpen}
+      hasDraft={text.length > 0 || attachments.length > 0} canSend={Boolean(text.trim())}
+      onAttach={handleAttach} onClear={handleClear} onSubmit={handleSubmit} onPermissionChange={handlePermission}
+    />
   </div>
-  <div className="composer-hints">
-    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 停止 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件{onRunShellCommand ? <> · <kbd>!</kbd> 执行命令</> : null} · <kbd>Tab</kbd> 进目录</span>
-    <span><kbd>Ctrl</kbd>+<kbd>G</kbd> 编辑器 · 拖入文件即可附加</span>
-  </div>
-  {fullPrompt && <FullAccessDialog profile={findProfile(permissionProfiles, fullPrompt)} onRespond={closeFullPrompt} />}
-  </div>
+  {fullAccessPresence.item && <FullAccessDialog profile={findProfile(permissionProfiles, fullAccessPresence.item)} open={!fullAccessPresence.closing} onRespond={closeFullPrompt} />}
+  </motion.div>
 })

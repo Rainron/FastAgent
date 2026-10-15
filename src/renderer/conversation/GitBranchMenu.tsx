@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, CircleAlert, GitBranch, PanelsTopLeft, Plus, X } from 'lucide-react'
 import type { GitOperationResult, GitStatusEntry, GitWorkspaceState } from '../../shared/types'
 import { syncLabel } from '../git/git-view'
+import { MOTION_DURATIONS, Overlay, usePresence } from '../motion'
 import { useDismiss } from '../use-dismiss'
 import { usePopoverClamp } from '../use-popover-clamp'
 
@@ -30,6 +31,9 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
   // 确认框与 popover 独立：请求切换时先关 popover，再按条件弹确认。
   const [confirm, setConfirm] = useState<'run' | 'dirty' | null>(null)
   const [pendingBranch, setPendingBranch] = useState<string | null>(null)
+  // 切分支确认关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const runSwitchPresence = usePresence(confirm === 'run' && pendingBranch ? pendingBranch : null, MOTION_DURATIONS.dialogClose)
+  const dirtySwitchPresence = usePresence(confirm === 'dirty' && pendingBranch ? pendingBranch : null, MOTION_DURATIONS.dialogClose)
   const [creating, setCreating] = useState(false)
   const [createName, setCreateName] = useState('')
   const [createError, setCreateError] = useState('')
@@ -162,20 +166,19 @@ export function GitBranchTrigger({ state, compact, anyRunActive, onCheckout, onC
         </>}
       </div>
     </div>}
-    {confirm === 'run' && pendingBranch && <RunSwitchDialog branch={pendingBranch} onCancel={() => { setConfirm(null); setPendingBranch(null) }} onConfirm={() => { void finishSwitch(pendingBranch, true) }} busy={busy} />}
-    {confirm === 'dirty' && pendingBranch && <DirtySwitchDialog count={state.changedFiles} branch={pendingBranch} onCancel={() => { setConfirm(null); setPendingBranch(null) }} onConfirm={() => { void finishSwitch(pendingBranch, false) }} busy={busy} />}
+    {runSwitchPresence.item && <RunSwitchDialog branch={runSwitchPresence.item} open={!runSwitchPresence.closing} onCancel={() => { setConfirm(null); setPendingBranch(null) }} onConfirm={() => { if (pendingBranch) void finishSwitch(pendingBranch, true) }} busy={busy} />}
+    {dirtySwitchPresence.item && <DirtySwitchDialog count={state.changedFiles} branch={dirtySwitchPresence.item} open={!dirtySwitchPresence.closing} onCancel={() => { setConfirm(null); setPendingBranch(null) }} onConfirm={() => { if (pendingBranch) void finishSwitch(pendingBranch, false) }} busy={busy} />}
   </div>
 }
 
 /** 运行中切换分支的确认：停止当前任务后再切换。 */
-function RunSwitchDialog({ branch, onCancel, onConfirm, busy }: { branch: string; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
+function RunSwitchDialog({ branch, open = true, onCancel, onConfirm, busy }: { branch: string; open?: boolean; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onCancel() }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onCancel, busy])
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label="切换分支" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel() }}>
-    <div className="approval-dialog">
+  return <Overlay open={open} label="切换分支" panelClassName="approval-dialog" onBackdropPointerDown={() => { if (!busy) onCancel() }}>
       <div className="approval-header">
         <span className="approval-icon doom_loop"><GitBranch size={16} /></span>
         <div className="approval-heading">
@@ -192,19 +195,17 @@ function RunSwitchDialog({ branch, onCancel, onConfirm, busy }: { branch: string
         <button className="approval-secondary" onClick={onCancel} disabled={busy}>取消</button>
         <button className="approval-primary" onClick={onConfirm} disabled={busy}>{busy ? '正在停止并切换…' : `停止任务并切换到 ${branch}`}</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }
 
 /** 脏工作区切换的确认：提示风险，但保留用户选择权（不做 stash/reset）。 */
-function DirtySwitchDialog({ count, branch, onCancel, onConfirm, busy }: { count: number; branch: string; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
+function DirtySwitchDialog({ count, branch, open = true, onCancel, onConfirm, busy }: { count: number; branch: string; open?: boolean; onCancel: () => void; onConfirm: () => void; busy: boolean }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) onCancel() }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [onCancel, busy])
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label="切换分支" onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel() }}>
-    <div className="approval-dialog">
+  return <Overlay open={open} label="切换分支" panelClassName="approval-dialog" onBackdropPointerDown={() => { if (!busy) onCancel() }}>
       <div className="approval-header">
         <span className="approval-icon doom_loop"><GitBranch size={16} /></span>
         <div className="approval-heading">
@@ -221,6 +222,5 @@ function DirtySwitchDialog({ count, branch, onCancel, onConfirm, busy }: { count
         <button className="approval-secondary" onClick={onCancel} disabled={busy}>取消</button>
         <button className="approval-primary" onClick={onConfirm} disabled={busy}>{busy ? '正在切换…' : '继续切换'}</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }

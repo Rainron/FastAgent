@@ -10,6 +10,7 @@ import { AppearanceSettings } from './AppearanceSettings'
 import { ConnectionSettings } from './ConnectionSettings'
 import { ContextSettings } from './ContextSettings'
 import { DataStorageSettings } from './DataStorageSettings'
+import { NetworkSettings } from './NetworkSettings'
 import { GeneralSettings } from './GeneralSettings'
 import { KeybindingSettings } from './KeybindingSettings'
 import { KnowledgeSettings } from './KnowledgeSettings'
@@ -56,10 +57,11 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
         {!settings && category !== 'prompts' && category !== 'models' && category !== 'about'
           ? <div className="section-list-empty">设置加载中</div>
           : <>
+            {category === 'network' && settings && <NetworkSettings settings={settings} />}
             {category === 'general' && settings && <><GeneralSettings settings={settings} onChange={onSettingsChange} /><TraceDisplaySettings settings={settings} onChange={onSettingsChange} /></>}
             {category === 'connection' && <ConnectionSettings auth={auth} onNotice={onNotice} />}
             {category === 'appearance' && settings && <AppearanceSettings settings={settings} theme={theme} onThemeChange={onThemeChange} onChange={onSettingsChange} />}
-            {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
+            {category === 'models' && <ModelSettings onOpenNetwork={() => setCategory('network')} models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
             {category === 'usage' && <><UsageSettings onNotice={onNotice} /><RunLimitSettings settings={settings} onSettingsChange={onSettingsChange} /></>}
             {category === 'context' && settings && <ContextSettings settings={settings} model={selectableModels.find((item) => item.id === selectedModelId) ?? null} onChange={onSettingsChange} />}
             {category === 'permissions' && settings && <PermissionSettings settings={settings} onChange={onSettingsChange} />}

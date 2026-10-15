@@ -2,7 +2,7 @@ import { memo, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { ExecutionSnapshot, TodoItem, TodoStatus } from '../../shared/types'
 import { formatDuration, groupTodosByPhase, todoStats } from './todo-status'
-import { Collapse } from '../Collapse'
+import { Collapse } from '../motion'
 
 /** TodoPanel 挂在当前 Agent 回合内，跟随该回合的执行状态，不再是页面级模块。 */
 export type TodoRunStatus = 'working' | 'done' | 'failed'

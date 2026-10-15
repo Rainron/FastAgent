@@ -3,8 +3,7 @@ import { ChevronRight, Diff, ExternalLink, LoaderCircle, Undo2 } from 'lucide-re
 import type { AgentFileChange } from '../../shared/types'
 import { useResponseActions } from '../ai-response/response-context'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { useScrollAnchor } from '../scroll-anchor'
-import { Collapse } from '../Collapse'
+import { Collapse, usePresence, useScrollAnchor, MOTION_DURATIONS } from '../motion'
 import { useTurnChanges } from './hooks/use-turn-changes'
 import { canRevertTurn, fileStatus, revertConfirmLines, revertNotice, sortForList, splitPath, turnChangesBreakdown, turnChangesTitle } from './turn-changes'
 
@@ -70,6 +69,8 @@ export const TurnChangesCard = React.memo(function TurnChangesCard({ turnId, onN
   const [expanded, setExpanded] = useState(false)
   const [openPaths, setOpenPaths] = useState<ReadonlySet<string>>(() => new Set())
   const [confirming, setConfirming] = useState(false)
+  // 撤销确认关闭后保留一小段，让 Overlay 播完退场再卸载
+  const confirmingPresence = usePresence(confirming ? true : null, MOTION_DURATIONS.dialogClose)
   const [reverting, setReverting] = useState(false)
   // 展开差异会把下面的内容整段推开，锚住卡片避免视口跳位
   const { ref, anchor } = useScrollAnchor<HTMLElement>()
@@ -136,6 +137,6 @@ export const TurnChangesCard = React.memo(function TurnChangesCard({ turnId, onN
         {files.map((file) => <FileRow key={file.path} file={file} turnId={turnId} open={openPaths.has(file.path)} onToggle={() => toggle(file.path)} />)}
       </div>
     </Collapse>
-    {confirming && <ConfirmDialog title="撤销这一轮的文件改动？" lines={revertConfirmLines(changes)} confirmLabel="撤销" danger onConfirm={() => void revert()} onCancel={() => setConfirming(false)} />}
+    {confirmingPresence.item && <ConfirmDialog title="撤销这一轮的文件改动？" lines={revertConfirmLines(changes)} confirmLabel="撤销" danger open={!confirmingPresence.closing} onConfirm={() => void revert()} onCancel={() => setConfirming(false)} />}
   </section>
 })

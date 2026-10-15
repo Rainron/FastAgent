@@ -6,6 +6,8 @@ import { DEFAULT_KNOWLEDGE_SETTINGS } from '../../shared/knowledge-settings'
 import { SUBAGENT_LIMITS } from '../agent/subagent/subagent-types'
 import { DEFAULT_ATTACHMENT_POLICY } from '../../shared/attachment-policy'
 import { DEFAULT_SHELL_COMMAND_SETTINGS } from '../../shared/shell-command'
+import { DEFAULT_TRACE_DISPLAY } from '../../shared/trace-display'
+import { DEFAULT_SIDEBAR_DISPLAY } from '../../shared/sidebar-display'
 
 export interface ConversationRecord {
   id: string
@@ -51,6 +53,7 @@ export const defaultSettings: AppSettings = {
   surfaceLevel: 'standard',
   bodyTextContrast: 'standard',
   sidebarGlass: false,
+  sidebarDisplay: DEFAULT_SIDEBAR_DISPLAY,
   autoSummary: true,
   contextStrategy: 'auto',
   triggerRatio: null,
@@ -64,6 +67,7 @@ export const defaultSettings: AppSettings = {
   subAgentEnabled: true,
   subAgentMaxToolCalls: SUBAGENT_LIMITS.defaultMaxToolCalls,
   memory: { enabled: true, autoExtract: true, maxRecall: DEFAULT_RECALL, extractModelId: null },
+  traceDisplay: DEFAULT_TRACE_DISPLAY,
   knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
   sandbox: defaultSandboxSettings,
   quickDialogEnabled: true,

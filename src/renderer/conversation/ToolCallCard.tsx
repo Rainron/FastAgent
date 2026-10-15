@@ -11,8 +11,7 @@ import type { TraceDiffStat, TraceToolStatus } from '../execution-trace'
 import { useTraceDisplay } from './trace-display-context'
 import { ToolReadPreview } from './ToolReadPreview'
 import { PreviewToolCard } from './PreviewToolCard'
-import { Collapse } from '../Collapse'
-import { alignStartIfAbove } from '../scroll-anchor'
+import { Collapse, alignStartIfAbove } from '../motion'
 
 const toolTitles: Record<string, string> = {
   read: '读取文件',

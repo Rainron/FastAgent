@@ -1,7 +1,8 @@
 import { DEFAULT_KNOWLEDGE_SETTINGS } from '../shared/knowledge-settings'
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeTheme, session, shell } from 'electron'
-import { EnvHttpProxyAgent, ProxyAgent, setGlobalDispatcher } from 'undici'
-import { applyOutboundProxy } from './network-proxy'
+import { NetworkProxyRuntime } from './network-proxy-runtime'
+import { normalizeNetworkProxySettings } from '../shared/network-settings'
+import type { NetworkProxySettings } from '../shared/types'
 import { homedir, hostname } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -28,6 +29,7 @@ import { hideQuickWindow, showQuickWindow } from './quick-window'
 import { createSplashWindow, destroySplashWindow, dismissSplashWindow, showSplashWindow, updateSplashWindow } from './splash-window'
 import { createRevealCoordinator, splashUpdate, SPLASH_SLOW_DELAY_MS, SPLASH_STATUS_DELAY_MS, type RevealCoordinator, type RevealReason } from './startup-progress'
 import { breadcrumb, initLogging, logAppError, logIntegrationError, writeCrashReport, type CrashKind } from './logging/logger'
+import { SIDEBAR_TITLE_CHARS } from '../shared/sidebar-title'
 import { TerminalManager } from './terminal/pty-manager'
 import { spawnPty } from './terminal/node-pty'
 import { defaultShell } from './terminal/shell'
@@ -97,6 +99,11 @@ const artifactRegistry = { get store() { return store }, notifyChanged: () => ma
 const rateLimitMonitor = new RateLimitMonitor()
 rateLimitMonitor.install()
 installRateLimitTap(rateLimitMonitor)
+const networkProxyRuntime = new NetworkProxyRuntime({
+  env: process.env,
+  resolveSystemProxy: (target) => session.defaultSession.resolveProxy(target),
+  wrap: (dispatcher) => withRateLimitTap(dispatcher, rateLimitMonitor)
+})
 rateLimitMonitor.onChange(() => {
   // 连接服务尚未就绪（启动早期）时静默跳过，下一次模型请求会再推一遍
   void Promise.resolve()
@@ -325,6 +332,7 @@ function scheduleDeferredStartupTasks() {
 
 const defaultSettings: AppSettings = {
   ...DEFAULT_ATTACHMENT_POLICY,
+  sidebarTitleChars: SIDEBAR_TITLE_CHARS.default,
   knowledge: DEFAULT_KNOWLEDGE_SETTINGS,
   motionPreference: 'system',
   startAtLogin: false,
@@ -1413,14 +1421,34 @@ async function performLogout() {
 
 /** 设置写入的唯一入口：落库、刷新模块级快照、再跑副作用（主题、开机自启、全局快捷键等）。 */
 function patchSettings(patch: Partial<AppSettings>): AppSettings {
+  if (patch.networkProxy !== undefined) throw new Error('网络代理请使用保存并应用入口')
   settings = store.updateSettings({ ...settings, ...patch })
   applySettings(settings)
   return settings
 }
 
 /** 数据目录迁移失败后的回滚：库已经 close 过，必须重开，否则后续查询全打在已关闭的句柄上。 */
-function reopenStore() {
+async function reopenStore() {
   store = new LocalStore(appPaths.databasePath)
+  settings = store.getSettings()
+  await networkProxyRuntime.apply(normalizeNetworkProxySettings(settings.networkProxy))
+  applySettings(settings)
+}
+
+function getNetworkProxyState() {
+  return networkProxyRuntime.state(normalizeNetworkProxySettings(settings.networkProxy))
+}
+
+async function saveNetworkProxy(input: NetworkProxySettings) {
+  await networkProxyRuntime.apply(input, (networkProxy) => {
+    settings = store.updateSettings({ networkProxy })
+  })
+  applySettings(settings)
+  return getNetworkProxyState()
+}
+
+function testNetworkProxy(input: NetworkProxySettings) {
+  return networkProxyRuntime.test(input)
 }
 
 /** 工作区根切换：赋值与 .git 监听重建必须同步，漏掉其一会让界面上的 Git 状态停在上一个项目。 */
@@ -1539,6 +1567,9 @@ const mainContext: MainContext = {
   liveRunConversationIds,
   lockAccount,
   patchSettings,
+  getNetworkProxyState,
+  saveNetworkProxy,
+  testNetworkProxy,
   performLogin,
   performLogout,
   pickWorkspaceRoot,
@@ -1659,15 +1690,6 @@ app.whenReady().then(async () => {
   // 尽早开窗：下面几步是同步的，会把主进程阻塞住，而启动页在自己的渲染进程里照常动。
   // 此刻还读不到设置，所以先建不显示，等主题和「启动时是否显示窗口」定下来再决定露不露。
   createSplashWindow()
-  // 出网代理要赶在第一次请求之前定下来：模型请求、OAuth 令牌交换都在主进程用 fetch 发，
-  // 而 Node 侧的 fetch 默认不走系统代理。目标地址只用来让系统 PAC 规则给出结论，全局只取这一次。
-  await applyOutboundProxy({
-    env: process.env,
-    resolveSystemProxy: () => session.defaultSession.resolveProxy('https://api.openai.com'),
-    applyEnvProxy: () => setGlobalDispatcher(withRateLimitTap(new EnvHttpProxyAgent(), rateLimitMonitor)),
-    applyProxy: (url) => setGlobalDispatcher(withRateLimitTap(new ProxyAgent(url), rateLimitMonitor)),
-    log: (message) => breadcrumb('network', message)
-  })
   pushStartupPhase('config')
   scheduleVerbosityRefresh()
   // 本地数据初始化整体兜底：任一步抛出都不能吞掉窗口创建，
@@ -1677,6 +1699,8 @@ app.whenReady().then(async () => {
     healAgentSettings(appPaths)
     writeDataRootLocator(appPaths.platformUserDataDir, appPaths.dataRoot)
     store = new LocalStore(appPaths.databasePath)
+    settings = { ...defaultSettings, ...store.getSettings() }
+    await networkProxyRuntime.apply(normalizeNetworkProxySettings(settings.networkProxy))
     modelConnectionService = new ModelConnectionService(store.modelConnections(), {
       openExternal: (url) => isExternalHttpUrl(url) ? shell.openExternal(url) : undefined,
       onChanged: broadcastModelsChanged,
@@ -1704,6 +1728,7 @@ app.whenReady().then(async () => {
     settings = { ...defaultSettings }
     logStartup('读取设置失败', error)
   }
+  await networkProxyRuntime.apply(normalizeNetworkProxySettings(settings.networkProxy))
   applySettings(settings)
   // 到这一步主题和「启动时是否显示窗口」才有定论，启动页显示与否只能推到这里判。
   if (settings.showOnStartup === false) destroySplashWindow()

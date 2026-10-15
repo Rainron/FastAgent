@@ -9,6 +9,9 @@ import type { IpcRegistrar, MainContext } from '../app-context'
 export function registerSettingsIpc(handle: IpcRegistrar, ctx: MainContext) {
   handle('preferences:get', () => ctx.store.getClientPreferences(ctx.preferenceNamespace()))
   handle('preferences:update', (_event, patch) => ctx.store.updateClientPreferences(ctx.preferenceNamespace(), patch))
+  handle('settings:network-state', () => ctx.getNetworkProxyState())
+  handle('settings:network-save', (_event, settings) => ctx.saveNetworkProxy(settings))
+  handle('settings:network-test', (_event, settings) => ctx.testNetworkProxy(settings))
   handle('settings:get', () => ctx.settings)
   handle('settings:update', (_event, patch: Partial<AppSettings>) => {
     return ctx.patchSettings(patch)

@@ -3,6 +3,7 @@ import { useMemorySettings } from './hooks/use-memory-settings'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import type { AppSettings, MemoryType, ModelOption } from '../../shared/types'
 import { CenterDialog } from '../components/CenterDialog'
+import { MOTION_DURATIONS, usePresence } from '../motion'
 import { Pagination } from '../components/Pagination'
 import { describeMemoryScope, describeMemorySource } from './memory-filter'
 import { ContextSourcesGuide } from './ContextSourcesGuide'
@@ -31,6 +32,10 @@ export function MemorySettings({ settings, models, currentProjectId, onChange, o
 }) {
   const { busy, projects, keyword, setKeyword, setPage, setPageSize, data, editingId, setEditingId, draft, setDraft, confirmingClear, setConfirmingClear, projectNames, extractModelChoices, changeFilter, startEdit, saveEdit, remove, clear, selected, clearLabel, loading, error, load, creating, setCreating, startCreate, saveCreate } = useMemorySettings(settings, models, currentProjectId, onNotice)
   const activeProjects = useMemo(() => projects.filter((project) => !project.archived), [projects])
+  // 三个弹层关闭后保留最后一份，让 Overlay 播完退场再卸载
+  const editingPresence = usePresence(editingId, MOTION_DURATIONS.dialogClose)
+  const creatingPresence = usePresence(creating, MOTION_DURATIONS.dialogClose)
+  const clearPresence = usePresence(confirmingClear ? true : null, MOTION_DURATIONS.dialogClose)
 
   return <fieldset className="settings-editable" disabled={busy}>
   <ContextSourcesGuide active="memory" onNavigate={onNavigate} onNotice={onNotice} />
@@ -87,15 +92,15 @@ export function MemorySettings({ settings, models, currentProjectId, onChange, o
       })}
     </div>}
     <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} onPageSizeChange={(size) => { setPage(1); setPageSize(size) }} />
-    {editingId && <CenterDialog busy={busy} title="编辑记忆" subtitle="修改后会影响后续相关对话的召回结果" icon={<Pencil size={16} />} onClose={() => setEditingId(null)} footer={<><button className="approval-secondary" onClick={() => setEditingId(null)}>取消</button><button className="approval-primary" disabled={!draft.trim()} onClick={() => void saveEdit()}>保存记忆</button></>}><label className="settings-inline-field"><span>记忆内容</span><textarea rows={6} value={draft} onChange={(event) => setDraft(event.target.value)} /></label></CenterDialog>}
-    {creating && <CenterDialog busy={busy} title="添加记忆" subtitle="一条写一件事；长篇背景资料请放进项目知识库" icon={<Plus size={16} />} onClose={() => setCreating(null)} footer={<><button className="approval-secondary" onClick={() => setCreating(null)}>取消</button><button className="approval-primary" disabled={!creating.content.trim() || creating.content.trim().length > MEMORY_MAX_LENGTH} onClick={() => void saveCreate()}>添加</button></>}>
+    {editingPresence.item && <CenterDialog busy={busy} title="编辑记忆" subtitle="修改后会影响后续相关对话的召回结果" icon={<Pencil size={16} />} open={!editingPresence.closing} onClose={() => setEditingId(null)} footer={<><button className="approval-secondary" onClick={() => setEditingId(null)}>取消</button><button className="approval-primary" disabled={!draft.trim()} onClick={() => void saveEdit()}>保存记忆</button></>}><label className="settings-inline-field"><span>记忆内容</span><textarea rows={6} value={draft} onChange={(event) => setDraft(event.target.value)} /></label></CenterDialog>}
+    {creatingPresence.item && <CenterDialog busy={busy} title="添加记忆" subtitle="一条写一件事；长篇背景资料请放进项目知识库" icon={<Plus size={16} />} open={!creatingPresence.closing} onClose={() => setCreating(null)} footer={<><button className="approval-secondary" onClick={() => setCreating(null)}>取消</button><button className="approval-primary" disabled={!creatingPresence.item.content.trim() || creatingPresence.item.content.trim().length > MEMORY_MAX_LENGTH} onClick={() => void saveCreate()}>添加</button></>}>
       <div className="memory-create-fields">
-        <label className="settings-inline-field"><span>类型</span><select value={creating.type} onChange={(event) => setCreating({ ...creating, type: event.target.value as MemoryType })}>{(Object.keys(TYPE_LABEL) as MemoryType[]).map((type) => <option key={type} value={type}>{TYPE_LABEL[type]}</option>)}</select></label>
-        <label className="settings-inline-field"><span>作用域</span><select value={creating.scope} onChange={(event) => setCreating({ ...creating, scope: event.target.value })}><option value="global">全局 · 所有对话</option>{activeProjects.map((project) => <option key={project.id} value={project.id}>项目 · {project.name}</option>)}</select></label>
+        <label className="settings-inline-field"><span>类型</span><select value={creatingPresence.item.type} onChange={(event) => { if (creating) setCreating({ ...creating, type: event.target.value as MemoryType }) }}>{(Object.keys(TYPE_LABEL) as MemoryType[]).map((type) => <option key={type} value={type}>{TYPE_LABEL[type]}</option>)}</select></label>
+        <label className="settings-inline-field"><span>作用域</span><select value={creatingPresence.item.scope} onChange={(event) => { if (creating) setCreating({ ...creating, scope: event.target.value }) }}><option value="global">全局 · 所有对话</option>{activeProjects.map((project) => <option key={project.id} value={project.id}>项目 · {project.name}</option>)}</select></label>
       </div>
-      <label className="settings-inline-field"><span>记忆内容<small className={`memory-create-count${creating.content.trim().length > MEMORY_MAX_LENGTH ? ' over' : ''}`}>{creating.content.trim().length}/{MEMORY_MAX_LENGTH}</small></span><textarea rows={5} autoFocus value={creating.content} placeholder={TYPE_HINT[creating.type]} onChange={(event) => setCreating({ ...creating, content: event.target.value })} /></label>
+      <label className="settings-inline-field"><span>记忆内容<small className={`memory-create-count${creatingPresence.item.content.trim().length > MEMORY_MAX_LENGTH ? ' over' : ''}`}>{creatingPresence.item.content.trim().length}/{MEMORY_MAX_LENGTH}</small></span><textarea rows={5} autoFocus value={creatingPresence.item.content} placeholder={TYPE_HINT[creatingPresence.item.type]} onChange={(event) => { if (creating) setCreating({ ...creating, content: event.target.value }) }} /></label>
     </CenterDialog>}
-    {confirmingClear && <CenterDialog busy={busy} title="清空记忆？" subtitle="此操作不可撤销，请确认删除范围" onClose={() => setConfirmingClear(false)} footer={<><button className="approval-secondary" onClick={() => setConfirmingClear(false)}>取消</button><button className="approval-primary" onClick={() => void clear()}>确认清空</button></>}><p>将永久删除{clearLabel}。搜索关键词不会缩小删除范围，对话记录不受影响。</p></CenterDialog>}
+    {clearPresence.item && <CenterDialog busy={busy} title="清空记忆？" subtitle="此操作不可撤销，请确认删除范围" open={!clearPresence.closing} onClose={() => setConfirmingClear(false)} footer={<><button className="approval-secondary" onClick={() => setConfirmingClear(false)}>取消</button><button className="approval-primary" onClick={() => void clear()}>确认清空</button></>}><p>将永久删除{clearLabel}。搜索关键词不会缩小删除范围，对话记录不受影响。</p></CenterDialog>}
   </section>
   <RecallPreviewPanel projects={activeProjects} currentProjectId={currentProjectId} />
   </fieldset>

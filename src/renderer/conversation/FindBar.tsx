@@ -1,8 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { findOccurrences, stepMatchIndex } from './find-in-text'
-import { useDelayedUnmount } from '../use-delayed-unmount'
-import { MOTION_DURATIONS } from '../motion'
+import { MOTION_DURATIONS, useDelayedUnmount } from '../motion'
 
 /** CSS Custom Highlight API 的运行时检测；不可用时退化为仅计数与跳转。 */
 const HIGHLIGHT_SUPPORTED = typeof Highlight !== 'undefined' && typeof CSS !== 'undefined' && CSS.highlights !== null

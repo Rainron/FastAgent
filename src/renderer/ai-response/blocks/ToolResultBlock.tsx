@@ -1,6 +1,5 @@
 import { memo, useState } from 'react'
-import { useHeightAnimation } from '../../use-height-animation'
-import { alignStartIfAbove } from '../../scroll-anchor'
+import { alignStartIfAbove, useHeightAnimation } from '../../motion'
 import { ChevronDown } from 'lucide-react'
 import type { ToolResultBlock as ToolResultBlockData } from '../blocks'
 

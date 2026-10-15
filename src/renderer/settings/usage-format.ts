@@ -1,10 +1,16 @@
 import type { ModelUsageDayRow, ModelUsageOverview, ModelUsageWindow } from '../../shared/types'
 
-/** 中文环境统一用「万」做单位；千位以内直接给原值，便于精确核对。 */
+/** 接近单位边界时按显示精度晋级，避免出现 1000.00K。 */
 export function formatTokenCount(value: number): string {
-  if (value < 10_000) return String(value)
-  const wan = value / 10_000
-  return `${wan >= 100 ? Math.round(wan) : Math.round(wan * 10) / 10} 万`
+  if (value < 1_000) return String(value)
+  const units = ['K', 'M', 'B']
+  let scaled = value / 1_000
+  let unit = 0
+  while (Number(scaled.toFixed(2)) >= 1_000 && unit < units.length - 1) {
+    scaled /= 1_000
+    unit += 1
+  }
+  return `${scaled.toFixed(2)}${units[unit]}`
 }
 
 export type UsageBarSegment = { key: 'input' | 'output'; tokens: number }

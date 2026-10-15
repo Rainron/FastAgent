@@ -3,15 +3,13 @@ import type { ModelUsageOverview } from '../../shared/types'
 import { axisLabelEvery, buildUsageBars, cacheHitRate, countRangeDays, dayKey, formatTokenCount, normalizeUsageRange, shiftDay, sortByTotalTokens, usageWindowSummary, windowLabel } from './usage-format'
 
 describe('formatTokenCount', () => {
-  it('万以下原样输出', () => {
-    expect(formatTokenCount(0)).toBe('0')
-    expect(formatTokenCount(9_999)).toBe('9999')
-  })
-
-  it('万以上保留一位小数并去尾零', () => {
-    expect(formatTokenCount(10_000)).toBe('1 万')
-    expect(formatTokenCount(15_400)).toBe('1.5 万')
-    expect(formatTokenCount(1_540_000)).toBe('154 万')
+  it.each([
+    [0, '0'], [999, '999'], [1_000, '1.00K'], [15_400, '15.40K'],
+    [1_000_000, '1.00M'], [1_540_000, '1.54M'],
+    [1_000_000_000, '1.00B'], [2_895_500_000, '2.90B'],
+    [999_999, '1.00M'], [999_999_999, '1.00B']
+  ])('将 %s 格式化为 %s', (value, expected) => {
+    expect(formatTokenCount(value)).toBe(expected)
   })
 })
 

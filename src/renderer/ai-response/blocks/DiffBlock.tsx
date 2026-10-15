@@ -1,6 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { useHeightAnimation } from '../../use-height-animation'
-import { alignStartIfAbove } from '../../scroll-anchor'
+import { alignStartIfAbove, useHeightAnimation } from '../../motion'
 import { ChevronDown, Copy, FileDiff } from 'lucide-react'
 import type { DiffBlock as DiffBlockData } from '../blocks'
 import { classifyDiffLine } from '../../diff-lines'

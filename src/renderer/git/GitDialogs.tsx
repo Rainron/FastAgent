@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CircleAlert, GitBranch, X } from 'lucide-react'
+import { Overlay } from '../motion'
 
 /** Esc 关闭；busy 期间不允许关，避免写操作进行到一半界面就没了。 */
 function useEscape(onCancel: () => void, busy: boolean) {
@@ -21,11 +22,10 @@ export interface GitConfirmRequest {
 }
 
 /** 破坏性 Git 操作的统一确认层，样式沿用审批弹层。 */
-export function GitConfirmDialog({ request, busy, onCancel }: { request: GitConfirmRequest; busy: boolean; onCancel: () => void }) {
+export function GitConfirmDialog({ request, busy, open = true, onCancel }: { request: GitConfirmRequest; busy: boolean; open?: boolean; onCancel: () => void }) {
   useEscape(onCancel, busy)
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label={request.title}
-    onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel() }}>
-    <div className="approval-dialog">
+  return <Overlay open={open} label={request.title} panelClassName="approval-dialog"
+    onBackdropPointerDown={() => { if (!busy) onCancel() }}>
       <div className="approval-header">
         <span className="approval-icon doom_loop"><GitBranch size={16} /></span>
         <div className="approval-heading"><strong>{request.title}</strong><small>{request.danger ? '此操作不可撤销' : 'Git 操作确认'}</small></div>
@@ -39,8 +39,7 @@ export function GitConfirmDialog({ request, busy, onCancel }: { request: GitConf
         <button className="approval-secondary" onClick={onCancel} disabled={busy}>取消</button>
         <button className="approval-primary" onClick={request.onConfirm} disabled={busy}>{busy ? '执行中…' : request.confirmLabel}</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }
 
 export interface GitPromptRequest {
@@ -58,7 +57,7 @@ export interface GitPromptRequest {
 }
 
 /** 新建 / 重命名分支、stash 备注这类需要输入一行文本的操作。 */
-export function GitPromptDialog({ request, busy, onCancel }: { request: GitPromptRequest; busy: boolean; onCancel: () => void }) {
+export function GitPromptDialog({ request, busy, open = true, onCancel }: { request: GitPromptRequest; busy: boolean; open?: boolean; onCancel: () => void }) {
   const [value, setValue] = useState(request.initialValue ?? '')
   const [second, setSecond] = useState(request.secondary?.initialValue ?? '')
   const [error, setError] = useState('')
@@ -71,9 +70,8 @@ export function GitPromptDialog({ request, busy, onCancel }: { request: GitPromp
     if (message) { setError(message); return }
     request.onSubmit(text, secondText)
   }
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label={request.title}
-    onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel() }}>
-    <div className="approval-dialog">
+  return <Overlay open={open} label={request.title} panelClassName="approval-dialog"
+    onBackdropPointerDown={() => { if (!busy) onCancel() }}>
       <div className="approval-header">
         <span className="approval-icon"><GitBranch size={16} /></span>
         <div className="approval-heading"><strong>{request.title}</strong>{request.description && <small>{request.description}</small>}</div>
@@ -99,8 +97,7 @@ export function GitPromptDialog({ request, busy, onCancel }: { request: GitPromp
         <button className="approval-primary" onClick={submit}
           disabled={busy || !value.trim() || Boolean(request.secondary && !second.trim())}>{busy ? '执行中…' : request.confirmLabel}</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }
 
 export interface GitPickRequest {
@@ -114,14 +111,13 @@ export interface GitPickRequest {
 }
 
 /** 从一组已有 ref 里挑一个（merge / rebase 目标、upstream 跟踪分支）。 */
-export function GitPickDialog({ request, busy, onCancel }: { request: GitPickRequest; busy: boolean; onCancel: () => void }) {
+export function GitPickDialog({ request, busy, open = true, onCancel }: { request: GitPickRequest; busy: boolean; open?: boolean; onCancel: () => void }) {
   const [query, setQuery] = useState('')
   useEscape(onCancel, busy)
   const searchable = request.searchable ?? true
   const hits = searchable ? request.options.filter((option) => option.toLowerCase().includes(query.trim().toLowerCase())) : request.options
-  return <div className="approval-overlay" role="dialog" aria-modal="true" aria-label={request.title}
-    onPointerDown={(event) => { if (event.target === event.currentTarget && !busy) onCancel() }}>
-    <div className="approval-dialog">
+  return <Overlay open={open} label={request.title} panelClassName="approval-dialog"
+    onBackdropPointerDown={() => { if (!busy) onCancel() }}>
       <div className="approval-header">
         <span className="approval-icon"><GitBranch size={16} /></span>
         <div className="approval-heading"><strong>{request.title}</strong>{request.description && <small>{request.description}</small>}</div>
@@ -143,6 +139,5 @@ export function GitPickDialog({ request, busy, onCancel }: { request: GitPickReq
       <div className="approval-actions">
         <button className="approval-secondary" onClick={onCancel} disabled={busy}>取消</button>
       </div>
-    </div>
-  </div>
+  </Overlay>
 }

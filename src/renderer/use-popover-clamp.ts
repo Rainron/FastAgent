@@ -9,57 +9,78 @@ export const POPOVER_EDGE_MARGIN = 8
  * 右对齐（right: 0）的浮层挂在靠左的触发器上时，整块会往左长到窗口外——开着资源面板、
  * 侧栏收起时尤其明显。浮层比视口还宽时优先保住左边：左边是标题与主按钮，右边通常是数值。
  */
-export function popoverShift(rect: { left: number; right: number }, viewportWidth: number, margin = POPOVER_EDGE_MARGIN, minLeft = 0): number {
-  if (rect.left < minLeft + margin) return Math.round(minLeft + margin - rect.left)
+export function popoverShift(rect: { left: number; right: number }, viewportWidth: number, margin = POPOVER_EDGE_MARGIN): number {
+  if (rect.left < margin) return Math.round(margin - rect.left)
   if (rect.right > viewportWidth - margin) return -Math.round(rect.right - viewportWidth + margin)
   return 0
 }
 
-/**
- * 浮层实际能显示的横向范围：视口，再与最近一个会裁剪横向溢出的祖先取交集。
- * 只夹视口不够——浮层挂在主区里时，主区的 overflow 或侧栏的层叠会把伸到侧栏上方的部分盖掉，
- * 视口测量看起来「没出屏」，肉眼却缺了一块。所以主区（`main`）本身也算一道边界。
- */
-export function horizontalBounds(el: HTMLElement): { left: number; right: number } {
-  let left = 0
-  let right = window.innerWidth
-  const main = el.closest('main')
-  if (main) {
-    const rect = main.getBoundingClientRect()
-    left = Math.max(left, rect.left)
-    right = Math.min(right, rect.right)
+export function popoverPlacement(anchor: { left: number; right: number; top: number; bottom: number }, viewport: { width: number; height: number }, preferred: { width: number; maxHeight: number; upwards: boolean; rightAligned: boolean }) {
+  const width = Math.min(preferred.width, Math.max(0, viewport.width - 16))
+  const above = Math.max(0, anchor.top - 16)
+  const below = Math.max(0, viewport.height - anchor.bottom - 16)
+  const up = preferred.upwards ? above >= Math.min(160, below) : !(below >= Math.min(160, above))
+  return {
+    width,
+    maxHeight: Math.min(preferred.maxHeight, up ? above : below),
+    left: Math.max(8, Math.min(preferred.rightAligned ? anchor.right - width : anchor.left, viewport.width - width - 8)),
+    up
   }
-  for (let node = el.parentElement; node && node !== document.body; node = node.parentElement) {
-    const overflowX = getComputedStyle(node).overflowX
-    if (overflowX === 'visible') continue
-    const rect = node.getBoundingClientRect()
-    left = Math.max(left, rect.left)
-    right = Math.min(right, rect.right)
-  }
-  return { left, right }
 }
 
-/**
- * 向上弹出的 popover（absolute 定位、无翻转逻辑）打开时测量一次，两个方向都夹回视口：
- * 纵向把 max-height 夹到「弹层底边到视口顶」的可用高度，让内容在弹层内滚动而不是出屏；
- * 横向按超出量补一个外边距，把弹层推回窗口内。
- */
+/** 使用浏览器顶层，避免输入框动画和滚动内容创建的层级遮住菜单。 */
 export function usePopoverClamp(ref: RefObject<HTMLElement | null>, open: boolean) {
   useLayoutEffect(() => {
-    const el = ref.current
-    if (!open || !el) return
-    const rect = el.getBoundingClientRect()
-    // 顶部留 12px 呼吸；下限 160px 防止极端矮窗口把弹层压成一条缝。
-    const available = Math.floor(rect.bottom - 12)
-    if (rect.top < 12 && available > 160) el.style.maxHeight = `${available}px`
-    // 每次重算前先清掉上一次的补偿，否则窗口来回缩放会把偏移累加上去。
-    el.style.marginLeft = ''
-    el.style.marginRight = ''
-    const bounds = horizontalBounds(el)
-    const shift = popoverShift(el.getBoundingClientRect(), bounds.right, POPOVER_EDGE_MARGIN, bounds.left)
-    if (!shift) return
-    // 右对齐时左边距不参与定位（left 是 auto，由 right + width 反推），只能用右边距反向推。
-    if (getComputedStyle(el).right !== 'auto') el.style.marginRight = `${-shift}px`
-    else el.style.marginLeft = `${shift}px`
+    if (!open) return
+    let frame = 0
+    let attempts = 0
+    let dispose = () => {}
+    const mount = () => {
+      const el = ref.current
+      if (!el) {
+        if (attempts++ < 5) frame = requestAnimationFrame(mount)
+        return
+      }
+      const anchor = el.parentElement
+      if (!anchor) return
+      const originalStyle = el.style.cssText
+      const originalPopover = el.getAttribute('popover')
+      const computed = getComputedStyle(el)
+      const upwards = computed.bottom !== 'auto'
+      const rightAligned = computed.right !== 'auto'
+      const preferredWidth = el.offsetWidth
+      const heightLimit = parseFloat(computed.maxHeight) || 620
+      el.setAttribute('popover', 'manual')
+      Object.assign(el.style, { position: 'fixed', inset: 'auto', margin: '0', boxSizing: 'border-box', visibility: 'visible' })
+      el.showPopover()
+      const place = () => {
+        const rect = anchor.getBoundingClientRect()
+        const { width, maxHeight, left, up } = popoverPlacement(rect, { width: window.innerWidth, height: window.innerHeight }, { width: preferredWidth, maxHeight: heightLimit, upwards, rightAligned })
+        el.style.width = `${width}px`
+        el.style.maxHeight = `${maxHeight}px`
+        el.style.left = `${left}px`
+        el.style.top = `${up ? Math.max(8, rect.top - 8 - el.offsetHeight) : rect.bottom + 8}px`
+      }
+      place()
+      const observer = new ResizeObserver(place)
+      observer.observe(el)
+      observer.observe(anchor)
+      const container = anchor.closest('.composer')
+      if (container) observer.observe(container)
+      window.addEventListener('resize', place)
+      window.addEventListener('scroll', place, true)
+      dispose = () => {
+        observer.disconnect()
+        window.removeEventListener('resize', place)
+        window.removeEventListener('scroll', place, true)
+        if (el.matches(':popover-open')) el.hidePopover()
+        if (originalPopover === null) el.removeAttribute('popover')
+        else el.setAttribute('popover', originalPopover)
+        el.style.cssText = originalStyle
+        el.style.visibility = 'hidden'
+      }
+    }
+    mount()
+    return () => { cancelAnimationFrame(frame); dispose() }
   }, [ref, open])
 }

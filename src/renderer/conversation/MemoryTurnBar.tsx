@@ -1,8 +1,7 @@
 import React, { useCallback, useState } from 'react'
 import { Brain, ChevronRight, ChevronUp, Trash2 } from 'lucide-react'
 import type { MemoryRecord } from '../../shared/types'
-import { useScrollAnchor } from '../scroll-anchor'
-import { Collapse } from '../Collapse'
+import { Collapse, useScrollAnchor } from '../motion'
 
 const TYPE_LABELS: Record<MemoryRecord['type'], string> = { preference: '偏好', fact: '事实', decision: '决策', experience: '经验' }
 const STATUS_LABELS: Record<string, string> = { deleted: '已删除', superseded: '已替代' }

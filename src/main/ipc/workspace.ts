@@ -7,6 +7,7 @@ import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDr
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
 import { deleteWorkspaceEntry, listWorkspaceDirectory, moveWorkspaceEntry, type WorkspaceMoveResult, readAttachmentImage, readAttachmentText, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
 import { openTerminalAt } from '../open-terminal'
+import { openWorkspaceFile } from '../open-workspace-file'
 import { shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -128,14 +129,7 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
     }
   })
   // 右键菜单「用本地应用打开」：解析到绝对路径后交给系统默认应用（文件用默认软件，目录开资源管理器窗口）。
-  handle('workspace:open-external', async (_event, path: string) => {
-    if (!ctx.workspaceRoot) return '尚未打开工作区'
-    try {
-      return await shell.openPath(resolveWorkspaceFile(ctx.workspaceRoot, path))
-    } catch (error) {
-      return error instanceof Error ? error.message : '无法打开'
-    }
-  })
+  handle('workspace:open-external', (_event, path: string, expectedRoot?: string) => openWorkspaceFile(ctx.workspaceRoot, path, expectedRoot, (absolute) => shell.openPath(absolute)))
   // 右键菜单「删除」：路径越界 / 不存在由 deleteWorkspaceEntry 返回错误，不抛异常；
   // 删除成功的文件若已登记为 Artifact，同步移除记录并广播刷新 Artifacts 面板。
   handle('workspace:delete', async (_event, path: string) => {

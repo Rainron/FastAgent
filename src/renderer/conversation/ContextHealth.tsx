@@ -1,8 +1,8 @@
 import { memo, useCallback, useRef, useState } from 'react'
-import { Collapse } from '../Collapse'
+import { Collapse } from '../motion'
 import { ChevronDown, ChevronRight, History, Minimize2 } from 'lucide-react'
-import { useDismiss } from '../use-dismiss'
-import { usePopoverClamp } from '../use-popover-clamp'
+import { createPortal } from 'react-dom'
+import { useContextPopover } from './use-context-popover'
 import type { CompactionState } from './compaction-state'
 import type { ContextPolicy, ModelUsageSummary } from '../../shared/types'
 import { compactionSummaryLabel, contextHealthView } from './context-health-view'
@@ -63,19 +63,17 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
   const [detailOpen, setDetailOpen] = useState(false)
   const limits = useSubscriptionLimits()
   const ref = useRef<HTMLDivElement>(null)
-  // 触发器可能落在很窄的输入框左端，280px 的浮层右对齐后会整个长到窗口外
   const popoverRef = useRef<HTMLDivElement>(null)
-  usePopoverClamp(popoverRef, open)
   const close = useCallback(() => setOpen(false), [])
   // 与其他浮层一致：点外部或 Esc 关闭，不必回到触发按钮再点一次
-  useDismiss(open, close, ref)
+  useContextPopover(open, ref, popoverRef, close)
   const view = contextHealthView({ estimatedTokens: data.estimatedTokens, contextWindow: data.contextWindow, policy: policy ?? null })
   const running = compaction?.status === 'running'
   return <div className={`context-health ${view.level}`} ref={ref}>
     <button className="context-health-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog" title={`${view.headline}${data.usagePending ? '；本次用量待返回' : ''}`}>
       <MeterRing ratio={view.ratio} mark={view.triggerMark} /><span>{view.percent}%</span><ChevronDown size={12} />
     </button>
-    {open && <div className="context-health-popover" ref={popoverRef} role="dialog" aria-label="上下文使用情况">
+    {open && createPortal(<div className={`context-health ${view.level}`}><div className="context-health-popover" ref={popoverRef} role="dialog" aria-label="上下文使用情况">
       <div className="context-health-heading"><strong>上下文使用情况</strong><span>{formatTokens(data.estimatedTokens)} / {formatTokens(data.contextWindow)}</span></div>
       <div className="context-health-bar">
         <span style={{ width: `${view.percent}%` }} />
@@ -118,6 +116,6 @@ export const ContextHealth = memo(function ContextHealth({ data, policy, onCompa
         <div className="context-health-meta"><span>计量</span><span>{data.countingMethod === 'provider-usage' ? '总量：模型 usage · 分类：比例估算' : '统一估算'}</span></div>
         {data.usagePending && <p className="context-health-pending" role="status">正在生成，本次用量待返回。</p>}
       </div></Collapse>
-    </div>}
+    </div></div>, document.body)}
   </div>
 })

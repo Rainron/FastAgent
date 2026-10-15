@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { Check, ChevronDown, Circle, CircleAlert, CircleDashed, CircleDot, ListChecks, X } from 'lucide-react'
 import type { ConversationTurn, TodoItem } from '../../shared/types'
-import { Collapse } from '../Collapse'
+import { Collapse } from '../motion'
 import { conversationPlans, planGroupStatus, planOverallLabel, planOverallStatus, planProgress, planStatusLabel, type ConversationPlanGroup } from './plan-summary'
 
 const icons = { pending: CircleDashed, in_progress: CircleDot, completed: Check, cancelled: X, blocked: CircleAlert, failed: CircleAlert, skipped: Circle }
