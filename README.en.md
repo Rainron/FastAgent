@@ -51,8 +51,8 @@ A Rust sandbox kernel runs commands under a restricted system account and limits
 **Execution trace and file-change ledger**  
 Tool calls, approvals, and durations are archived by turn. After write operations, the application checks the filesystem and reports the final files and line changes instead of relying only on the agent's description.
 
-**Read-only subagents**  
-The main agent can delegate research tasks to subagents with narrowed read-only tool access and configurable roles.
+**Subagents**  
+The main agent can delegate well-scoped work to dedicated roles: scout and reviewer investigate and review read-only, while builder and verifier can edit files and run tests or type checks. Roles and tool grants are configurable; parallel writers claim files so conflicting writes are rejected instead of overwriting each other, and permissions and the sandbox follow the parent run.
 
 **Git panel and change reversion**
 The composer's Git menu opens a three-pane panel: branches and remotes, changes/history views, and the diff plus commit area. A turn's file changes can be reverted as a whole, with files that were modified again since skipped and explained.
@@ -63,11 +63,17 @@ The model can call `preview_show` to inspect a draft offscreen and ask the UI to
 **Plugins, quotas, and memory**
 The sidebar's Plugins page manages local DSH plugins (the host runs in a separate process without access to your account or database); model connections can be exported to a passphrase-encrypted archive with a preview before import; the usage page shows subscription quotas and reset times per connection; settings allow adding memories by hand and testing recall, and knowledge-base injection is configurable.
 
+**Network proxy**  
+Settings → Workspace preferences → Network proxy: automatic (environment variables, then system proxy / PAC, honoring `NO_PROXY`), manual, or direct; local addresses always bypass. A connectivity test against the OpenAI auth and API endpoints classifies failures (DNS / TLS / timeout / proxy). Saving applies immediately, rolls back on failure, and never silently falls back to direct; it only affects the main process's outbound requests.
+
 **Interface and interaction**
-The sidebar width is draggable and remembered, long titles scroll on hover, search supports arrow-key selection with Enter, and projects can be reordered by drag. The settings centre is grouped into agent, workspace, and security sections. The execution trace can be configured (timer and token placement, summary style, diff stats), collapses by default with animated expansion, and messages sent while a run is active are inserted into that same turn. The theme is a clean white base with neutral greys and a lake-blue accent.
+The sidebar width is draggable and remembered, long titles scroll on hover, search supports arrow-key selection with Enter, projects can be reordered by drag, the number of workspaces / project conversations / recent conversations shown is configurable, and projects with active runs are listed first. The composer toolbar collapses to fit the available width, thinking effort lives in the model selector, popovers are no longer clipped by window edges or the sidebar, and keyboard hints live in the settings keybinding list. The settings centre is grouped into agent, workspace, and security sections. The execution trace can be configured (timer and token placement, summary style, diff stats), collapses by default with animated expansion, and messages sent while a run is active are inserted into that same turn. The theme is a clean white base with neutral greys and a lake-blue accent.
 
 **Built-in terminal and `!` commands**  
 Open a terminal panel from the conversation header and run commands in the project directory, with multiple tabs; output never goes through the model. Typing `!` in the composer also runs a shell command directly — commands and output stay in the conversation as cards you can stop or remove, and the output can be kept local, appended as a turn the model can read, or sent back to the composer.
+
+**`/init` surveys the project first**  
+A static scan of the directory layout, config files, stack, commands, and code style is handed to the agent, which verifies each item and writes `AGENTS.md` (an existing file is amended, not rewritten). Anything it cannot confirm is left out instead of invented.
 
 **Per-project trust for instruction files**  
 `AGENTS.md` and `CLAUDE.md` are injected into the system prompt only for trusted projects. Untrusted projects are probed for existence without reading the content, and the execution trace says the file was not loaded. Trust is toggled from the project menu in the composer; existing and newly added projects are trusted by default.
@@ -104,7 +110,7 @@ Turn a successful conversation into a reusable Skill, with static validation for
 Concurrency, retry, and continuation limits stop a run with an explicit reason instead of silently continuing. The origin of each turn's context can be traced. Conversations can be exported, and artifact files keep per-turn versions that can be restored.
 
 **Context management and local workflow tools**  
-Provider-reported usage drives context accounting, with automatic summarization and manual compaction (trigger ratio and retained turns are configurable; individual conversations can override the policy and show their compaction history, with an optional force-compaction fallback that is off by default). Cloud model parameters such as context window and output limit can be overridden locally. FastAgent also includes a global quick window, session management, workspace file mentions, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
+Provider-reported usage drives context accounting, with automatic summarization and manual compaction (trigger ratio and retained turns are configurable; individual conversations can override the policy and show their compaction history, with an optional force-compaction fallback that is off by default). Cloud model parameters such as context window and output limit can be overridden locally. FastAgent also includes a global quick window (agent mode, pinning, and image or text attachments, adapted to each model's declared capabilities), session management, workspace file mentions (Tab descends into a directory), a conversation minimap and a top plan panel, syntax highlighting for the full Shiki language set (Go, Rust, TOML, Dockerfile, and more), a single global show/hide-main-window shortcut, external-editor support, diagnostics, crash/startup logs, and resumable interrupted runs.
 
 ## Quick start
 
@@ -148,10 +154,11 @@ All application data is stored under `~/.fa`:
 
 ```text
 ~/.fa
-├── fastagent.db      sessions, settings, permissions, and capability metadata
+├── data/fastagent.db sessions, settings, permissions, and capability metadata
 ├── sessions/         pi session files grouped by user/date/session
-├── skills/ mcp/ plugins/
-├── attachments/ exports/ backups/
+├── skills/ mcp/ plugins/ dsh-plugins/
+├── attachments/ exports/ backups/ quick-workspace/
+├── runtime/          bundled toolchain (seeded from the installer)
 ├── cache/ temp/ logs/
 ```
 
@@ -168,7 +175,7 @@ The **Data & Storage** settings page can open these directories or migrate the e
 
 ## Architecture
 
-The main process is organized as lifecycle → IPC → domain modules. The renderer is organized as container components → hooks → pure logic modules, with unit tests for pure logic.
+The main process is organized as lifecycle → IPC → domain modules. The renderer is organized as container components → hooks → pure logic modules, with unit tests for pure logic (currently 302 test files and 2,877 tests).
 
 - `src/main/`: agent engine, tool runtime, permissions, safety guards, sandbox, local store, and capability registry
 - `src/preload/`: typed bridge exposed to the renderer
