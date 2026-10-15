@@ -1,30 +1,25 @@
 import { memo, useMemo, useState } from 'react'
+import { useHeightAnimation } from '../../use-height-animation'
+import { alignStartIfAbove } from '../../scroll-anchor'
 import { ChevronDown, Copy, FileDiff } from 'lucide-react'
 import type { DiffBlock as DiffBlockData } from '../blocks'
+import { classifyDiffLine } from '../../diff-lines'
 import { parseFileReference } from '../file-reference'
 import { useResponseActions } from '../response-context'
 
 const COLLAPSE_LINES = 28
 
-type DiffLineKind = 'add' | 'del' | 'meta' | 'hunk' | 'context'
-
-function classify(line: string): DiffLineKind {
-  if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git') || line.startsWith('index ')) return 'meta'
-  if (line.startsWith('@@')) return 'hunk'
-  if (line.startsWith('+')) return 'add'
-  if (line.startsWith('-')) return 'del'
-  return 'context'
-}
-
 function DiffBlockView({ block }: { block: DiffBlockData }) {
   const actions = useResponseActions()
   const [expanded, setExpanded] = useState(false)
-  const lines = useMemo(() => block.patch.split('\n').map((text, index) => ({ id: index, text, kind: classify(text) })), [block.patch])
+  // 展开 / 收起是原地换内容，高度从旧值补间到新值，不再一下跳变
+  const height = useHeightAnimation<HTMLDivElement>()
+  const lines = useMemo(() => block.patch.split('\n').map((text, index) => ({ id: index, text, kind: classifyDiffLine(text) })), [block.patch])
   const collapsible = lines.length > COLLAPSE_LINES && block.status !== 'streaming'
   const reference = block.filename ? parseFileReference(block.filename) : null
 
   return (
-    <div className={`diff-block ${collapsible && !expanded ? 'collapsed' : ''}`}>
+    <div className={`diff-block ${collapsible && !expanded ? 'collapsed' : ''}`} ref={height.ref}>
       <div className="diff-block-head">
         <span className="diff-block-meta">
           <FileDiff size={13} />
@@ -38,7 +33,7 @@ function DiffBlockView({ block }: { block: DiffBlockData }) {
       <div className="diff-block-body">
         {lines.map((line) => <div className={`diff-line ${line.kind}`} key={line.id}><span>{line.text || ' '}</span></div>)}
       </div>
-      {collapsible && <button type="button" className="block-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+      {collapsible && <button type="button" className="block-expand" onClick={() => { if (expanded) alignStartIfAbove(height.ref.current); height.capture(); setExpanded((value) => !value) }} aria-expanded={expanded}>
         <ChevronDown size={13} />{expanded ? '收起' : `展开全部 ${lines.length} 行`}
       </button>}
     </div>

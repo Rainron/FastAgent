@@ -6,6 +6,8 @@ describe('mode prompts', () => {
     expect(defaultModePrompts).toEqual({ chat: '', agent: '' })
     expect(builtInModeSystemPrompts.chat).toContain('通用对话助手')
     expect(builtInModeSystemPrompts.agent).toContain('任务执行型智能体')
+    expect(builtInModeSystemPrompts.chat).toContain('每完成一个步骤立即调用 todowrite')
+    expect(builtInModeSystemPrompts.agent).toContain('每完成一个步骤立即调用 todowrite')
   })
 
   it('keeps an empty saved value separate from the system prompt', () => {

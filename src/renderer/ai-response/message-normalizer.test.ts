@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blocksToPlainText, normalizeAssistantMessage, toolCallBlocks, toolSource } from './message-normalizer'
+import { blocksToPlainText, normalizeAssistantMessage, toolCallBlocks, toolSource, trailingDenial } from './message-normalizer'
 import type { AgentEvent, ConversationTurn, ToolCallRecord } from '../../shared/types'
 import type { TerminalBlock, ToolResultBlock } from './blocks'
 
@@ -54,6 +54,12 @@ describe('normalizeAssistantMessage', () => {
   it('取消回合单独标记', () => {
     const message = normalizeAssistantMessage(turn({ status: 'cancelled' }))
     expect(message?.blocks.at(-1)).toMatchObject({ type: 'error', title: '已取消' })
+  })
+
+  it('执行轨迹已标明取消时不再追加取消块，只保留已输出的正文', () => {
+    expect(normalizeAssistantMessage(turn({ status: 'cancelled' }), 0, { omitCancelled: true })).toBeNull()
+    const partial = normalizeAssistantMessage(turn({ status: 'cancelled', assistantMessage: { text: '半截回答', createdAt: '2026-01-01T00:00:01.000Z' } }), 0, { omitCancelled: true })
+    expect(partial?.blocks.map((block) => block.type)).toEqual(['markdown'])
   })
 })
 
@@ -230,3 +236,28 @@ describe('toolCallBlocks 的结果排版', () => {
     expect(block).toMatchObject({ type: 'code', filename: 'x.txt' })
   })
 })
+
+describe('trailingDenial', () => {
+  const denied = (patch: Partial<AgentEvent> = {}) => event({ type: 'tool_result', tool: 'find_dsh_plugin', permissionResult: 'denied', detail: '权限规则禁止执行（find_dsh_plugin）', textLength: 0, ...patch })
+  const activity = (events: AgentEvent[]) => ({ status: 'done' as const, startedAt: null, finishedAt: null, events })
+
+  it('被拒后没有任何输出时，空回复变成带原因与出路的提示', () => {
+    const message = normalizeAssistantMessage(turn({ activity: activity([denied()]) }))
+    expect(message?.blocks).toEqual([expect.objectContaining({ type: 'error', title: '操作未执行', detail: expect.stringContaining('设置 › Agent 与权限') })])
+  })
+
+  it('被拒前说过话、之后没再说，也补上原因', () => {
+    const message = normalizeAssistantMessage(turn({ assistantMessage: { text: '我来查一下', createdAt: '' }, activity: activity([denied({ textLength: 5 })]) }))
+    expect(message?.blocks.map((block) => block.type)).toEqual(['markdown', 'error'])
+  })
+
+  it('用户亲手拒绝的只说明事实，不引导去改权限', () => {
+    expect(trailingDenial(turn({ activity: activity([denied({ detail: '用户拒绝了该操作：bash rm -rf x' })]) }))).toBe('用户拒绝了该操作：bash rm -rf x')
+  })
+
+  it('被拒后模型继续输出（如计划模式）或最后一次调用成功时不提示', () => {
+    expect(trailingDenial(turn({ assistantMessage: { text: '改为输出计划……', createdAt: '' }, activity: activity([denied({ textLength: 0 })]) }))).toBeNull()
+    expect(trailingDenial(turn({ activity: activity([denied(), event({ type: 'tool_result', permissionResult: 'allow' })]) }))).toBeNull()
+  })
+})
+

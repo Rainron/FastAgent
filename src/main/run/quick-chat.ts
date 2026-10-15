@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from '../../shared/types'
+import type { Attachment, ThinkingLevel } from '../../shared/types'
 import type { AgentEvent } from '../../shared/types'
 import { createExecutionState, reduceExecutionState } from '../agent/execution-state'
 import { classifyRunError } from '../agent/run-error'
@@ -19,7 +19,7 @@ const QUICK_HISTORY_TURNS = 20
  * 快速对话执行体：直接调模型接口（runDirectChat），不创建 pi 运行时，
  * 无工具 / MCP / 沙箱 / 权限审批，上下文来自持久会话的最近若干回合。
  */
-export async function runQuickChat(ctx: RunContext, runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, modelId: number | null, thinkingLevel: ThinkingLevel, signal: AbortSignal, acceptedAt = Date.now()) {
+export async function runQuickChat(ctx: RunContext, runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, attachments: Attachment[], modelId: number | null, thinkingLevel: ThinkingLevel, signal: AbortSignal, acceptedAt = Date.now()) {
   let streamedText = ''
   let thinkingText = ''
   // 与 Agent 路径一致地按思考轮次切分，折叠层展开时每一轮各自成段。
@@ -94,6 +94,7 @@ export async function runQuickChat(ctx: RunContext, runId: string, turnId: strin
     const result = await runDirectChat({
       prompt,
       credentials,
+      attachments,
       thinkingLevel,
       history,
       signal,

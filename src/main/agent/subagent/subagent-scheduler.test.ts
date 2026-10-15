@@ -25,6 +25,31 @@ describe('subagent scheduler', () => {
     expect(results.map((item) => item.taskId)).toEqual(['a', 'b', 'c'])
   })
 
+  it('可写任务与只读任务一起并行，结果顺序与入参一致', async () => {
+    // 写冲突由工作区闸门按文件认领处理；调度层整体独占会让各写一个文件的任务也排成一列
+    let active = 0
+    let peak = 0
+    const results = await runSubAgentTasks([
+      { taskId: 'r1', agentId: 'scout', task: 'r1' },
+      { taskId: 'w1', agentId: 'builder', task: 'w1', canWrite: true },
+      { taskId: 'w2', agentId: 'builder', task: 'w2', canWrite: true },
+      { taskId: 'w3', agentId: 'builder', task: 'w3', canWrite: true },
+      { taskId: 'w4', agentId: 'builder', task: 'w4', canWrite: true },
+      { taskId: 'w5', agentId: 'builder', task: 'w5', canWrite: true }
+    ], {
+      signal: new AbortController().signal,
+      run: async (task) => {
+        active++
+        peak = Math.max(peak, active)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        active--
+        return { taskId: task.taskId, agentId: task.agentId, agentName: task.agentId, status: 'completed', output: '', truncated: false, startedAt: 0, finishedAt: 1 }
+      }
+    })
+    expect(peak).toBe(6)
+    expect(results.map((item) => item.taskId)).toEqual(['r1', 'w1', 'w2', 'w3', 'w4', 'w5'])
+  })
+
   it('父级取消后保留未启动任务的取消结果', async () => {
     const controller = new AbortController()
     let started = 0

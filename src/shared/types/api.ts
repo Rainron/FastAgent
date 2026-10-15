@@ -235,7 +235,7 @@ export interface FastAgentApi {
      * 快速对话专用通道。chat 模式直接调模型接口，不走 pi 运行时，无工具 / MCP / 权限审批；
      * mode 传 agent 时改走与主窗口相同的运行时（工具、沙箱、审批齐全），未绑定项目则用快速工作区。
      */
-    quickSend(input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: ThinkingLevel; mode?: ConversationMode; permission?: PermissionPreset | null }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
+    quickSend(input: { conversationId: string; prompt: string; attachments: Attachment[]; modelId: number | null; thinkingLevel: ThinkingLevel; mode?: ConversationMode; permission?: PermissionPreset | null }): Promise<{ runId: string; turnId: string; turn: ConversationTurn }>
     /** 取消当前 run；返回未投递的插队消息，渲染层据此把文字还给输入框。 */
     cancel(runId: string): Promise<{ pending: string[] }>
     /**
@@ -402,7 +402,7 @@ export interface FastAgentApi {
     /** 传 null 表示离开工作区，之后 @ 补全与产物面板都不再指向旧项目。 */
     setRoot(path: string | null): Promise<string | null>
     /** 在当前项目根目录生成 AGENTS.md；没有已存在的记忆文件时不覆盖。 */
-    initProject(options?: { force?: boolean }): Promise<InitProjectResult>
+    initProject(): Promise<InitProjectResult>
     snapshot(): Promise<WorkspaceSnapshot>
     /** 只读取工作区内的文本文件；越界路径、目录与二进制文件都会 reject。 */
     readFile(path: string): Promise<WorkspaceFileContent>

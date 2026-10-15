@@ -7,6 +7,7 @@ import type { StreamBuffer } from '../../ai-response/stream-buffer'
 import { beginCompaction, clearAutoCompaction, completeCompaction, type CompactionStates } from '../../conversation/compaction-state'
 import { markSteerDelivered, syncSteerQueue, type QueuedPrompt } from '../../conversation/prompt-queue'
 import type { ContextHealthData } from '../../conversation/ContextHealth'
+import { mergeLiveUsage } from '../../conversation/context-usage'
 import type { PendingApproval, WorkspaceConversation } from '../workspace-types'
 
 export interface AgentEventSinks {
@@ -55,6 +56,18 @@ export function useAgentEvents(sinks: AgentEventSinks) {
     if (event.type === 'steer_update') {
       const conversationId = event.conversationId
       if (conversationId) setQueuedPromptsByConversation((current) => ({ ...current, [conversationId]: syncSteerQueue(current[conversationId] ?? [], event.pending) }))
+      return
+    }
+    // 流式过程中的上下文占用与本次已输出：只更新输入框旁的用量环，不进回合活动。
+    if (event.type === 'contextProgress') {
+      if (event.conversationId === selectedConversationId && event.contextProgress) {
+        setContextHealth((current) => ({
+          ...current,
+          ...event.contextProgress,
+          usage: event.usageRecord ? mergeLiveUsage(current.usage, event.usageRecord) : current.usage,
+          usagePending: true
+        }))
+      }
       return
     }
     // 已送达：从队列摘掉，同时继续往下走，让这条补充进入回合活动与执行轨迹。

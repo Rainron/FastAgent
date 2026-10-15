@@ -83,6 +83,13 @@ export function reduceExecutionState(state: ExecutionState, input: ExecutionInpu
   if (runStatus) return settleActive({ ...state, status: runStatus }, runStatus)
 
   const eventId = input.eventId ?? `${state.runId}:${state.events.length + 1}`
+  // 插队消息只是轨迹上的一条标记：既不开启步骤也不结算步骤，
+  // 走通用分支会让它把下一个待办顶成 running，凭空推进进度。
+  if (input.type === 'user_steer') {
+    if (state.events.some((event) => event.eventId === eventId)) return state
+    const marker: ExecutionEventState = { eventId, type: 'user_steer', stepId: state.activeStepId, status: 'completed', startedAt: input.timestamp, completedAt: input.timestamp }
+    return { ...state, events: [...state.events, marker] }
+  }
   const existing = state.events.find((event) => event.eventId === eventId)
   if (existing) {
     if (input.type === 'tool_result' || input.type === 'thinking_ended') {

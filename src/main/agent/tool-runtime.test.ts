@@ -60,7 +60,7 @@ interface Harness {
   toolCalls: Array<{ id: string; status: string; permissionResult?: string }>
 }
 
-function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<string, ApprovalDecision>; approve?: ApprovalDecision; failApproval?: boolean; mcpRisk?: ReadonlyMap<string, 'read' | 'write'>; shellToolName?: 'bash' | 'powershell'; planMode?: boolean; store?: LocalStore; fullAccess?: boolean } = {}): Harness {
+function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<string, ApprovalDecision>; approve?: ApprovalDecision; failApproval?: boolean; mcpRisk?: ReadonlyMap<string, 'read' | 'write'>; shellToolName?: 'bash' | 'powershell'; planMode?: boolean; store?: LocalStore; fullAccess?: boolean; claimWrite?: (targets: Array<{ path: string; absolutePath: string }>) => string | null } = {}): Harness {
   const workspace = makeWorkspace()
   const harness = {
     cwd: workspace,
@@ -110,7 +110,8 @@ function createHarness(options: { ruleSet?: PermissionRuleSet; overrides?: Map<s
       return options.approve ?? 'once'
     },
     requestQuestion: async (_toolCallId, questions: QuestionItem[]): Promise<QuestionAnswer[]> => questions.map((item) => ({ id: item.id, answer: '默认答案' })),
-    mcpToolRisk: options.mcpRisk ?? new Map()
+    mcpToolRisk: options.mcpRisk ?? new Map(),
+    claimWrite: options.claimWrite
   })
   ;(extension as (pi: unknown) => void)(pi)
   return harness
@@ -253,6 +254,22 @@ describe('tool runtime extension', () => {
     expect(harness.results).toHaveLength(0)
   })
 
+  it('dsh 插件工具名没有 mcp__ 前缀，也按外部写工具判权限，不落到未知工具的兜底拒绝', async () => {
+    const risk = new Map<string, 'read' | 'write'>([['find_dsh_plugin', 'write']])
+    const harness = createHarness({ mcpRisk: risk })
+    const result = await harness.onToolCall(toolCall({ toolCallId: 'call-dsh', toolName: 'find_dsh_plugin', input: { query: 'memory' } }))
+    expect(result).toBeUndefined()
+    expect(harness.started[0]).toMatchObject({ source: 'plugin', permissionResult: 'allow' })
+  })
+
+  it('计划模式下 dsh 插件工具按写入类拒绝', async () => {
+    const risk = new Map<string, 'read' | 'write'>([['find_dsh_plugin', 'write']])
+    const harness = createHarness({ mcpRisk: risk, planMode: true, ruleSet: presetRuleSet('full') })
+    const result = await harness.onToolCall(toolCall({ toolCallId: 'call-dsh-plan', toolName: 'find_dsh_plugin', input: { query: 'memory' } }))
+    expect(result).toMatchObject({ block: true })
+    expect(String((result as { reason: string }).reason)).toContain('计划模式')
+  })
+
   it('审批通道取消（run 中止）按阻断处理', async () => {
     const harness = createHarness({ failApproval: true })
     const result = await harness.onToolCall(toolCall({ toolCallId: 'call-x', toolName: 'edit', input: { path: 'src/a.ts', edits: [] } }))
@@ -326,6 +343,24 @@ describe('tool runtime extension', () => {
     const build = await harness.onToolCall(toolCall({ toolCallId: 'plan-bash', toolName: 'bash', input: { command: 'npm run build' } }))
     expect(build).toMatchObject({ block: true, terminate: false })
     expect(harness.approvals).toHaveLength(0)
+  })
+
+  it('并行子运行写入被认领冲突拒绝：不弹审批、不终止本批次，只读与无目标命令不认领', async () => {
+    const claimed: string[][] = []
+    const harness = createHarness({
+      ruleSet: presetRuleSet('ask'),
+      claimWrite: (targets) => {
+        claimed.push(targets.map((target) => target.path))
+        return targets.some((target) => target.path === 'src/taken.ts') ? 'src/taken.ts 正由并行的 Sub-agent 修改' : null
+      }
+    })
+    const denied = await harness.onToolCall(toolCall({ toolCallId: 'claim-1', toolName: 'write', input: { path: 'src/taken.ts', content: 'x' } }))
+    expect(denied).toMatchObject({ block: true, terminate: false, reason: 'src/taken.ts 正由并行的 Sub-agent 修改' })
+    expect(harness.approvals).toHaveLength(0)
+    await harness.onToolCall(toolCall({ toolCallId: 'claim-2', toolName: 'bash', input: { command: 'echo hi > out/log.txt' } }))
+    await harness.onToolCall(toolCall({ toolCallId: 'claim-3', toolName: 'read', input: { path: 'src/taken.ts' } }))
+    await harness.onToolCall(toolCall({ toolCallId: 'claim-4', toolName: 'bash', input: { command: 'npm test' } }))
+    expect(claimed).toEqual([['src/taken.ts'], ['out/log.txt'], []])
   })
 
   it('计划模式下只读探查与 git status 仍放行', async () => {

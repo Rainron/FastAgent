@@ -3,6 +3,9 @@ import { ChevronRight, ChevronUp, ExternalLink, Layers } from 'lucide-react'
 import type { TurnContextSource } from '../../shared/types'
 import { useResponseActions } from '../ai-response/response-context'
 import { CONTEXT_GROUP_PREVIEW, canOpenSource, groupContextSources, summarizeContextSources, visibleGroupItems, type ContextSourceGroup } from './context-sources'
+import { useScrollAnchor } from '../scroll-anchor'
+import { Collapse } from '../Collapse'
+import { useHeightAnimation } from '../use-height-animation'
 
 /**
  * 回合级「本轮实际用了什么」：知识条目、项目规则、可选中的 Skill。
@@ -18,32 +21,36 @@ export const ContextSourceBar = React.memo(function ContextSourceBar({ turnId, o
     catch { onNotice('上下文来源加载失败') }
   }, [turnId, onNotice])
 
+  // 收起时清单整块消失，锚在分区头上，避免下面的正文整段跳位。
+  const { ref: sectionRef, anchor } = useScrollAnchor<HTMLElement>()
   function toggle() {
     const next = !expanded
+    anchor()
     setExpanded(next)
     if (next && !sources) void load()
   }
 
   const groups = groupContextSources(sources ?? [])
-  return <section className="context-source-bar">
+  return <section className="context-source-bar" ref={sectionRef}>
     <button className="context-source-heading" onClick={toggle} aria-expanded={expanded} title={expanded ? '收起本轮上下文' : '展开本轮上下文'}>
       <span className="context-source-icon" aria-hidden="true"><Layers size={13} /></span>
       <span className="context-source-label">本轮上下文</span>
       {sources && <span className="context-source-count">{summarizeContextSources(sources) || '无额外来源'}</span>}
       <ChevronRight size={12} className="context-source-chevron" />
     </button>
-    {expanded && <div className="context-source-details">
+    <Collapse open={expanded} appear={false}><div className="context-source-details">
       {!sources && <div className="context-source-empty">加载中</div>}
       {sources && groups.length === 0 && <div className="context-source-empty">这一轮没有额外的上下文来源</div>}
       {groups.map((group) => <ContextSourceGroupView key={group.kind} group={group} onNotice={onNotice} />)}
       {/* 展开后清单可能很长，顶部那行已经滚出视野，底部再给一个收起入口 */}
       <button type="button" className="context-source-collapse" onClick={toggle}><ChevronUp size={12} />收起</button>
-    </div>}
+    </div></Collapse>
   </section>
 })
 
 function ContextSourceGroupView({ group, onNotice }: { group: ContextSourceGroup; onNotice: (notice: string) => void }) {
   const [showAll, setShowAll] = useState(false)
+  const height = useHeightAnimation<HTMLDivElement>()
   const { openSkill } = useResponseActions()
   const items = visibleGroupItems(group.items, showAll)
   const overflow = group.items.length - CONTEXT_GROUP_PREVIEW
@@ -60,7 +67,7 @@ function ContextSourceGroupView({ group, onNotice }: { group: ContextSourceGroup
       {group.note && <em>{group.note}</em>}
     </div>
     {/* 整组一张列表卡，行间只有一条分隔线：逐条独立描边时几十条 Skill 会散成一屏白条 */}
-    <div className="context-source-items">
+    <div className="context-source-items" ref={height.ref}>
       {items.map((item) => item.kind === 'skill'
         // Skill 正文不在这里展开：整行是跳转入口，正文与版本去能力页看。
         ? <button type="button" className="context-source-item context-source-link" key={`${item.kind}:${item.refId}`} onClick={() => openSkill(item.refId)} title="在能力页查看这个 Skill">
@@ -72,7 +79,7 @@ function ContextSourceGroupView({ group, onNotice }: { group: ContextSourceGroup
           {item.detail && <span className="context-source-detail">{item.detail}</span>}
           {canOpenSource(item) && <button className="context-source-open" title={item.locator ?? ''} onClick={() => void openSource(item)}><ExternalLink size={12} /></button>}
         </div>)}
-      {overflow > 0 && <button type="button" className="context-source-more" onClick={() => setShowAll((value) => !value)}>
+      {overflow > 0 && <button type="button" className="context-source-more" onClick={() => { height.capture(); setShowAll((value) => !value) }}>
         <ChevronRight size={11} className={showAll ? 'context-source-more-icon open' : 'context-source-more-icon'} />
         {showAll ? '收起这一组' : `展开其余 ${overflow} 条`}
       </button>}

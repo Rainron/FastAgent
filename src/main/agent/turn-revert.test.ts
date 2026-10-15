@@ -115,6 +115,36 @@ describe('revertTurn', () => {
     expect(existsSync(file)).toBe(false)
   })
 
+  it('混入其他会话的台账条目跳过并说明，同会话条目照常撤销', async () => {
+    const root = makeRoot()
+    const file = join(root, 'ok.ts')
+    writeFileSync(file, 'agent')
+    const { store, marked } = makeStore(root, [
+      change({ path: 'ok.ts', operation: 'update', afterHash: hashOf(file), beforeText: 'before' }),
+      change({ path: 'foreign.md', operation: 'update', conversationId: 'other-conversation', afterHash: null, beforeText: 'x' })
+    ])
+    const result = await revertTurn(store, 'ns', 't1', '/unused')
+    expect(result.reverted).toEqual(['ok.ts'])
+    expect(result.skipped).toEqual([{ path: 'foreign.md', reason: '台账归属异常（会话不一致），已跳过' }])
+    expect(marked).toEqual([['ok.ts']])
+  })
+
+  it('混合多个外来会话时以首个条目的会话为准，其余全部跳过', async () => {
+    const root = makeRoot()
+    const file = join(root, 'ok.ts')
+    writeFileSync(file, 'agent')
+    const { store, marked } = makeStore(root, [
+      change({ path: 'ok.ts', operation: 'update', afterHash: hashOf(file), beforeText: 'before' }),
+      change({ path: 'b.md', operation: 'update', conversationId: 'c2', afterHash: null, beforeText: 'x' }),
+      change({ path: 'c.md', operation: 'update', conversationId: 'c3', afterHash: null, beforeText: 'x' })
+    ])
+    const result = await revertTurn(store, 'ns', 't1', '/unused')
+    expect(result.reverted).toEqual(['ok.ts'])
+    expect(result.skipped.map((item) => item.path)).toEqual(['b.md', 'c.md'])
+    expect(result.skipped.every((item) => item.reason.includes('会话不一致'))).toBe(true)
+    expect(marked).toEqual([['ok.ts']])
+  })
+
   it('没有可撤销的改动时什么都不做', async () => {
     const { store, marked } = makeStore('/x', [])
     expect(await revertTurn(store, 'ns', 't1', '/q')).toEqual({ reverted: [], skipped: [] })

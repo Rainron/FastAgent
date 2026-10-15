@@ -292,8 +292,14 @@ export function buildExecutionTrace(events: AgentEvent[], finalAnswerLength = 0)
     if (event.subAgent) {
       const key = toolKey(event)
       const existing = actions.find((action): action is Extract<TraceAction, { kind: 'subagent' }> => action.kind === 'subagent' && `subagent:${action.taskId}` === key)
-      const status: TraceToolStatus = event.type === 'subagent_failed' ? 'failed' : event.type === 'subagent_result' || event.type === 'subagent_cancelled' ? 'done' : 'running'
+      // 排队中的子任务整批先登记，真正开跑时再发一次 running 的 started。
+      const queued = event.type === 'subagent_started' && event.subAgent.status === 'queued'
+      const status: TraceToolStatus = event.type === 'subagent_failed' ? 'failed' : event.type === 'subagent_result' || event.type === 'subagent_cancelled' ? 'done' : queued ? 'waiting' : 'running'
       if (existing) {
+        // 迟到的排队事件不能把已经在跑的子任务拨回排队。
+        if (queued && existing.status !== 'waiting') { checkTextBoundary(event); continue }
+        // 用时从真正开跑算起，排队等待不计入。
+        if (existing.status === 'waiting' && status === 'running' && event.timestamp !== undefined) existing.startedAt = event.timestamp
         existing.status = status
         existing.handoff = event.subAgent.handoff ?? existing.handoff
         // started 事件还没有子运行 id，要等第一条转发事件补上。
@@ -304,7 +310,7 @@ export function buildExecutionTrace(events: AgentEvent[], finalAnswerLength = 0)
       } else {
         // 转发的子代理进度事件也带 input（子 Agent 的工具入参），只有 started 的 input 才是任务描述。
         const task = event.type === 'subagent_update' ? null : event.input ?? null
-        const action: Extract<TraceAction, { kind: 'subagent' }> = { kind: 'subagent', taskId: event.subAgent.taskId, agentName: event.subAgent.agentName, task, status, activity: null, toolCount: 0, parentRunId: event.subAgent.parentRunId, subAgentRunId: event.subAgent.subAgentRunId, handoff: event.subAgent.handoff, startedAt: event.timestamp ?? null, finishedAt: null }
+        const action: Extract<TraceAction, { kind: 'subagent' }> = { kind: 'subagent', taskId: event.subAgent.taskId, agentName: event.subAgent.agentName, task, status, activity: null, toolCount: 0, parentRunId: event.subAgent.parentRunId, subAgentRunId: event.subAgent.subAgentRunId, handoff: event.subAgent.handoff, startedAt: queued ? null : event.timestamp ?? null, finishedAt: null }
         applySubAgentProgress(action, event)
         actions.push(action)
       }
@@ -687,6 +693,7 @@ export function subAgentActivityLabel(action: Extract<TraceAction, { kind: 'suba
   if (action.status !== 'running' && action.status !== 'waiting') {
     return action.toolCount > 0 ? `共 ${action.toolCount} 个动作` : null
   }
+  if (action.status === 'waiting' && !action.activity) return '排队中'
   const live = action.activity ? liveVerbLabel(action.activity, action.activityTarget ?? null, 'zh') : '启动中…'
   return action.toolCount > 0 ? `${live} · 已完成 ${action.toolCount} 个动作` : live
 }

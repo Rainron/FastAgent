@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatShellCommandOutput, normalizeShellCommandSettings, truncateShellOutput } from '../../../shared/shell-command'
 import type { ConversationTurn, ShellCommandResult, ShellCommandSettings } from '../../../shared/types'
 import { createStreamBuffer } from '../../ai-response/stream-buffer'
-import type { ShellCommandEntry } from '../../conversation/shell-entries'
+import { dropShellEntriesFrom, type ShellCommandEntry } from '../../conversation/shell-entries'
 import { createShellCommandLifecycle } from '../../conversation/shell-command-lifecycle'
 
 export interface ShellCommandHandlers {
@@ -106,7 +106,15 @@ export function useShellCommands(conversationId: string | null, handlers: ShellC
     setEntries((current) => current.filter((item) => item.id !== id))
   }, [])
 
-  return { entries, settings, run, cancel, dismiss }
+  /** 重跑第 N 轮时一并清掉它之后的命令卡；turnIds 取截断前的回合顺序。 */
+  const dropFrom = useCallback((turnIds: readonly string[], fromTurnId: string) => {
+    setEntries((current) => {
+      const next = dropShellEntriesFrom(current, turnIds, fromTurnId)
+      return next.length === current.length ? current : next
+    })
+  }, [])
+
+  return { entries, settings, run, cancel, dismiss, dropFrom }
 }
 
 /** context 落点用：把结果写成一轮不发给模型跑的问答，历史里能看到、下一轮模型也读得到。 */

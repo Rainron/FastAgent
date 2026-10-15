@@ -154,7 +154,7 @@ export interface MainContext {
   runKbIndex(namespace: string, source: KbSource): Promise<unknown>
   /** 完整实现在 run/local-run.ts；这里只声明签名，避免 app-context 反向依赖 run 层。 */
   runLocalRun(runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, mode: ConversationMode, modelId: number | null, thinkingLevel: ThinkingLevel, permission: PermissionPreset | null, modePrompt: string, planMode: boolean, attachments: Attachment[], signal: AbortSignal, acceptedAt?: number): Promise<void>
-  runQuickChat(runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, modelId: number | null, thinkingLevel: ThinkingLevel, signal: AbortSignal, acceptedAt?: number): Promise<void>
+  runQuickChat(runId: string, turnId: string, conversationId: string, namespace: string, prompt: string, attachments: Attachment[], modelId: number | null, thinkingLevel: ThinkingLevel, signal: AbortSignal, acceptedAt?: number): Promise<void>
   runtimeInstallDir(): string
   setWorkspaceRoot(path: string | null): string | null
   stopActiveWork(): void

@@ -29,12 +29,13 @@ function messageStatus(turn: ConversationTurn): BlockStatus {
  * 旧数据里 assistantMessage 只有一个字符串，这里统一转成 blocks。
  * 不落库：blocks 每次渲染从 text 派生，历史会话无需迁移即可打开。
  * answerStart：执行轨迹已把正文前段归档为说明文本，正文区只渲染从该偏移开始的最终回答。
+ * omitCancelled：执行轨迹的过程头已经说了「已取消」，正文区不再追加一个取消块。
  */
-export function normalizeAssistantMessage(turn: ConversationTurn, answerStart = 0): AssistantMessage | null {
+export function normalizeAssistantMessage(turn: ConversationTurn, answerStart = 0, options: { omitCancelled?: boolean } = {}): AssistantMessage | null {
   // 已落库的旧回合正文里可能还带着模型内联的 `<think>` 推理，渲染前剥掉，思考只从折叠层看。
   const text = stripThinkBlocks((turn.assistantMessage?.text ?? '').slice(answerStart))
   const failure = turn.status === 'failed' ? turn.activity?.events.filter((event) => event.type === 'failed').at(-1)?.detail ?? null : null
-  const cancelled = turn.status === 'cancelled'
+  const cancelled = turn.status === 'cancelled' && !options.omitCancelled
   const denial = turn.status === 'completed' ? trailingDenial(turn) : null
   if (!text && !failure && !cancelled && !denial) return null
   const status = messageStatus(turn)

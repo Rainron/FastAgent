@@ -1,5 +1,39 @@
 import { describe, expect, it } from 'vitest'
-import { archiveWorkspaceItem, filterConversations, removeWorkspaceItem, renameWorkspaceItem, toggleBatchPageSelection, toggleBatchSelection, upsertRecentWorkspaceItem } from './workspace-data'
+import { archiveWorkspaceItem, filterConversations, findActiveProjectConversation, removeWorkspaceItem, renameWorkspaceItem, toggleBatchPageSelection, toggleBatchSelection, upsertRecentWorkspaceItem } from './workspace-data'
+
+describe('findActiveProjectConversation', () => {
+  const items = [
+    { id: 'a', projectId: 'p1', archived: false },
+    { id: 'b', projectId: 'p1', archived: false },
+    { id: 'c', projectId: 'p1', archived: true },
+    { id: 'd', projectId: 'p2', archived: false }
+  ]
+
+  it('多条在跑时取最近有动静的那条', () => {
+    const states = {
+      a: { status: 'running', updatedAt: 10 },
+      b: { status: 'waiting_user', updatedAt: 20 }
+    }
+    expect(findActiveProjectConversation(items, states, 'p1')?.id).toBe('b')
+  })
+
+  it('已归档与别的项目不参与', () => {
+    const states = {
+      c: { status: 'running', updatedAt: 99 },
+      d: { status: 'running', updatedAt: 99 }
+    }
+    expect(findActiveProjectConversation(items, states, 'p1')).toBeNull()
+  })
+
+  it('只有收尾状态时不算进行中', () => {
+    const states = { a: { status: 'completed', updatedAt: 30 }, b: { status: 'idle', updatedAt: 40 } }
+    expect(findActiveProjectConversation(items, states, 'p1')).toBeNull()
+  })
+
+  it('paused 也算进行中', () => {
+    expect(findActiveProjectConversation(items, { a: { status: 'paused', updatedAt: 1 } }, 'p1')?.id).toBe('a')
+  })
+})
 
 describe('workspace data actions', () => {
   const items = [

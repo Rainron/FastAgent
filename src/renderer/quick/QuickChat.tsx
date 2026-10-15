@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Suspense, lazy } from 'react'
-import { Check, ChevronDown, CornerDownLeft, Eraser, Loader2, MessageSquare, Minus, ShieldAlert, Sparkles, Square, Wrench, X } from 'lucide-react'
+import { Check, ChevronDown, CornerDownLeft, Eraser, Loader2, MessageSquare, Minus, Paperclip, ShieldAlert, Sparkles, Square, Wrench, X } from 'lucide-react'
 import rehypeSanitize from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
-import type { AgentEvent, ApprovalDecision, ApprovalRequest, AuthSnapshot, BootstrapData, ConversationMode, ConversationTurn, LocalModelSummary, ModelOption, ThinkingLevel } from '../../shared/types'
+import type { AgentEvent, ApprovalDecision, ApprovalRequest, Attachment, AuthSnapshot, BootstrapData, ConversationMode, ConversationTurn, LocalModelSummary, ModelOption, ThinkingLevel } from '../../shared/types'
 import { initialSelectedModelId, mergeModelOptions, modelMetaLabel, normalizeThinkingLevel, thinkingLevelsForModel, triggerModelLabel } from '../model-picker'
 import { subscribeLocalModels } from '../local-model-sync'
 import { useDismiss } from '../use-dismiss'
 import { createStreamBuffer } from '../ai-response/stream-buffer'
 import { ReasoningOptions } from '../composer/ComposerSelectors'
+import { appendAttachments, attachmentFromFile } from '../composer/attachments'
 
 // markdown 渲染链路体积大且第一条回答出现前用不到：异步加载，小窗首屏不背这包
 const LazyMarkdown = lazy(() => import('react-markdown'))
@@ -28,6 +29,7 @@ interface QuickMessage {
   text: string
   /** 回答尚未结束时显示加载态 */
   streaming?: boolean
+  attachments?: Attachment[]
   /** tool 行的结局，用于着色 */
   toolStatus?: 'running' | 'completed' | 'failed'
 }
@@ -60,6 +62,7 @@ export function QuickChat() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<QuickMessage[]>([])
   const [draft, setDraft] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // 模型与思考级别：localStorage 记住上次选择，其次回退默认模型；与主窗口互不干扰。
@@ -76,6 +79,7 @@ export function QuickChat() {
   const runIdRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const attachmentInputRef = useRef<HTMLInputElement>(null)
   // 发送新消息时用动画滚动到底；流式文本增长时直接赋值，避免动画被逐 token 打断
   const smoothScrollRef = useRef(false)
 
@@ -191,15 +195,24 @@ export function QuickChat() {
     node.scrollTo({ top: node.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
   }, [messages])
 
+  const addAttachments = useCallback((files: FileList | File[]) => {
+    const added = Array.from(files).map(attachmentFromFile).filter((item) => Boolean(item.localPath))
+    if (!added.length) return
+    setAttachments((current) => appendAttachments(current, added))
+    setError(null)
+  }, [])
+
   const send = useCallback(async () => {
     const prompt = draft.trim()
-    if (!prompt || busy) return
+    if ((!prompt && !attachments.length) || busy) return
     if (!conversationId) { setError('会话尚未就绪，请稍候'); return }
     setError(null)
     setDraft('')
+    const outgoingAttachments = attachments
     const turn = await window.fastAgent.chat.quickSend({
       conversationId,
       prompt,
+      attachments: outgoingAttachments,
       modelId: selectedModelId ?? bootstrap?.default_model_id ?? null,
       thinkingLevel,
       mode,
@@ -207,17 +220,18 @@ export function QuickChat() {
       permission: mode === 'agent' ? 'ask' : null
     }).catch((cause) => { setError(cause instanceof Error ? cause.message : String(cause)); return null })
     if (!turn) return
+    setAttachments([])
     // 本次更新把「用户消息 + 助手占位」一起加进列表，滚动动画只在这一刻生效一次
     smoothScrollRef.current = true
     runIdRef.current = turn.runId
     setBusy(true)
     setMessages((current) => [
       ...current,
-      { id: `u-${turn.turnId}`, role: 'user', text: prompt },
+      { id: `u-${turn.turnId}`, role: 'user', text: prompt, attachments: outgoingAttachments },
       // 流式 token 事件按 turnId 追加，助手占位行 id 直接用 a-<turnId> 对齐
       { id: `a-${turn.turnId}`, role: 'assistant', text: '', streaming: true }
     ])
-  }, [bootstrap, busy, conversationId, draft, mode, selectedModelId, thinkingLevel])
+  }, [attachments, bootstrap, busy, conversationId, draft, mode, selectedModelId, thinkingLevel])
 
   const toggleMode = useCallback(() => {
     setMode((current) => {
@@ -320,6 +334,7 @@ export function QuickChat() {
           <span>{message.text}</span>
         </div>
         : <div key={message.id} className={`quick-chat-message quick-chat-message-${message.role}`}>
+        {message.attachments?.length ? <div className="quick-chat-attachments">{message.attachments.map((attachment) => <span key={attachment.id}><Paperclip size={10} />{attachment.name}</span>)}</div> : null}
         {message.role === 'assistant'
           ? message.text
             ? <Suspense fallback={<span>{message.text}</span>}><LazyMarkdown {...markdownPlugins}>{message.text}</LazyMarkdown></Suspense>
@@ -331,6 +346,9 @@ export function QuickChat() {
     </div>
     {approval && <QuickApprovalBar approval={approval} onRespond={respondApproval} />}
     <footer className="quick-chat-composer">
+      {attachments.length > 0 && <div className="quick-chat-pending-attachments">{attachments.map((attachment) => <button key={attachment.id} type="button" title="移除附件" onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}><Paperclip size={10} />{attachment.name}<X size={10} /></button>)}</div>}
+      <input ref={attachmentInputRef} type="file" multiple hidden onChange={(event) => { if (event.target.files) addAttachments(event.target.files); event.target.value = '' }} />
+      <button className="quick-chat-attach" type="button" aria-label="添加附件" title="添加附件" disabled={busy} onClick={() => attachmentInputRef.current?.click()}><Paperclip size={14} /></button>
       <textarea
         ref={inputRef}
         autoFocus
@@ -349,7 +367,7 @@ export function QuickChat() {
       {/* agent 一轮可能跑很久，小窗必须能就地停下，否则只能跑去主窗口点停止 */}
       {busy && mode === 'agent'
         ? <button className="quick-chat-send quick-chat-stop" aria-label="停止执行" title="停止执行" onClick={() => void cancelRun()}><Square size={12} /></button>
-        : <button className="quick-chat-send" disabled={!draft.trim() || busy} aria-label="发送" onClick={() => void send()}>
+        : <button className="quick-chat-send" disabled={(!draft.trim() && !attachments.length) || busy} aria-label="发送" onClick={() => void send()}>
           {busy ? <Loader2 size={14} className="quick-chat-spin" /> : <CornerDownLeft size={14} />}
         </button>}
     </footer>

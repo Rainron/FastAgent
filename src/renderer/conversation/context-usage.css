@@ -19,3 +19,16 @@
 .context-cache-note { margin: 9px 0 0; color: var(--text-tertiary); font-size: 10px; line-height: 1.6; }
 .context-cache-model { overflow-wrap: anywhere; }
 .context-cache-pending { margin: 9px 0 0; color: var(--text-secondary); font-size: 10px; line-height: 1.6; }
+
+/* 订阅额度：厂商响应头里报回来的窗口用量，读不到就整段不出现 */
+.plan-limits { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: grid; gap: 12px; }
+.plan-limit-title { color: var(--text-primary); font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.plan-limit-row + .plan-limit-row { margin-top: 9px; }
+.plan-limit-head { display: flex; align-items: baseline; gap: 8px; }
+.plan-limit-name { color: var(--text-secondary); font-size: 11px; }
+.plan-limit-reset { margin-left: auto; color: var(--text-tertiary); font-size: 10px; }
+.plan-limit-percent { color: var(--text-secondary); font: 10px "JetBrains Mono", Consolas, monospace; }
+.plan-limit-bar { height: 4px; margin-top: 5px; border-radius: 999px; background: var(--surface-soft); overflow: hidden; }
+.plan-limit-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--accent-tech); transition: width var(--motion-focus) var(--motion-ease); }
+.plan-limit-bar > span.warn { background: var(--warning, #f59e0b); }
+.plan-limit-bar > span.danger { background: var(--danger); }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +21,46 @@ describe('model sampling parameters', () => {
   it('model_kind=multimodal 时模型定义申明图片输入', async () => {
     const { model } = await piRuntime.createModelRuntime({ id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test', model_kind: 'multimodal' } as never)
     expect(model.input).toContain('image')
+  })
+})
+
+describe('direct chat image input', () => {
+  const credentials = { id: 1, provider: 'openai', protocol: 'openai', name: 'test', model_name: 'test', api_key: 'test-key' } as never
+
+  function runtimeFixture(input: ('text' | 'image')[]) {
+    const stream = {
+      async *[Symbol.asyncIterator]() { yield { type: 'text_delta', delta: 'ok' } },
+      result: async () => ({ stopReason: 'stop', usage: { input: 1, output: 1, totalTokens: 2 } })
+    }
+    let context: unknown
+    const streamSimple = vi.fn((_model: unknown, nextContext: unknown) => { context = nextContext; return stream })
+    return { runtime: { streamSimple } as never, model: { id: 'test', input } as never, streamSimple, getContext: () => context }
+  }
+
+  it('把图片附件放入 Pi 的 image content block', async () => {
+    const path = track(join(mkdtempSync(join(tmpdir(), 'fastagent-image-')), 'test.png'))
+    writeFileSync(path, Buffer.from([137, 80, 78, 71]))
+    const fixture = runtimeFixture(['text', 'image'])
+    await piRuntime.runDirectChat({
+      prompt: '描述图片', attachments: [{ id: 'a1', name: 'test.png', type: 'image/png', size: 4, localPath: path }],
+      credentials, thinkingLevel: 'off', history: [],
+      createModelRuntime: async () => fixture,
+      signal: new AbortController().signal
+    })
+    const messages = fixture.getContext() as { messages: Array<{ content: unknown }> }
+    expect(messages.messages[0].content).toEqual([
+      { type: 'text', text: '描述图片' },
+      { type: 'image', data: Buffer.from([137, 80, 78, 71]).toString('base64'), mimeType: 'image/png' }
+    ])
+  })
+
+  it('文本模型收到图片时明确拒绝，不发送 image omitted 占位文本', async () => {
+    const fixture = runtimeFixture(['text'])
+    await expect(piRuntime.runDirectChat({
+      prompt: '描述图片', attachments: [{ id: 'a1', name: 'test.png', type: 'image/png', size: 1, localPath: 'missing.png' }],
+      credentials, thinkingLevel: 'off', history: [], createModelRuntime: async () => fixture
+    })).rejects.toThrow('当前模型不支持图片输入')
+    expect(fixture.streamSimple).not.toHaveBeenCalled()
   })
 })
 
@@ -229,9 +269,9 @@ describe('Pi 会话工具白名单', () => {
     expect(toolNamesForMode('agent', 'powershell')).toContain('powershell')
   })
 
-  it('Chat 模式给全套只读工具与 shell，不给写类工具', () => {
-    expect(toolNamesForMode('chat', 'bash')).toEqual(['read', 'grep', 'find', 'ls', 'bash'])
-    expect(toolNamesForMode('chat', 'powershell')).toEqual(['read', 'grep', 'find', 'ls', 'powershell'])
+  it('Chat 模式给全套只读工具、question 与 shell，不给写类工具', () => {
+    expect(toolNamesForMode('chat', 'bash')).toEqual(['read', 'grep', 'find', 'ls', 'question', 'bash'])
+    expect(toolNamesForMode('chat', 'powershell')).toEqual(['read', 'grep', 'find', 'ls', 'question', 'powershell'])
     for (const writeTool of ['edit', 'write', 'patch']) {
       expect(toolNamesForMode('chat', 'bash')).not.toContain(writeTool)
     }

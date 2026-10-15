@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react'
+import { cleanIpcError } from '../../../ipc-error'
 
 /**
  * 统一的异步动作状态：按 key 记录进行中与失败原因，
@@ -23,7 +24,8 @@ export function useAsyncActions() {
     try {
       return await action()
     } catch (error) {
-      setErrors((current) => ({ ...current, [key]: error instanceof Error ? error.message : String(error) }))
+      // 主进程抛的错会被 Electron 包上 IPC 通道名，只留主进程写的那句话
+      setErrors((current) => ({ ...current, [key]: cleanIpcError(error, '操作失败') }))
       return undefined
     } finally {
       setPending((current) => {

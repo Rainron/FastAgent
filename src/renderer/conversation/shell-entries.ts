@@ -41,3 +41,17 @@ export function groupShellEntries(entries: readonly ShellCommandEntry[], turnIds
   }
   return grouped
 }
+
+/**
+ * 重跑第 N 轮时清掉排在它之后的命令卡：锚在第 N 轮及之后回合上的命令都发生在旧回答之后。
+ * 锚点回合已不存在的按排在末尾处理，一样清掉；还在跑的保留，否则就没有地方点停止了。
+ */
+export function dropShellEntriesFrom(entries: readonly ShellCommandEntry[], turnIds: readonly string[], fromTurnId: string): ShellCommandEntry[] {
+  const from = turnIds.indexOf(fromTurnId)
+  if (from < 0) return [...entries]
+  return entries.filter((entry) => {
+    if (entry.status === 'running' || entry.anchorTurnId === null) return true
+    const index = turnIds.indexOf(entry.anchorTurnId)
+    return index >= 0 && index < from
+  })
+}

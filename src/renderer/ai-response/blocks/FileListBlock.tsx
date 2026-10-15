@@ -1,4 +1,6 @@
 import { memo, useState } from 'react'
+import { useHeightAnimation } from '../../use-height-animation'
+import { alignStartIfAbove } from '../../scroll-anchor'
 import { ChevronDown, File, Folder } from 'lucide-react'
 import type { FileListBlock as FileListBlockData } from '../blocks'
 import { parseFileReference } from '../file-reference'
@@ -10,11 +12,13 @@ const COLLAPSE_ROWS = 16
 function FileListBlockView({ block }: { block: FileListBlockData }) {
   const actions = useResponseActions()
   const [expanded, setExpanded] = useState(false)
+  // 展开 / 收起是原地换内容，高度从旧值补间到新值，不再一下跳变
+  const height = useHeightAnimation<HTMLDivElement>()
   const collapsible = block.entries.length > COLLAPSE_ROWS
   const visible = collapsible && !expanded ? block.entries.slice(0, COLLAPSE_ROWS) : block.entries
 
   return (
-    <div className="file-list-block">
+    <div className="file-list-block" ref={height.ref}>
       <div className="file-list-head">
         <span className="file-list-base">{block.base || '工作区根目录'}</span>
         <span className="file-list-count">{block.entries.length} 项</span>
@@ -29,7 +33,7 @@ function FileListBlockView({ block }: { block: FileListBlockData }) {
         })}
       </div>
       {block.note && <p className="file-list-note">{block.note}</p>}
-      {collapsible && <button type="button" className="block-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+      {collapsible && <button type="button" className="block-expand" onClick={() => { if (expanded) alignStartIfAbove(height.ref.current); height.capture(); setExpanded((value) => !value) }} aria-expanded={expanded}>
         <ChevronDown size={13} />{expanded ? '收起' : `展开全部 ${block.entries.length} 项`}
       </button>}
     </div>

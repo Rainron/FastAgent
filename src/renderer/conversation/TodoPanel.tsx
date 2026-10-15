@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import type { ExecutionSnapshot, TodoItem, TodoStatus } from '../../shared/types'
 import { formatDuration, groupTodosByPhase, todoStats } from './todo-status'
+import { Collapse } from '../Collapse'
 
 /** TodoPanel 挂在当前 Agent 回合内，跟随该回合的执行状态，不再是页面级模块。 */
 export type TodoRunStatus = 'working' | 'done' | 'failed'
@@ -48,7 +49,7 @@ export const TodoPanel = memo(function TodoPanel({ items, status, startedAt, fin
         {progress}
         <ChevronRight size={12} className="todo-toggle-chevron" />
       </button>
-      {expanded && groups.map((group) => (
+      <Collapse open={expanded} appear={false}><div>{groups.map((group) => (
         <div key={group.phase ?? '__flat__'}>
           {group.phase && <div className="todo-phase-label">{group.phase}</div>}
           <ul className="todo-list">
@@ -60,7 +61,7 @@ export const TodoPanel = memo(function TodoPanel({ items, status, startedAt, fin
             ))}
           </ul>
         </div>
-      ))}
+      ))}</div></Collapse>
     </section>
   )
 })

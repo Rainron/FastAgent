@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { ToolCallRecord, TraceLabelStyle } from '../../shared/types'
 import type { ToolCallGroup } from '../activity'
@@ -11,6 +11,8 @@ import type { TraceDiffStat, TraceToolStatus } from '../execution-trace'
 import { useTraceDisplay } from './trace-display-context'
 import { ToolReadPreview } from './ToolReadPreview'
 import { PreviewToolCard } from './PreviewToolCard'
+import { Collapse } from '../Collapse'
+import { alignStartIfAbove } from '../scroll-anchor'
 
 const toolTitles: Record<string, string> = {
   read: '读取文件',
@@ -91,7 +93,7 @@ function ToolArguments({ toolName, args, workspaceRoot, flat }: { toolName: stri
       <button type="button" className="tool-args-toggle" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <ChevronDown size={12} />入参 {entries.length} 项
       </button>
-      {open && list}
+      <Collapse open={open} appear={false}>{list}</Collapse>
     </div>
   )
 }
@@ -136,6 +138,9 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
   const [childCalls, setChildCalls] = useState<ToolCallRecord[]>([])
   const [lookupFailed, setLookupFailed] = useState(false)
   const display = useTraceDisplay()
+  const cardRef = useRef<HTMLDivElement>(null)
+  // 展开后摘要行吸顶；在吸顶状态下点它收起，要先把卡片开头对齐回视口，头部才不会一下跳走
+  const toggle = () => { if (open) alignStartIfAbove(cardRef.current); setOpen((value) => !value) }
 
   useEffect(() => {
     if (!open || record || lookupFailed) return
@@ -164,23 +169,25 @@ export function ToolCallCard({ turnId, group, summary, workspaceRoot }: { turnId
   const readPath = group.toolName === 'read' ? readTargetPath(record?.arguments, summary?.input ?? null) : null
   const readPreviewOn = Boolean(readPath) && (display.inlineImagePreview || display.textExcerpt)
   const detailBlocks = readPreviewOn ? body.filter((block) => block.type !== 'code') : body
+  // 读取结果（Agent 实际读到的文本）交给预览直接用，不再回头读盘
+  const recordedRead = readPreviewOn ? body.find((block): block is Extract<typeof block, { type: 'code' }> => block.type === 'code')?.code ?? null : null
 
   return (
-    <div className={`tool-call-card ${head.status ?? 'completed'} ${open ? 'open' : ''}`}>
-      <button type="button" className="tool-call-summary" onClick={() => setOpen((value) => !value)} aria-expanded={open} title={open ? '收起' : '展开'}>
+    <div className={`tool-call-card ${head.status ?? 'completed'} ${open ? 'open' : ''}`} ref={cardRef}>
+      <button type="button" className="tool-call-summary" onClick={toggle} aria-expanded={open} title={open ? '收起' : '展开'}>
         <ToolCallBlockRenderer block={head} durationMs={durationMs} diff={display.showDiffStats ? summary?.diff ?? null : null} />
       </button>
       {/* 预览卡片常显：它是给用户看的结果，不该藏在折叠详情里 */}
       {group.toolName === 'preview_show' && <PreviewToolCard turnId={turnId} toolCallId={group.toolCallId} status={head.status ?? 'completed'} />}
-      {open && (
+      <Collapse open={open} appear={false}>
         <div className="tool-call-detail">
-          {readPath && readPreviewOn && <ToolReadPreview path={readPath} workspaceRoot={root} />}
+          {readPath && readPreviewOn && <ToolReadPreview path={readPath} workspaceRoot={root} recorded={recordedRead} />}
           {detailBlocks.map((block) => <MessageBlockRenderer key={block.id} block={block} />)}
           {!record && !body.length && !readPreviewOn && (lookupFailed ? <div className="tool-call-empty">工具调用记录不可用</div> : <div className="tool-call-empty">记录尚未落库，稍后自动加载…</div>)}
           {record && <ToolArguments toolName={group.toolName} args={record.arguments} workspaceRoot={root} flat={display.flatToolArgs} />}
           {childCalls.length > 0 && <div className="tool-call-children"><div className="tool-call-children-title">Sub-agent 工具调用</div>{childCalls.map((child) => <ToolCallCard key={child.id} turnId={turnId} group={{ toolCallId: child.id, toolName: child.toolName, events: [] }} summary={{ input: null, status: child.status === 'success' ? 'done' : child.status === 'running' || child.status === 'waiting_permission' ? 'running' : 'failed', durationMs: child.durationMs }} workspaceRoot={root} />)}</div>}
         </div>
-      )}
+      </Collapse>
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Check, FolderOpen, Plus, RotateCcw, Shield, ShieldAlert, ShieldCheck, SlidersHorizontal, TerminalSquare, Trash2, X } from 'lucide-react'
 import type { AppSettings } from '../../shared/types'
 import type { LogicalToolKey, PermissionAction, PermissionRuleSet } from '../../shared/permission-rules'
+import { SUBAGENT_DEFAULT_MAX_TOOL_CALLS, SUBAGENT_MAX_TOOL_CALLS_CEILING } from '../../shared/subagent'
 import {
   BUILTIN_PRESET_IDS,
   effectiveRuleSet,
@@ -251,8 +252,23 @@ export function PermissionSettings({ settings, onChange }: { settings: AppSettin
 
   </section>
   <section className="settings-panel">
-    <div className="settings-section-heading"><div><h2>Sub-agent</h2><p>只读 Sub-agent 仅用于独立调查和验证；关闭后主 Agent 无法调用该能力。</p></div></div>
-    <label className="switch-row" style={{ marginTop: 8 }}><input type="checkbox" checked={settings.subAgentEnabled} onChange={(event) => onChange({ subAgentEnabled: event.target.checked })} /><span className="switch-visual" /><span><strong>启用只读 Sub-agent</strong><small>允许主 Agent 委派 read、grep、find、ls 调查任务</small></span></label>
+    <div className="settings-section-heading"><div><h2>Sub-agent</h2><p>把边界清晰的调查、验证或实现任务委派给专门角色；关闭后主 Agent 无法调用该能力。可写角色的文件与命令操作仍按当前权限档位请求批准。</p></div></div>
+    <label className="switch-row" style={{ marginTop: 8 }}><input type="checkbox" checked={settings.subAgentEnabled} onChange={(event) => onChange({ subAgentEnabled: event.target.checked })} /><span className="switch-visual" /><span><strong>启用 Sub-agent 委派</strong><small>内置 scout / reviewer 只读调查，builder 可改文件，verifier 可跑验证命令</small></span></label>
+    {settings.subAgentEnabled && <div className="settings-row">
+      <div>
+        <strong>单个子任务的工具调用上限</strong>
+        <span>推荐 {SUBAGENT_DEFAULT_MAX_TOOL_CALLS} 次。达到上限即中止该子任务并记为超时，已产出的内容仍会回传。范围很广的调查任务可以调高；自定义角色单独声明的值优先于这里。</span>
+      </div>
+      <input
+        className="settings-number-input"
+        type="number"
+        min={1}
+        max={SUBAGENT_MAX_TOOL_CALLS_CEILING}
+        value={settings.subAgentMaxToolCalls}
+        onChange={(event) => onChange({ subAgentMaxToolCalls: Number(event.target.value) })}
+        aria-label="单个子任务的工具调用上限"
+      />
+    </div>}
     {settings.subAgentEnabled && <details className="settings-shell-advanced"><summary>管理自定义 Sub-agent</summary><SubAgentSettings settings={settings} onChange={onChange} /></details>}
 
     <div className="settings-section-heading" style={{ marginTop: 18 }}><div><h2>Shell 偏好</h2><p>agent 模式下使用的命令工具；Windows 默认 Git Bash，探测不到可用 bash 时自动改用 PowerShell。</p></div></div>

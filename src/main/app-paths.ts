@@ -20,7 +20,7 @@ export interface AppPaths {
   skillsDir: string
   mcpDir: string
   pluginsDir: string
-  /** DSH 插件安装目录。 */
+  /** dsh 插件安装目录；下面的 node_modules 同时是插件解析裸依赖的根 */
   dshPluginsDir: string
   attachmentsDir: string
   /** 未绑定项目的会话（快速对话的 agent 模式是主要来源）的工作目录，避免落到应用安装目录。 */
@@ -144,7 +144,7 @@ export function healAgentSettings(paths: AppPaths) {
 }
 
 export function ensureAppDirectories(paths: AppPaths) {
-  for (const path of [paths.dataDir, paths.sessionsDir, paths.agentDir, paths.skillsDir, paths.mcpDir, paths.pluginsDir, paths.attachmentsDir, paths.quickWorkspaceDir, paths.backupsDir, paths.exportsDir]) {
+  for (const path of [paths.dataDir, paths.sessionsDir, paths.agentDir, paths.skillsDir, paths.mcpDir, paths.pluginsDir, paths.dshPluginsDir, paths.attachmentsDir, paths.quickWorkspaceDir, paths.backupsDir, paths.exportsDir]) {
     mkdirSync(path, { recursive: true })
   }
 }

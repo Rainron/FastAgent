@@ -225,6 +225,20 @@ describe('LocalStore 成果版本', () => {
     store.close()
   })
 
+  it('撤销标记：打过标记的不再出现在可撤销列表里，同一轮再写入时标记清掉', () => {
+    const store = makeStore()
+    change(store)
+    change(store, { path: 'docs/new.md', operation: 'create', beforeHash: null, beforeText: null })
+    expect(store.listRevertableFileChanges('account-a', 't1').map((item) => item.path)).toEqual(['docs/new.md', 'docs/plan.md'])
+    expect(store.listRevertableFileChanges('account-a', 't1')[1]).toMatchObject({ conversationId: 'c1', operation: 'update', afterHash: 'h1', beforeText: '旧内容' })
+    store.markFileChangesReverted('account-a', 't1', ['docs/plan.md'])
+    expect(store.listRevertableFileChanges('account-a', 't1').map((item) => item.path)).toEqual(['docs/new.md'])
+    expect(store.listFileChanges('account-a', 't1').files.find((file) => file.path === 'docs/plan.md')?.reverted).toBe(true)
+    change(store)
+    expect(store.listFileChanges('account-a', 't1').files.find((file) => file.path === 'docs/plan.md')?.reverted).toBe(false)
+    store.close()
+  })
+
   it('没有原文的记录不可恢复，也不谎称可以', () => {
     const store = makeStore()
     change(store, { turnId: 't2', beforeText: null, diff: null })
@@ -1118,6 +1132,7 @@ describe('LocalStore agent tool runtime tables', () => {
 
     store.removePermissionRule('account-a', 'shell', 'npm install')
     expect(store.listPermissionRules('account-a').map((rule) => rule.pattern)).toEqual(['rm -rf node_modules'])
+
     store.close()
   })
 
@@ -1972,6 +1987,31 @@ describe('LocalStore 用量总览', () => {
     const local = new Date(Date.now() - 86_400_000)
     expect(day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(day >= local.toISOString().slice(0, 10)).toBe(true)
+    store.close()
+  })
+
+  it('自定义日期区间按本地日期闭区间过滤，起止顺序颠倒也能统计', () => {
+    const store = makeStore()
+    store.createConversation('ns', { id: 'c1', title: '用量' })
+    const at = (offsetDays: number) => {
+      const date = new Date()
+      date.setDate(date.getDate() - offsetDays)
+      date.setHours(12, 0, 0, 0)
+      return date
+    }
+    const key = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    store.recordModelUsage('ns', usageRecord({ requestId: 'r-today', createdAt: at(0).toISOString(), inputTokens: 10, outputTokens: 1 }))
+    store.recordModelUsage('ns', usageRecord({ requestId: 'r-2', createdAt: at(2).toISOString(), inputTokens: 20, outputTokens: 2 }))
+    store.recordModelUsage('ns', usageRecord({ requestId: 'r-9', createdAt: at(9).toISOString(), inputTokens: 900, outputTokens: 90 }))
+
+    const window = { start: key(at(3)), end: key(at(0)) }
+    const overview = store.getModelUsageOverview('ns', window)
+    expect(overview.totals.requestCount).toBe(2)
+    expect(overview.totals.inputTokens).toBe(30)
+    // 端点都含在内：只选今天一天也该有记录
+    expect(store.getModelUsageOverview('ns', { start: key(at(0)), end: key(at(0)) }).totals.requestCount).toBe(1)
+    // 颠倒起止等价于正序
+    expect(store.getModelUsageOverview('ns', { start: window.end, end: window.start }).totals.requestCount).toBe(2)
     store.close()
   })
 

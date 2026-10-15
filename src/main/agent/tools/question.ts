@@ -17,9 +17,10 @@ export function createQuestionTool(context: QuestionToolContext): ToolDefinition
     description: '向用户提出一个或多个澄清问题并等待回答。任务含糊、缺少关键决策或需要用户选择时使用。',
     promptSnippet: 'Ask the user clarifying questions and wait for answers',
     promptGuidelines: [
-      'Use question when the task is ambiguous, requires a user decision, or needs information only the user can provide.',
+      'Use question whenever the task is ambiguous, requires a user decision, or needs information only the user can provide. Never ask in prose and stop — asking in the reply text shows no dialog, so the user has to type the answer out.',
       'Ask at most three questions at a time; each question must have a unique id.',
-      'Options may be plain strings or objects {title, description, recommended}; set recommended on the option you advise. Use type "multi-select" for multiple answers, "text" or "textarea" for free-form input, and required:false for optional questions.'
+      'Prefer selectable answers: give 2-4 concrete, mutually exclusive options so the user can click instead of typing. Fall back to "text"/"textarea" only when the answers cannot be enumerated.',
+      'Options may be plain strings or objects {title, description, recommended}; set recommended on the option you advise, and describe what picking it leads to. Use type "multi-select" for multiple answers and required:false for optional questions.'
     ],
     parameters: Type.Object({
       questions: Type.Array(Type.Object({

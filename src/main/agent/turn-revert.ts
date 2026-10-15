@@ -32,12 +32,25 @@ export interface TurnRevertStore {
 /**
  * 撤销一整轮：根目录与运行时同一规则（会话归属的项目目录，未归属落到快速工作区），
  * 写回成功的才打撤销标记，跳过的留在台账里，界面仍显示为未撤销。
+ *
+ * 一个回合只属于一个会话；台账里混入其他会话的变更属于数据异常（迁移残留或写入错误），
+ * 混合根目录解析可能把文件写进错误的工作区，这类条目直接跳过并说明原因，
+ * 不影响其余同会话条目的正常撤销。
  */
 export async function revertTurn(store: TurnRevertStore, namespace: string, turnId: string, quickWorkspaceDir: string): Promise<TurnRevertResult> {
   const changes = store.listRevertableFileChanges(namespace, turnId)
   if (!changes.length) return { reverted: [], skipped: [] }
-  const root = store.getConversationRoot(namespace, changes[0].conversationId) ?? quickWorkspaceDir
-  const result = await revertFileChanges(root, changes)
+  const ownerConversationId = changes[0].conversationId
+  const own: RevertableFileChange[] = []
+  const result: TurnRevertResult = { reverted: [], skipped: [] }
+  for (const change of changes) {
+    if (change.conversationId === ownerConversationId) own.push(change)
+    else result.skipped.push({ path: change.path, reason: '台账归属异常（会话不一致），已跳过' })
+  }
+  const root = store.getConversationRoot(namespace, ownerConversationId) ?? quickWorkspaceDir
+  const reverted = await revertFileChanges(root, own)
+  result.reverted = reverted.reverted
+  result.skipped.push(...reverted.skipped)
   store.markFileChangesReverted(namespace, turnId, result.reverted)
   return result
 }

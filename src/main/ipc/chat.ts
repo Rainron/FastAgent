@@ -101,7 +101,7 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
     return { runId, turnId: turn.id, turn }
   })
   // 快速对话专用通道：直接调模型接口，不走 pi 运行时，首 token 最快。
-  handle('chat:quick-send', async (_event, input: { conversationId: string; prompt: string; modelId: number | null; thinkingLevel: import('../../shared/types').ThinkingLevel; mode?: import('../../shared/types').ConversationMode; permission?: import('../../shared/types').PermissionPreset | null }) => {
+  handle('chat:quick-send', async (_event, input: { conversationId: string; prompt: string; attachments?: import('../../shared/types').Attachment[]; modelId: number | null; thinkingLevel: import('../../shared/types').ThinkingLevel; mode?: import('../../shared/types').ConversationMode; permission?: import('../../shared/types').PermissionPreset | null }) => {
     const sendStartedAt = Date.now()
     const namespace = ctx.requireNamespace()
     if (!ctx.store.getConversation(namespace, input.conversationId)) throw new Error('会话不存在')
@@ -116,7 +116,8 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
     }
     const now = new Date().toISOString()
     const runtimeConfig = { modelId: input.modelId ?? null, thinkingLevel: input.thinkingLevel || 'auto', mode: agentMode ? 'agent' as const : 'chat' as const, permission: quickPermission }
-    const turn = ctx.store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments: [], runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
+    const attachments = archiveAttachments(ctx.appPaths.attachmentsDir, input.conversationId, input.attachments || [], ctx.settings)
+    const turn = ctx.store.createTurn(namespace, input.conversationId, { userMessage: { text: input.prompt, createdAt: now }, attachments, runtimeConfig, activity: { status: 'working', startedAt: now, finishedAt: null, events: [] }, status: 'working', createdAt: now })
     const runId = randomUUID()
     ctx.store.saveRunState(namespace, { conversationId: input.conversationId, projectId: ctx.store.getConversation(namespace, input.conversationId)?.projectId ?? null, status: 'running', hasUnreadResult: false, updatedAt: Date.now() })
     const controller = new AbortController()
@@ -135,8 +136,8 @@ export function registerChatIpc(handle: IpcRegistrar, ctx: MainContext) {
         provider: agentMode ? credentials?.provider ?? 'unknown' : 'quick',
         modelId: input.modelId ?? -1
       }, () => ctx.conversationRuns.run(key, () => agentMode
-        ? ctx.runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, 'agent', input.modelId, input.thinkingLevel || 'auto', quickPermission, '', false, [], controller.signal, acceptedAt)
-        : ctx.runQuickChat(runId, turn.id, input.conversationId, namespace, input.prompt, input.modelId, input.thinkingLevel || 'auto', controller.signal, acceptedAt)))
+        ? ctx.runLocalRun(runId, turn.id, input.conversationId, namespace, input.prompt, 'agent', input.modelId, input.thinkingLevel || 'auto', quickPermission, '', false, attachments, controller.signal, acceptedAt)
+        : ctx.runQuickChat(runId, turn.id, input.conversationId, namespace, input.prompt, attachments, input.modelId, input.thinkingLevel || 'auto', controller.signal, acceptedAt)))
       ctx.activeRunCancels.set(runId, scheduled.cancel)
       void scheduled.promise.catch((error) => console.error('[chat:quick-run]', error)).finally(() => ctx.activeRunCancels.delete(runId))
     })

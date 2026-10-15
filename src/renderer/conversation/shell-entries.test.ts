@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { groupShellEntries, type ShellCommandEntry } from './shell-entries'
+import { dropShellEntriesFrom, groupShellEntries, type ShellCommandEntry } from './shell-entries'
 
 function entry(id: string, anchorTurnId: string | null): ShellCommandEntry {
   return {
@@ -44,5 +44,24 @@ describe('groupShellEntries', () => {
   it('锚点回合被删掉时退回最后一轮，不丢卡片', () => {
     const grouped = groupShellEntries([entry('a', 'gone')], ['t1', 't2'])
     expect(grouped.byTurnId.t2.map((item) => item.id)).toEqual(['a'])
+  })
+})
+
+describe('dropShellEntriesFrom', () => {
+  const done = (id: string, anchor: string | null): ShellCommandEntry => ({ ...entry(id, anchor), status: 'completed' as ShellCommandEntry['status'] })
+
+  it('清掉锚在重跑轮及之后的命令，保留更早的与会话开头的', () => {
+    const entries = [done('lead', null), done('a', 't1'), done('b', 't2'), done('c', 't3')]
+    expect(dropShellEntriesFrom(entries, ['t1', 't2', 't3'], 't2').map((item) => item.id)).toEqual(['lead', 'a'])
+  })
+
+  it('锚点已不存在的按末尾处理一并清掉，还在跑的保留', () => {
+    const entries = [done('gone', 'deleted'), entry('live', 't3')]
+    expect(dropShellEntriesFrom(entries, ['t1', 't2', 't3'], 't2').map((item) => item.id)).toEqual(['live'])
+  })
+
+  it('重跑轮不在列表里时原样返回', () => {
+    const entries = [done('a', 't1')]
+    expect(dropShellEntriesFrom(entries, ['t1'], 'nope')).toEqual(entries)
   })
 })

@@ -82,10 +82,19 @@ export interface ArtifactGroup {
 }
 
 export interface InitProjectResult {
-  /** created：已写入 AGENTS.md；exists：项目已有 agent 记忆文件，未覆盖；error：无法执行（如未打开项目）。 */
-  status: 'created' | 'exists' | 'error'
+  /**
+   * ready：勘察完成，`prompt` 交给 Agent 去核实并落盘；error：无法执行（如未打开项目）。
+   *
+   * 文件不再由主进程写：静态模板只能产出占位符，真正的项目指南要由 Agent 读过配置与源码才写得出来。
+   */
+  status: 'ready' | 'error'
+  /** 目标文件绝对路径；已有指令文件时指向那一个（走补全而非新建）。 */
   path: string
   message?: string
+  /** 交给 Agent 的任务书；status 为 ready 时必有。 */
+  prompt?: string
+  /** 已存在的 agent 指令文件名，没有则为 null。 */
+  existing?: string | null
 }
 
 export interface WorkspaceSnapshot {

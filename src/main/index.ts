@@ -20,9 +20,9 @@ import { conversationSessionDir as conversationSessionPath, sessionUserSegment }
 import type { PiSessionRuntime, SessionCompactionOutcome } from './pi-runtime'
 import { estimateTokens, heuristicSummary, piCompactionSettings, piForcedCompactionSettings, projectCompactedState, resolvePolicy, splitTurns, turnsAfterCoveredTurn } from './context-manager'
 import { ContextMeter, type ContextMeasurement } from './context-meter'
-import { createTray, destroyTray, handleWindowClose, isQuitting, setQuitting, setTrayClosePolicy, showWindow } from './tray'
+import { createTray, destroyTray, handleWindowClose, hideToTray, isQuitting, setQuitting, setTrayClosePolicy, showWindow } from './tray'
 import { startDoubleCtrlHook, type DoubleCtrlHook } from './double-key'
-import { applyGlobalShortcuts, hasGlobalMouseBinding, startGlobalMouseShortcuts, unregisterAllGlobalShortcuts, type GlobalMouseHook, type MouseHookSource } from './global-shortcuts'
+import { applyGlobalShortcuts, hasGlobalMouseBinding, migrateShortcutSettings, startGlobalMouseShortcuts, unregisterAllGlobalShortcuts, type GlobalMouseHook, type MouseHookSource } from './global-shortcuts'
 import { acquireUiohook, releaseUiohook } from './hook-lifecycle'
 import { hideQuickWindow, showQuickWindow } from './quick-window'
 import { createSplashWindow, destroySplashWindow, dismissSplashWindow, showSplashWindow, updateSplashWindow } from './splash-window'
@@ -331,7 +331,7 @@ const defaultSettings: AppSettings = {
   showOnStartup: true,
   closeToTray: true,
   theme: 'system',
-  accentColor: 'green',
+  accentColor: 'blue',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',
   surfaceLevel: 'standard',
@@ -363,7 +363,12 @@ let doubleCtrlHook: DoubleCtrlHook | null = null
 let globalMouseHook: GlobalMouseHook | null = null
 
 const globalShortcutHandlers = {
-  showMainWindow: () => { if (mainWindow && !mainWindow.isDestroyed()) showWindow(mainWindow) },
+  // 只有「可见且在前台」才算用户想收起来；被别的窗口盖住或最小化时按下，意图是叫它回前台
+  toggleMainWindow: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isVisible() && !mainWindow.isMinimized() && mainWindow.isFocused()) hideToTray(mainWindow)
+    else showWindow(mainWindow)
+  },
   quickChat: () => showQuickWindow()
 }
 
@@ -750,7 +755,8 @@ function applySettings(next: AppSettings) {
   settings = {
     ...defaultSettings,
     ...next,
-    sandbox: normalizeSandboxSettings(next.sandbox).settings
+    sandbox: normalizeSandboxSettings(next.sandbox).settings,
+    shortcuts: migrateShortcutSettings(next.shortcuts)
   }
   setTrayClosePolicy(settings.closeToTray)
   runScheduler.setMaxConcurrent(settings.limits.maxConcurrentRuns)

@@ -503,6 +503,18 @@ describe('Sub-agent 动态', () => {
     expect(action.activityTarget).toBeNull()
   })
 
+  it('排队中的子任务显示排队，用时从真正开跑算起；迟到的排队事件不回退状态', () => {
+    const queued = (timestamp: number) => sub({ type: 'subagent_started', input: '写 a.md', timestamp, subAgent: { taskId: 't1', agentId: 'builder', agentName: 'builder', status: 'queued' } })
+    const waiting = pick([queued(1000)])
+    expect(waiting.status).toBe('waiting')
+    expect(waiting.startedAt).toBeNull()
+    expect(subAgentActivityLabel(waiting)).toBe('排队中')
+    const running = pick([queued(1000), sub({ type: 'subagent_started', input: '写 a.md', timestamp: 3000 }), queued(4000)])
+    expect(running.status).toBe('running')
+    expect(running.startedAt).toBe(3000)
+    expect(subAgentActivityLabel(running)).toBe('启动中…')
+  })
+
   it('失败的工具同样计入已完成动作数', () => {
     const action = pick([started, sub({ type: 'subagent_update', tool: 'read', status: 'failed' })])
     expect(action.toolCount).toBe(1)

@@ -100,3 +100,36 @@ describe('todoStatusToNode', () => {
     expect(state.steps.map((step) => step.status)).toEqual(['pending', 'cancelled', 'failed'])
   })
 })
+
+describe('插队消息', () => {
+  it('只在轨迹上留一条标记，不推进待办', () => {
+    let state = createExecutionState('run-1', [
+      { id: 'step-1', content: '读取代码', status: 'pending', position: 0 },
+      { id: 'step-2', content: '修改代码', status: 'pending', position: 1 }
+    ])
+
+    state = reduceExecutionState(state, { type: 'user_steer', eventId: 'run-1:steer:1', timestamp: 10 })
+
+    expect(state.steps.map((step) => step.status)).toEqual(['pending', 'pending'])
+    expect(state.activeStepId).toBeNull()
+    expect(state.events).toHaveLength(1)
+    expect(state.events[0]).toMatchObject({ eventId: 'run-1:steer:1', type: 'user_steer', status: 'completed' })
+  })
+
+  it('同一条标记重复进入不追加第二条', () => {
+    let state = createExecutionState('run-1', [])
+    state = reduceExecutionState(state, { type: 'user_steer', eventId: 'run-1:steer:1', timestamp: 10 })
+    state = reduceExecutionState(state, { type: 'user_steer', eventId: 'run-1:steer:1', timestamp: 12 })
+    expect(state.events).toHaveLength(1)
+  })
+
+  it('挂在当前执行中的步骤上，不改变步骤状态', () => {
+    let state = createExecutionState('run-1', [{ id: 'step-1', content: '读取代码', status: 'pending', position: 0 }])
+    state = reduceExecutionState(state, { type: 'tool_started', eventId: 'event-1', stepId: 'step-1', toolCallId: 'call-1', timestamp: 10 })
+    state = reduceExecutionState(state, { type: 'user_steer', eventId: 'run-1:steer:1', timestamp: 11 })
+
+    expect(state.events[1]).toMatchObject({ stepId: 'step-1', type: 'user_steer' })
+    expect(state.steps[0].status).toBe('running')
+    expect(state.activeEventId).toBe('event-1')
+  })
+})

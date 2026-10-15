@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { ChevronRight, Minimize2 } from 'lucide-react'
 import type { CompactionHistory } from '../../shared/types'
 import { compactionDeltaLabel, compactionTriggerLabel } from './compaction-marker'
+import { formatMessageTime } from './message-time'
+import { Collapse } from '../Collapse'
 
 /**
  * 会话时间线上的压缩分隔卡。
@@ -11,7 +13,7 @@ import { compactionDeltaLabel, compactionTriggerLabel } from './compaction-marke
 export function CompactionMarker({ record, contextWindow }: { record: CompactionHistory; contextWindow: number }) {
   const [expanded, setExpanded] = useState(false)
   const summary = record.summaryText?.trim() || ''
-  const time = new Date(record.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const time = formatMessageTime(record.createdAt)
   return <div className={`compaction-marker${expanded ? ' expanded' : ''}`}>
     <button
       type="button"
@@ -31,6 +33,6 @@ export function CompactionMarker({ record, contextWindow }: { record: Compaction
       </span>
       <span className="compaction-marker-line" />
     </button>
-    {expanded && summary && <div className="compaction-marker-summary">{summary}</div>}
+    <Collapse open={expanded && Boolean(summary)} appear={false}><div className="compaction-marker-summary">{summary}</div></Collapse>
   </div>
 }

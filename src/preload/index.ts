@@ -277,7 +277,7 @@ const api: FastAgentApi = {
   workspace: {
     pickRoot: (): Promise<string | null> => ipcRenderer.invoke('workspace:pick-root'),
     setRoot: (path: string | null): Promise<string | null> => ipcRenderer.invoke('workspace:set-root', path),
-    initProject: (options?: { force?: boolean }): Promise<InitProjectResult> => ipcRenderer.invoke('workspace:init-project', options ?? {}),
+    initProject: (): Promise<InitProjectResult> => ipcRenderer.invoke('workspace:init-project'),
     snapshot: (): Promise<WorkspaceSnapshot> => ipcRenderer.invoke('workspace:snapshot'),
     readFile: (path: string): Promise<WorkspaceFileContent> => ipcRenderer.invoke('workspace:read-file', path),
     readImage: (path: string): Promise<{ path: string; dataUrl: string }> => ipcRenderer.invoke('workspace:read-image', path),

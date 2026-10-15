@@ -4,15 +4,17 @@ import { IMAGE_PATH_RE } from '../resource-panel/FileViewer'
 import { useResponseActions } from '../ai-response/response-context'
 import { displayPath } from '../ai-response/path-display'
 import { openLightbox } from './Lightbox'
-import { excerptLines } from './tool-read-excerpt'
+import { excerptLines, previewUnavailable } from './tool-read-excerpt'
 import { useTraceDisplay } from './trace-display-context'
 
 /**
  * 工具卡展开区里的读取预览：图片直接出图，文本给前 N 行节选。
- * 内容一律经主进程按工作区边界校验后返回，渲染进程不碰文件系统；
+ * 文本优先用工具调用记下的结果——那才是 Agent 当时读到的内容，而且不受路径限制：
+ * 技能文件、工作区外的文件都在记录里，重新读盘反而会被工作区边界拦下来。
+ * 只有记录还没落库时才经主进程读盘（按工作区边界校验，渲染进程不碰文件系统）；
  * 卡片没展开就不会挂载，不会在轨迹里批量读磁盘。
  */
-export function ToolReadPreview({ path, workspaceRoot }: { path: string; workspaceRoot: string | null }) {
+export function ToolReadPreview({ path, workspaceRoot, recorded }: { path: string; workspaceRoot: string | null; recorded: string | null }) {
   const display = useTraceDisplay()
   const actions = useResponseActions()
   const [imageUrl, setImageUrl] = useState<string | null>(null)
@@ -28,14 +30,16 @@ export function ToolReadPreview({ path, workspaceRoot }: { path: string; workspa
     setContent(null)
     setError('')
     if (!wanted) return
+    if (!isImage && recorded !== null) { setContent(recorded); return }
     const done = <T,>(run: (value: T) => void) => (value: T) => { if (requestId === requestIdRef.current) run(value) }
-    const fail = done<unknown>(() => setError(isImage ? '图片加载失败' : '文件读取失败'))
+    // 读盘失败不等于工具失败：工具的成败看卡片标题上的状态，这里只说明预览为什么出不来
+    const fail = done<unknown>((cause) => setError(previewUnavailable(cause)))
     if (isImage) {
       window.fastAgent.workspace.readImage(path).then(done((result: { dataUrl: string }) => setImageUrl(result.dataUrl))).catch(fail)
       return
     }
     window.fastAgent.workspace.readFile(path).then(done((result: { content: string }) => setContent(result.content))).catch(fail)
-  }, [path, wanted, isImage])
+  }, [path, wanted, isImage, recorded])
 
   if (!wanted) return null
   const label = displayPath(path, workspaceRoot)
@@ -43,7 +47,7 @@ export function ToolReadPreview({ path, workspaceRoot }: { path: string; workspa
     ? <button type="button" className="tool-read-open" onClick={() => actions.openFile({ path, line: null, endLine: null })} title="在资源面板打开"><ExternalLink size={11} />打开</button>
     : null
 
-  if (error) return <div className="tool-read-preview error"><CircleAlert size={13} />{error}</div>
+  if (error) return <div className="tool-read-preview unavailable"><CircleAlert size={13} />{error}</div>
   if (isImage) {
     if (!imageUrl) return <div className="tool-read-preview loading"><LoaderCircle size={13} className="spin" />正在加载图片…</div>
     return <div className="tool-read-preview image">

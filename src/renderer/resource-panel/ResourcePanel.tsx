@@ -1,8 +1,7 @@
 import type { PreviewTarget } from '../../shared/types'
 import { PreviewPane, type PreviewPaneSource } from './preview/PreviewPane'
 import { isHtmlPath } from './preview/preview-target'
-import { useMemo } from 'react'
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, Code2, Copy, FileCode2, FileImage, FileText, LayoutPanelLeft, Search, WrapText, X } from 'lucide-react'
 import type { FileReference } from '../ai-response/file-reference'
 import { useResourcePanelState } from './use-panel-state'
@@ -56,6 +55,17 @@ export const ResourcePanel = React.memo(function ResourcePanel({ workspaceRoot, 
   }, [file?.path])
 
   const handlePreviewMeta = useCallback((meta: FilePreviewMeta) => setPreviewMeta(meta), [])
+
+  // 切会话时把面板按新会话重建：搜索词与选中项是上一个会话的语境，留着会把新会话的内容过滤掉、
+  // 或把高亮停在一个已经不相关的条目上。展开态与宽度是用户的布局偏好，不动。
+  const lastConversation = useRef<string | null | undefined>(undefined)
+  useEffect(() => {
+    const previous = lastConversation.current
+    lastConversation.current = conversationId
+    if (previous === undefined || previous === conversationId) return
+    updateTab('workspace', { search: '', selected: null })
+    updateTab('artifacts', { search: '', selected: null })
+  }, [conversationId, updateTab])
 
   // 面板在窗口右侧：向左拖变宽、向右拖变窄；限制在 MIN 与窗口 70% 之间。
   const startResize = useCallback((event: React.PointerEvent) => {

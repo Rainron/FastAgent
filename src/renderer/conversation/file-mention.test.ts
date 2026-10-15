@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeMentionQuery, applyMention, filterSlashCommands, filterSkills, SLASH_COMMANDS } from './file-mention'
+import { activeMentionQuery, applyMention, enterMentionDirectory, filterSlashCommands, filterSkills, SLASH_COMMANDS } from './file-mention'
 
 describe('activeMentionQuery', () => {
   it('行首与空白后的 @ 触发补全', () => {
@@ -56,6 +56,28 @@ describe('applyMention', () => {
   })
 })
 
+describe('enterMentionDirectory', () => {
+  it('保留 @ 并把查询换成目录段，菜单可以接着列下一层', () => {
+    const mention = activeMentionQuery('看看 @sr', 6)!
+    const result = enterMentionDirectory('看看 @sr', mention, 'src')
+    expect(result.text).toBe('看看 @src/')
+    expect(result.caret).toBe(8)
+    expect(result.mention).toEqual({ trigger: '@', start: 3, query: 'src/' })
+  })
+
+  it('再进一层时以当前查询为基准替换，不会叠加出重复路径', () => {
+    const mention = activeMentionQuery('@src/', 5)!
+    const result = enterMentionDirectory('@src/', mention, 'src/renderer')
+    expect(result.text).toBe('@src/renderer/')
+    expect(result.mention.query).toBe('src/renderer/')
+  })
+
+  it('结果仍能被 activeMentionQuery 重新识别', () => {
+    const result = enterMentionDirectory('@sr', activeMentionQuery('@sr', 3)!, 'src')
+    expect(activeMentionQuery(result.text, result.caret)).toEqual(result.mention)
+  })
+})
+
 describe('filterSkills', () => {
   const records = [
     { name: 'git-commit-standard', description: '生成规范提交', enabled: true },
@@ -70,6 +92,28 @@ describe('filterSkills', () => {
 
   it('空查询返回全部已启用', () => {
     expect(filterSkills(records, '')).toHaveLength(2)
+  })
+
+  it('不区分大小写', () => {
+    expect(filterSkills(records, 'GIT').map((record) => record.name)).toEqual(['git-commit-standard'])
+    expect(filterSkills([{ name: 'visualize', description: '可视化', enabled: true }], 'Visualize').map((record) => record.name)).toEqual(['visualize'])
+  })
+
+  it('名称命中排在描述命中之前，截断不会把它挤掉', () => {
+    const many = [
+      { name: 'aaa', description: 'v i s u a l 描述里凑得出子序列', enabled: true },
+      { name: 'bbb', description: 'v-i-s 同样凑得出', enabled: true },
+      { name: 'visualize', description: '界面方案可视化', enabled: true }
+    ]
+    expect(filterSkills(many, 'vis', 2).map((record) => record.name)).toEqual(['visualize', 'aaa'])
+  })
+
+  it('名称前缀优先于名称子序列', () => {
+    const many = [
+      { name: 'data-visualization-helper', description: '', enabled: true },
+      { name: 'visualize', description: '', enabled: true }
+    ]
+    expect(filterSkills(many, 'visu').map((record) => record.name)).toEqual(['visualize', 'data-visualization-helper'])
   })
 })
 

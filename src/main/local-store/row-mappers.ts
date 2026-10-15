@@ -45,7 +45,7 @@ export const defaultSettings: AppSettings = {
   showOnStartup: true,
   closeToTray: true,
   theme: 'system',
-  accentColor: 'green',
+  accentColor: 'blue',
   baseFontSize: 'medium',
   uiDensity: 'comfortable',
   surfaceLevel: 'standard',

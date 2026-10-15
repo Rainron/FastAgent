@@ -36,6 +36,23 @@ export function applySlashCommand(text: string, mention: MentionQuery, name: str
   return replaceMentionFragment(text, mention, `/${name} `)
 }
 
+/**
+ * 目录候选的「进入」：把查询替换成 `目录/` 但保留 @ 前缀，菜单不关，下一次搜索直接落到这一层。
+ * 与 applyMention 的区别就是 @ 留着——递归浏览靠的是查询里的路径段，不是另起一个触发符。
+ */
+export function enterMentionDirectory(text: string, mention: MentionQuery, path: string): { text: string; caret: number; mention: MentionQuery } {
+  const query = `${path.replace(/\/+$/, '')}/`
+  const result = replaceMentionFragment(text, mention, `@${query}`)
+  return { ...result, mention: { trigger: '@', start: mention.start, query } }
+}
+
+function replaceMentionFragment(text: string, mention: MentionQuery, inserted: string): { text: string; caret: number } {
+  const end = mention.start + 1 + mention.query.length
+  return {
+    text: `${text.slice(0, mention.start)}${inserted}${text.slice(end)}`,
+    caret: mention.start + inserted.length
+  }
+}
 
 export interface SkillCandidate {
   name: string
@@ -57,12 +74,36 @@ function matchesFuzzy(candidate: string, query: string): boolean {
   return true
 }
 
-/** / 补全的 skill 过滤：只留已启用的，名称或描述子序列命中即可。 */
-export function filterSkills(records: SkillCandidate[], query: string, limit = 20): SkillCandidate[] {
+/**
+ * 候选与查询的贴合度，数字越小越靠前；-1 表示不匹配。
+ *
+ * 描述用的是子序列匹配，几乎任何两三个字母都能在某条长描述里凑出来。
+ * 不排序只截断的话，名字正好就是查询词的那个 skill 会被一堆「描述里碰巧有这几个字母」的
+ * 挤到 20 名之外——`/vi` 搜不到 visualize 就是这么来的。
+ */
+function skillMatchRank(record: SkillCandidate, keyword: string): number {
+  if (!keyword) return 0
+  const name = record.name.toLowerCase()
+  const description = record.description.toLowerCase()
+  const query = keyword.toLowerCase()
+  if (name === query) return 0
+  if (name.startsWith(query)) return 1
+  if (name.includes(query)) return 2
+  if (matchesFuzzy(name, query)) return 3
+  if (description.includes(query)) return 4
+  if (matchesFuzzy(description, query)) return 5
+  return -1
+}
+
+/** / 补全的 skill 过滤：只留已启用的，名称优先于描述，同档内保持原有顺序。 */
+export function filterSkills(records: SkillCandidate[], query: string, limit = 50): SkillCandidate[] {
   const keyword = query.trim()
   return records
-    .filter((record) => record.enabled && (matchesFuzzy(record.name, keyword) || matchesFuzzy(record.description, keyword)))
+    .map((record, position) => ({ record, position, rank: record.enabled ? skillMatchRank(record, keyword) : -1 }))
+    .filter((item) => item.rank >= 0)
+    .sort((a, b) => a.rank - b.rank || a.position - b.position)
     .slice(0, limit)
+    .map((item) => item.record)
 }
 
 /** 内置斜杠命令：与 skill 共用 / 菜单，提交时由 Composer 拦截执行，不进对话。 */
@@ -77,7 +118,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'new', description: '新建对话，离开当前会话' },
   { name: 'resume', description: '选择并恢复一个最近的会话' },
   { name: 'clear', description: '清空当前会话的全部消息与上下文' },
-  { name: 'init', description: '在当前项目根目录生成 AGENTS.md' },
+  { name: 'init', description: '扫描项目并生成 / 补全 AGENTS.md' },
   { name: 'compact', description: '压缩当前会话的较早上下文' },
   { name: 'help', description: '查看可用斜杠命令' }
 ]
@@ -86,19 +127,4 @@ export const SLASH_COMMANDS: SlashCommand[] = [
 export function filterSlashCommands(commands: SlashCommand[], query: string): SlashCommand[] {
   const keyword = query.trim().toLowerCase()
   return commands.filter((command) => !keyword || command.name.startsWith(keyword))
-}
-
-/** 目录候选按 Tab 进入下一层：查询变成 `目录/`，菜单留着继续列子目录与子文件。 */
-export function enterMentionDirectory(text: string, mention: MentionQuery, path: string): { text: string; caret: number; mention: MentionQuery } {
-  const query = `${path.replace(/\/+$/, '')}/`
-  const result = replaceMentionFragment(text, mention, `@${query}`)
-  return { ...result, mention: { trigger: '@', start: mention.start, query } }
-}
-
-function replaceMentionFragment(text: string, mention: MentionQuery, inserted: string): { text: string; caret: number } {
-  const end = mention.start + 1 + mention.query.length
-  return {
-    text: `${text.slice(0, mention.start)}${inserted}${text.slice(end)}`,
-    caret: mention.start + inserted.length
-  }
 }

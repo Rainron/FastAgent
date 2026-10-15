@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { KbIndexResult, KbSource, KbSourcePreview } from '../../shared/types'
-import { describeIndexResult, describePreview, describeSource, entryOrigin, sourceStatusLabel, sourceStatusTone } from './kb-source-view'
+import { describeIndexResult, describePreview, describeSource, describeUnlink, entryOrigin, pickKbProject, recallEmptyReason, sourceStatusLabel, sourceStatusTone } from './kb-source-view'
 
 function source(patch: Partial<KbSource> = {}): KbSource {
   return { id: 's1', projectId: 'p1', kind: 'directory', path: 'K:/repo/docs', title: 'docs', status: 'indexed', error: null, fileCount: 3, entryCount: 12, excludes: [], version: 2, createdAt: 1, updatedAt: 2, ...patch }
@@ -77,3 +77,37 @@ describe('entryOrigin', () => {
     expect(entryOrigin({})).toBe('')
   })
 })
+
+describe('pickKbProject', () => {
+  it('已选项目仍在就保留', () => {
+    expect(pickKbProject(['p1', 'p2'], 'p2', 'p1')).toBe('p2')
+  })
+  it('首次打开优先当前项目，其次列表第一个', () => {
+    expect(pickKbProject(['p1', 'p2'], '', 'p2')).toBe('p2')
+    expect(pickKbProject(['p1', 'p2'], '', 'gone')).toBe('p1')
+    expect(pickKbProject(['p1', 'p2'], '', null)).toBe('p1')
+    expect(pickKbProject([], '', 'p1')).toBe('')
+  })
+})
+
+describe('describeUnlink', () => {
+  it('说清连带删除的条目数', () => {
+    expect(describeUnlink({ title: 'docs', entryCount: 12 })).toContain('12 个条目')
+  })
+})
+
+describe('recallEmptyReason', () => {
+  const on = { memoryEnabled: true, knowledgeEnabled: true }
+  it('开关关着时先说开关', () => {
+    expect(recallEmptyReason('memory', { ...on, memoryEnabled: false }, 'p1')).toContain('已关闭')
+    expect(recallEmptyReason('knowledge', { ...on, knowledgeEnabled: false }, 'p1')).toContain('已关闭')
+  })
+  it('没选项目时说明知识库只在项目里生效', () => {
+    expect(recallEmptyReason('knowledge', on, null)).toContain('请选择项目')
+  })
+  it('都具备时才是没匹配上', () => {
+    expect(recallEmptyReason('memory', on, null)).toBe('没有命中的记忆')
+    expect(recallEmptyReason('knowledge', on, 'p1')).toBe('没有命中的知识条目')
+  })
+})
+

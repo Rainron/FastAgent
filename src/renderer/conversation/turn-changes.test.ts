@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AgentFileChange, AgentRunChanges } from '../../shared/types'
-import { canRevertTurn, fileTag, revertConfirmLines, revertNotice, sortForList, splitPath, turnChangesTitle } from './turn-changes'
+import { canRevertTurn, fileStatus, revertConfirmLines, revertNotice, sortForList, splitPath, turnChangesBreakdown, turnChangesTitle } from './turn-changes'
 
 function file(patch: Partial<AgentFileChange>): AgentFileChange {
   return { path: 'src/a.ts', operation: 'update', additions: 0, deletions: 0, tools: ['edit'], hasDiff: true, reverted: false, updatedAt: 1, ...patch }
@@ -29,12 +29,24 @@ describe('sortForList', () => {
   })
 })
 
-describe('fileTag', () => {
-  it('修改不标，其余标状态，已撤销优先', () => {
-    expect(fileTag(file({}))).toBe('')
-    expect(fileTag(file({ operation: 'create' }))).toBe('新建')
-    expect(fileTag(file({ operation: 'delete' }))).toBe('删除')
-    expect(fileTag(file({ operation: 'create', reverted: true }))).toBe('已撤销')
+describe('fileStatus', () => {
+  it('按操作给出 Git 风格的状态字母', () => {
+    expect(fileStatus(file({})).letter).toBe('M')
+    expect(fileStatus(file({ operation: 'create' }))).toEqual({ letter: 'A', kind: 'add', label: '新建' })
+    expect(fileStatus(file({ operation: 'delete' })).letter).toBe('D')
+    expect(fileStatus(file({ operation: 'rename' })).letter).toBe('R')
+  })
+})
+
+describe('turnChangesBreakdown', () => {
+  it('只列非零项，已撤销的文件单独计数、不算进原操作', () => {
+    expect(turnChangesBreakdown([
+      file({ operation: 'create' }),
+      file({ operation: 'create' }),
+      file({}),
+      file({ operation: 'create', reverted: true })
+    ])).toBe('新建 2 · 修改 1 · 已撤销 1')
+    expect(turnChangesBreakdown([file({ operation: 'delete' })])).toBe('删除 1')
   })
 })
 
@@ -62,6 +74,14 @@ describe('revertConfirmLines', () => {
     ]))
     expect(lines[0]).toBe('把这一轮对 3 个文件的改动退回去：1 个修改的文件写回改动前的内容，1 个新建的文件会被删除，1 个被删的文件会恢复。')
     expect(lines[1]).toContain('跳过')
+  })
+
+  it('含重命名时提前告知 rename 保持现状，不会误以为整轮干净回退', () => {
+    const lines = revertConfirmLines(changes([
+      file({}),
+      file({ path: 'moved.ts', operation: 'rename' })
+    ]))
+    expect(lines[0]).toContain('1 个重命名保持现状（暂不支持撤销）')
   })
 })
 

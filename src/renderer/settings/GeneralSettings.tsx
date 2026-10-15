@@ -48,16 +48,16 @@ export function GeneralSettings({ settings, onChange }: { settings: AppSettings;
       </label>
     </div>)}
 
-    <div className="settings-section-heading"><div><h2>界面动画</h2><p>控制页面切换、按钮反馈和状态动效；关闭后保留清晰的状态变化。</p></div></div>
+    <div className="settings-section-heading"><div><h2>界面</h2><p>动效与对话区的展示方式。</p></div></div>
     <div className="settings-row">
-      <div><strong>界面动画</strong><span>跟随系统会响应系统的减少动态效果设置。</span></div>
-      <select value={settings.motionPreference} onChange={(event) => onChange({ motionPreference: event.target.value as AppSettings['motionPreference'] })} aria-label="界面动画">
+      <div><strong>动画效果</strong><span>页面切换、面板展开收起、按钮反馈与状态动效。跟随系统时响应系统的「减少动态效果」；关闭后状态照常切换，只是不再过渡。</span></div>
+      <select value={settings.motionPreference} onChange={(event) => onChange({ motionPreference: event.target.value as AppSettings['motionPreference'] })} aria-label="动画效果">
         <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
       </select>
     </div>
+    <div className="settings-row"><div><strong>计划显示位置</strong><span>选择把任务计划集中到顶部面板，或保留在每个对话回合内。</span></div><select value={planDisplayMode} onChange={(event) => { const value = event.target.value as 'top' | 'inline'; setPlanDisplayMode(value); void window.fastAgent.preferences.update({ planDisplayMode: value }) }} aria-label="计划显示位置"><option value="top">顶部计划面板</option><option value="inline">对话内显示</option></select></div>
 
     <div className="settings-section-heading"><div><h2>列表分页</h2><p>控制会话、项目、插件和能力列表每次加载的数量。</p></div></div>
-    <div className="settings-row"><div><strong>计划显示位置</strong><span>选择把任务计划集中到顶部面板，或保留在每个对话回合内。</span></div><select value={planDisplayMode} onChange={(event) => { const value = event.target.value as 'top' | 'inline'; setPlanDisplayMode(value); void window.fastAgent.preferences.update({ planDisplayMode: value }) }} aria-label="计划显示位置"><option value="top">顶部计划面板</option><option value="inline">对话内显示</option></select></div>
     <div className="settings-row">
       <div><strong>每页数量</strong><span>数值越小首屏加载越快，也可以直接在列表底部的分页条上改。</span></div>
       <select value={pageSize} onChange={(event) => updatePageSize(Number(event.target.value))} aria-label="列表每页数量">

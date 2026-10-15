@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { findOccurrences, stepMatchIndex } from './find-in-text'
+import { useDelayedUnmount } from '../use-delayed-unmount'
+import { MOTION_DURATIONS } from '../motion'
 
 /** CSS Custom Highlight API 的运行时检测；不可用时退化为仅计数与跳转。 */
 const HIGHLIGHT_SUPPORTED = typeof Highlight !== 'undefined' && typeof CSS !== 'undefined' && CSS.highlights !== null
@@ -158,9 +160,11 @@ export const FindBar = React.memo(function FindBar({ open, request, containerRef
     inputRef.current?.select()
   }, [open, request])
 
-  if (!open) return null
+  // 关闭时先播完退场再卸载；高亮清理等副作用仍按 open 立即执行，不等动画
+  const mounted = useDelayedUnmount(open, MOTION_DURATIONS.popoverClose)
+  if (!mounted) return null
   const countLabel = matchCount > 0 ? `${activeIndex + 1} / ${matchCount}` : query.trim() ? '无匹配' : ''
-  return <div className="find-bar" role="search">
+  return <div className={`find-bar${open ? '' : ' closing'}`} role="search">
     <input ref={inputRef} value={query} spellCheck={false} placeholder="在对话中查找" aria-label="在当前对话中查找" onChange={(event) => setQuery(event.target.value)} onKeyDown={handleKeyDown} />
     <span className="find-count">{countLabel}</span>
     <button className="icon-button" onClick={() => goTo(-1)} disabled={matchCount === 0} aria-label="上一个匹配" title="上一个（F4 / Shift+Enter）"><ChevronUp size={14} /></button>

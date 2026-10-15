@@ -6,6 +6,7 @@ import { MessageBlockRenderer } from './MessageBlockRenderer'
 import { MessageActions } from './MessageActions'
 import { blocksToPlainText, normalizeAssistantMessage } from './message-normalizer'
 import { scheduleTextSampling } from './sampling-timer'
+import { formatMessageTime, formatMessageTimeFull } from '../conversation/message-time'
 
 /**
  * 流式期间按固定间隔采样最新文本，避免逐 token 触发 Markdown 解析；
@@ -27,7 +28,7 @@ function useSampledText(text: string, turnId: string, streaming: boolean, interv
  * 助手消息的唯一入口：turn 先归一化成 blocks，再逐块分发。
  * 旧会话里 assistantMessage 只有字符串，归一化时自动变成 MarkdownBlock。
  */
-export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, modelName, textStart = 0, showActions = true, onRegenerate, onDelete, onCopyPair }: {
+export const AssistantMessageView = React.memo(function AssistantMessageView({ turn, modelName, textStart = 0, showActions = true, omitCancelled = false, onRegenerate, onDelete, onCopyPair }: {
   turn: ConversationTurn
   /** 头部徽章显示的模型名；模型已删除时由调用方省略，不编造型号。 */
   modelName?: string
@@ -35,6 +36,8 @@ export const AssistantMessageView = React.memo(function AssistantMessageView({ t
   textStart?: number
   /** 有执行轨迹时操作条挪到轨迹底栏下方，由调用方自己渲染，这里就不再出一份。 */
   showActions?: boolean
+  /** 执行轨迹的过程头已经标明取消，正文区不再重复一个「已取消」块。 */
+  omitCancelled?: boolean
   onRegenerate: () => void
   onDelete: () => void
   onCopyPair: () => void
@@ -53,12 +56,12 @@ export const AssistantMessageView = React.memo(function AssistantMessageView({ t
     }
     return blocks
   }, [streaming, streamedText, turn.id])
-  const message = useMemo(() => (streaming ? null : normalizeAssistantMessage(turn, textStart)), [turn, streaming, textStart])
+  const message = useMemo(() => (streaming ? null : normalizeAssistantMessage(turn, textStart, { omitCancelled })), [turn, streaming, textStart, omitCancelled])
   // 「复制为纯文本」基于完整正文，避免正文区切片后把轨迹里的前段说明丢掉。
   const plainText = useMemo(() => blocksToPlainText(parseBlocks(fullText, turn.id)), [fullText, turn.id])
-  const turnTime = useMemo(() => new Date(turn.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), [turn.createdAt])
+  const turnTime = useMemo(() => formatMessageTime(turn.createdAt), [turn.createdAt])
   const messageHead = <div className="msg-head">
-    <span className="tm">{turnTime}</span>
+    <span className="tm" title={formatMessageTimeFull(turn.createdAt)}>{turnTime}</span>
     {modelName && <span className="mb" title={modelName}>{modelName}</span>}
   </div>
 

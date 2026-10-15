@@ -5,6 +5,7 @@ import { BootScreen, LoginScreen } from './auth/LoginScreen'
 import { WorkspaceShell } from './workspace/WorkspaceShell'
 import { shouldShowLoginScreen } from './startup-access'
 import { clampSidebarTitleChars } from '../shared/sidebar-title'
+import { motionEnabled } from './motion'
 
 function App() {
   // react-query 只有主窗口的功能在用，provider 随 App chunk 加载，快速小窗入口不背这个包
@@ -51,12 +52,18 @@ function App() {
   useEffect(() => {
     const root = document.documentElement
     const dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
-    root.dataset.theme = dark ? 'dark' : 'light'
+    const next = dark ? 'dark' : 'light'
+    if (root.dataset.theme === next) return
+    const apply = () => { root.dataset.theme = next }
+    // 切主题整页交叉淡化：逐个元素做颜色过渡会先后不齐，还会让每个带 transition 的元素各算一遍。
+    // 首次加载（preload 已写好 data-theme）与关闭动效时直接切。
+    if (root.dataset.theme && motionEnabled() && typeof document.startViewTransition === 'function') document.startViewTransition(apply)
+    else apply()
   }, [theme])
 
   useEffect(() => {
     const root = document.documentElement
-    root.dataset.accent = settings?.accentColor ?? 'green'
+    root.dataset.accent = settings?.accentColor ?? 'blue'
     root.dataset.fontSize = settings?.baseFontSize ?? 'medium'
     root.dataset.density = settings?.uiDensity ?? 'comfortable'
     root.dataset.glass = settings?.sidebarGlass ? 'true' : 'false'

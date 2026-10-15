@@ -14,9 +14,13 @@ function CheckRow({ check }: { check: DoctorCheck }) {
   const Icon = STATUS_ICON[check.status]
   return <div className={`doctor-row ${check.status}`}>
     <Icon size={14} className="doctor-row-icon" />
-    <span className="doctor-row-label">{check.label}</span>
-    <span className="doctor-row-detail" title={check.detail}>{check.detail}</span>
-    {check.hint && <span className="doctor-row-hint">{check.hint}</span>}
+    <div className="doctor-row-copy">
+      <span className="doctor-row-label">{check.label}</span>
+      <span className="doctor-row-detail" title={check.detail}>{check.detail}</span>
+      {/* hint 是「去哪补」，缺项时它才是用户唯一要读的那句，不能被省略号吃掉 */}
+      {check.hint && <span className="doctor-row-hint">{check.hint}</span>}
+    </div>
+    <span className="doctor-row-status">{STATUS_LABEL[check.status]}</span>
   </div>
 }
 
@@ -60,23 +64,27 @@ export function DoctorSettings({ onNotice }: { onNotice: (notice: string) => voi
         <p>检查 Agent 依赖的外部工具与运行环境。只探测，不安装、不修改任何配置。</p>
       </div>
       <div className="model-settings-actions">
-        <button className="secondary" onClick={() => void exportReport()} disabled={exporting}>
-          <Download size={14} />{exporting ? '导出中…' : '导出诊断信息'}
+        <button className="small-control" onClick={() => void exportReport()} disabled={exporting}>
+          <Download size={13} />{exporting ? '导出中…' : '导出诊断信息'}
         </button>
-        <button className="secondary" onClick={run} disabled={running}>
-          {running ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
+        <button className="small-control" onClick={run} disabled={running}>
+          {running ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}
           {running ? '检查中…' : '重新检查'}
         </button>
       </div>
     </div>
 
-    {report && <div className={`doctor-overall ${report.overall}`}>{overallLabel(report)}</div>}
+    {report && <div className={`doctor-overall ${report.overall}`}>
+      <span className="doctor-overall-dot" />
+      <strong>{overallLabel(report)}</strong>
+      <small>共 {report.checks.length} 项 · {new Date(report.checkedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 检查</small>
+    </div>}
 
-    {!report && running && <p>正在检查…</p>}
+    {!report && running && <div className="doctor-loading"><LoaderCircle size={14} className="spin" />正在检查…</div>}
 
     {groups.map(([category, checks]) => <div className="doctor-group" key={category}>
       <h4>{CATEGORY_LABEL[category as DoctorCategory]}</h4>
-      {checks.map((check) => <CheckRow check={check} key={check.id} />)}
+      <div className="doctor-list">{checks.map((check) => <CheckRow check={check} key={check.id} />)}</div>
     </div>)}
 
     <p className="settings-hint">导出内容只含版本、体检结论与运行上限；后端地址、本机路径与凭据不会写进文件。</p>

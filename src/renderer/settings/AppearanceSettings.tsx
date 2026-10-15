@@ -3,17 +3,17 @@ import type { AppSettings, AppTheme } from '../../shared/types'
 import { clampSidebarTitleChars, SIDEBAR_TITLE_CHARS } from '../../shared/sidebar-title'
 
 const themes: Array<{ value: AppTheme; label: string; hint: string; Icon: typeof Sun }> = [
-  { value: 'light', label: '浅色', hint: '日光下的暖白', Icon: Sun },
+  { value: 'light', label: '浅色', hint: '明亮的纯白', Icon: Sun },
   { value: 'dark', label: '深色', hint: '低照度的夜间', Icon: Moon },
   { value: 'system', label: '跟随系统', hint: '随 Windows 自动切换', Icon: Monitor }
 ]
 
 const accents: Array<{ value: NonNullable<AppSettings['accentColor']>; label: string; swatch: string }> = [
-  { value: 'green', label: '森绿', swatch: '#2f9e77' },
+  { value: 'blue', label: '湖蓝', swatch: '#3b86f7' },
+  { value: 'green', label: '森绿', swatch: '#2f8a64' },
   { value: 'terracotta', label: '陶土', swatch: '#c96f4a' },
-  { value: 'blue', label: '湖蓝', swatch: '#3e8ec4' },
   { value: 'purple', label: '藤紫', swatch: '#8467ba' },
-  { value: 'graphite', label: '石墨', swatch: '#6f7480' }
+  { value: 'graphite', label: '石墨', swatch: '#4b5563' }
 ]
 
 const fontSizes: Array<{ value: NonNullable<AppSettings['baseFontSize']>; label: string }> = [

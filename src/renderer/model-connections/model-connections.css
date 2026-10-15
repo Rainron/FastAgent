@@ -1,4 +1,29 @@
-.model-connections { display: flex; gap: 24px; min-width: 0; margin-bottom: 28px; font-size: 13px; }
+.model-connections { display: flex; flex-wrap: wrap; gap: 24px; min-width: 0; margin-bottom: 28px; font-size: 13px; }
+/* 工具条独占顶部一行：左右两栏之上，连接列表为空时也在 */
+.model-connection-toolbar { width: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.model-connection-notice { width: 100%; margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.archive-entry-list > li { display: grid; gap: 4px; }
+.archive-entry-row { display: flex; align-items: center; gap: 8px; }
+.archive-entry-row > label { flex: 1; min-width: 0; }
+.archive-entry-row > button { flex: 0 0 auto; }
+.archive-entry-row svg.open { transform: rotate(90deg); }
+.archive-entry-models { display: grid; gap: 6px; margin: 0 0 6px 26px; padding: 8px 10px; border-left: 2px solid var(--border); }
+.archive-entry-model-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.archive-entry-models .model-pick-list { max-height: 260px; overflow: auto; }
+/* 按模型 id 前缀折成的一层树 */
+.model-pick-list { display: grid; gap: 2px; }
+.model-pick-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 5px 8px; border-radius: 6px; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.model-pick-row:hover { background: var(--hover); }
+.model-pick-row strong { color: var(--text-primary); font-size: 12px; font-weight: 500; }
+.model-pick-row span { color: var(--text-tertiary); font-size: 10.5px; }
+.model-pick-row small { color: var(--status-warn); font-size: 10.5px; }
+.model-pick-group { display: grid; gap: 2px; }
+.model-pick-group-head { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 6px; background: var(--surface-soft); }
+.model-pick-group-head > label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.model-pick-group-head strong { font-size: 12px; font-weight: 600; }
+.model-pick-group-head span { color: var(--text-tertiary); font: 10.5px "JetBrains Mono", Consolas, monospace; }
+.model-pick-group-head svg.open { transform: rotate(90deg); }
+.model-pick-group-body { display: grid; gap: 2px; margin-left: 18px; padding-left: 8px; border-left: 1px solid var(--border); }
 .model-connection-list { display: flex; flex-direction: column; flex: 0 0 180px; gap: 4px; border-right: 1px solid var(--border); padding-right: 16px; }
 .model-connection-list button, .model-auth-methods button { padding: 12px; text-align: left; color: var(--text-primary); background: transparent; border: 1px solid transparent; border-radius: 6px; }
 .model-connection-list button:hover, .model-auth-methods button:hover { background: var(--hover); }
@@ -19,12 +44,19 @@
 .model-connection-model-heading h4 { margin: 0; }
 .model-connection-add .model-connection-field { flex: 1; }
 .model-connection-add > button { margin-top: 24px; }
+.model-discovered-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.model-discovered-head input { flex: 1 1 160px; min-width: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--canvas); color: var(--text-primary); padding: 7px 9px; font: inherit; font-size: 12px; }
+.model-discovered-empty { padding: 8px 9px; color: var(--text-secondary); font-size: 12px; }
 .model-connection-models { list-style: none; padding: 0; margin: 0 0 20px; }
 .model-connection-models li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .model-connection-models li > span { min-width: 0; flex: 1; }
 /* 参数面板整宽换行，不参与行内按钮的横向分配 */
 .model-connection-models li > .model-parameter-fields { flex-basis: 100%; margin-top: 4px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .model-connection-vision { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-secondary); white-space: nowrap; cursor: pointer; }
+/* 测试结果贴在被测的那一行：失败信息可能很长，截断保留全文供悬停查看 */
+.model-connection-test-result { max-width: 220px; overflow: hidden; font-size: 11px; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.model-connection-test-result.ok { color: var(--success); }
+.model-connection-test-result.failed { color: var(--danger); }
 .model-login-status, .model-connection-delete { margin: 16px 0; padding: 12px; border-left: 2px solid var(--accent-tech); background: var(--hover); }
 .model-login-url { overflow-wrap: anywhere; font-size: 11px; color: var(--text-secondary); }
 .model-connections-entry { flex-direction: column; margin: 0; }

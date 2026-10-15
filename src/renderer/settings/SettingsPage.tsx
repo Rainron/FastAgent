@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Boxes, Brain, FileText, LibraryBig, Settings, Shield, ShieldCheck } from 'lucide-react'
+import { Boxes, Brain, FileText, Info, LibraryBig, Settings, Shield, ShieldCheck } from 'lucide-react'
 import './settings-redesign.css'
 import { settingsNavigation } from './settings-navigation'
 import { useSettingsNavigation } from './hooks/use-settings-navigation'
@@ -21,9 +21,10 @@ import { SandboxSettings } from './SandboxSettings'
 import { DoctorSettings } from './DoctorSettings'
 import { RuntimeSettings } from './RuntimeSettings'
 import { ShellCommandSettings } from './ShellCommandSettings'
-import { AboutSettings } from './AboutSettings'
+import { TraceDisplaySettings } from './TraceDisplaySettings'
 import { UsageSettings } from './UsageSettings'
 import { RunLimitSettings } from './RunLimitSettings'
+import { AboutSettings } from './AboutSettings'
 
 export function SettingsPage({ settings, theme, models, localModels, auth, modePrompts, onSettingsChange, onThemeChange, onModePromptChange, onResetModePrompts, onNotice, requestedCategory, categoryRequest, selectedModelId, defaultModelId, favoriteModelIds, onSelectModel, onToggleFavoriteModel, onTestDialogue, currentProjectId, onOpenConversation }: SettingsPageProps) {
   const { category, setCategory, contentRef } = useSettingsNavigation(requestedCategory, categoryRequest)
@@ -43,17 +44,19 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
           <div className="settings-nav-label">应用</div>
           <button className={`snav${active.group === 'workspace' ? ' on' : ''}`} onClick={() => setCategory('general')} aria-current={active.group === 'workspace' ? 'page' : undefined}><Settings size={16} />工作区偏好</button>
           <button className={`snav${active.group === 'security' ? ' on' : ''}`} onClick={() => setCategory('sandbox')} aria-current={active.group === 'security' ? 'page' : undefined}><Shield size={16} />安全与诊断</button>
-
-          <button className={`snav${active.group === 'about' ? ' on' : ''}`} onClick={() => setCategory('about')} aria-current={active.group === 'about' ? 'page' : undefined}><Shield size={16} />安全与诊断</button>
+          <button className={`snav${active.group === 'about' ? ' on' : ''}`} onClick={() => setCategory('about')} aria-current={active.group === 'about' ? 'page' : undefined}><Info size={16} />关于 FastAgent</button>
         </div>
       </nav>
       <div className="settings-content" ref={contentRef}><div className="settings-content-inner">
-        <div className="set-head"><h1>{active.label}</h1><p>{active.desc}</p></div>
-        {tabs.length > 0 && <div className="settings-category-tabs" role="navigation" aria-label={active.group === 'workspace' ? '工作区偏好分类' : '安全与诊断分类'}>{tabs.map((item) => <button key={item.key} className={category === item.key ? 'active' : ''} aria-current={category === item.key ? 'page' : undefined} onClick={() => setCategory(item.key)}>{item.label}</button>)}</div>}
-        {!settings && category !== 'prompts' && category !== 'models'
+        {/* 标题与分类 tab 常驻：设置页很长，滚下去之后得始终知道自己在哪一类、能直接换类 */}
+        <div className="settings-sticky-head">
+          <div className="set-head"><h1>{active.label}</h1><p>{active.desc}</p></div>
+          {tabs.length > 1 && <div className="settings-category-tabs" role="navigation" aria-label={active.group === 'workspace' ? '工作区偏好分类' : '安全与诊断分类'}>{tabs.map((item) => <button key={item.key} className={category === item.key ? 'active' : ''} aria-current={category === item.key ? 'page' : undefined} onClick={() => setCategory(item.key)}>{item.label}</button>)}</div>}
+        </div>
+        {!settings && category !== 'prompts' && category !== 'models' && category !== 'about'
           ? <div className="section-list-empty">设置加载中</div>
           : <>
-            {category === 'general' && settings && <GeneralSettings settings={settings} onChange={onSettingsChange} />}
+            {category === 'general' && settings && <><GeneralSettings settings={settings} onChange={onSettingsChange} /><TraceDisplaySettings settings={settings} onChange={onSettingsChange} /></>}
             {category === 'connection' && <ConnectionSettings auth={auth} onNotice={onNotice} />}
             {category === 'appearance' && settings && <AppearanceSettings settings={settings} theme={theme} onThemeChange={onThemeChange} onChange={onSettingsChange} />}
             {category === 'models' && <ModelSettings models={models} localModels={localModels} selectedModelId={selectedModelId} defaultModelId={defaultModelId} favoriteModelIds={favoriteModelIds} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavoriteModel} onTestDialogue={onTestDialogue} onNotice={onNotice} />}
@@ -64,11 +67,11 @@ export function SettingsPage({ settings, theme, models, localModels, auth, modeP
             {category === 'knowledge' && settings && <KnowledgeSettings settings={settings} currentProjectId={currentProjectId} onChange={onSettingsChange} onNotice={onNotice} onNavigate={setCategory} />}
             {category === 'sandbox' && settings && <SandboxSettings settings={settings} onChange={onSettingsChange} />}
             {category === 'runtime' && settings && <><RuntimeSettings onNotice={onNotice} /><ShellCommandSettings settings={settings} onChange={onSettingsChange} /></>}
-            {category === 'about' && <AboutSettings onNotice={onNotice} />}
             {category === 'doctor' && <DoctorSettings onNotice={onNotice} />}
             {category === 'prompts' && <PromptSettings prompts={modePrompts} onChange={onModePromptChange} onReset={onResetModePrompts} />}
             {category === 'keybindings' && settings && <KeybindingSettings settings={settings} onChange={onSettingsChange} onNotice={onNotice} />}
             {category === 'storage' && <DataStorageSettings onNotice={onNotice} />}
+            {category === 'about' && <AboutSettings onNotice={onNotice} />}
           </>}
       </div></div>
     </div>

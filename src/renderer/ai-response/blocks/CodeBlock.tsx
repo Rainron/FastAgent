@@ -1,4 +1,6 @@
 import { memo, useEffect, useState } from 'react'
+import { useHeightAnimation } from '../../use-height-animation'
+import { alignStartIfAbove } from '../../scroll-anchor'
 import { Check, ChevronDown, Copy } from 'lucide-react'
 import type { CodeBlock as CodeBlockData } from '../blocks'
 import { highlightCode, isHighlightableLanguage } from '../highlight'
@@ -11,6 +13,8 @@ function CodeBlockView({ block }: { block: CodeBlockData }) {
   const actions = useResponseActions()
   const [html, setHtml] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
+  // 展开 / 收起是原地换内容，高度从旧值补间到新值，不再一下跳变
+  const height = useHeightAnimation<HTMLDivElement>()
   const [copied, setCopied] = useState(false)
   const streaming = block.status === 'streaming'
   const lineCount = block.code.split('\n').length
@@ -32,7 +36,7 @@ function CodeBlockView({ block }: { block: CodeBlockData }) {
   }, [copied])
 
   return (
-    <div className={`code-block ${collapsible && !expanded ? 'collapsed' : ''}`}>
+    <div className={`code-block ${collapsible && !expanded ? 'collapsed' : ''}`} ref={height.ref}>
       <div className="code-block-head">
         <span className="code-block-meta">
           {block.filename && (reference
@@ -48,7 +52,7 @@ function CodeBlockView({ block }: { block: CodeBlockData }) {
         // shiki 输出的是它自己构造并转义过的 span 树，代码原文不会当作标签解析。
         ? <div className="code-block-body shiki-host" dangerouslySetInnerHTML={{ __html: html }} />
         : <pre className="code-block-body"><code>{block.code}</code></pre>}
-      {collapsible && <button type="button" className="block-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+      {collapsible && <button type="button" className="block-expand" onClick={() => { if (expanded) alignStartIfAbove(height.ref.current); height.capture(); setExpanded((value) => !value) }} aria-expanded={expanded}>
         <ChevronDown size={13} />{expanded ? '收起' : `展开全部 ${lineCount} 行`}
       </button>}
     </div>

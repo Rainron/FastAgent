@@ -24,7 +24,6 @@ export function useAppShortcuts(shortcuts: ShortcutSettings | undefined, handler
   const runAction = useEventCallback((action: InAppShortcutAction) => {
     if (action === 'newConversation') handlers.newConversation()
     else if (action === 'openSettings') handlers.openSettings()
-    else if (action === 'hideToTray') void window.fastAgent.app.hideToTray()
     else if (action === 'reloadWindow') void window.fastAgent.app.reload()
     // 重启与退出在主进程侧还有一次「有任务运行」的确认框，取消时回落成提示。
     else if (action === 'restartApp') void window.fastAgent.app.restart().then((done) => { if (!done) handlers.notify('已取消重启') })

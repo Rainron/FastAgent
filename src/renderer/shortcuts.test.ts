@@ -91,6 +91,6 @@ describe('effectiveInAppBinding', () => {
   })
 
   it('没有默认值的动作未绑定时返回 null', () => {
-    expect(effectiveInAppBinding(undefined, 'hideToTray')).toBeNull()
+    expect(effectiveInAppBinding(undefined, 'reloadWindow')).toBeNull()
   })
 })

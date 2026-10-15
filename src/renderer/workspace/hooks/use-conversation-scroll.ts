@@ -14,7 +14,7 @@ function readScrollMetrics(node: HTMLDivElement) {
  *
  * followRef 用 ref 而不是 state：滚动回调里读它，用 state 会让回调随每次滚动重新绑定。
  */
-export function useConversationScroll(turns: ConversationTurn[], runId: string | null, selectedConversationId: string | null) {
+export function useConversationScroll(turns: ConversationTurn[], runId: string | null, selectedConversationId: string | null, extraContent?: unknown) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const followRef = useRef(true)
   const [scrollNav, setScrollNav] = useState<ScrollNavAction>('none')
@@ -29,7 +29,7 @@ export function useConversationScroll(turns: ConversationTurn[], runId: string |
     const stuckNow = node.scrollTop > HEADER_STUCK_THRESHOLD
     setHeaderStuck((current) => (current === stuckNow ? current : stuckNow))
     setScrollNav(scrollNavAction(readScrollMetrics(node), runId !== null))
-  }, [turns, runId, selectedConversationId])
+  }, [turns, runId, selectedConversationId, extraContent])
 
   function onConversationScroll() {
     const node = scrollRef.current

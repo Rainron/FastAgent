@@ -18,6 +18,7 @@ import { createQuestionTool } from './tools/question'
 import { createTodoTool } from './tools/todo'
 import { createSubAgentTool } from './tools/subagent'
 import type { SubAgentToolContext } from './tools/subagent'
+import { WorkspaceGate } from './subagent/workspace-gate'
 import { createShellOperations } from './sandbox/shell-operations'
 import { createBackgroundShellTools } from './tools/background-shell'
 import { createPreviewTool, PREVIEW_TOOL_NAME, type PreviewHost } from './tools/preview'
@@ -65,6 +66,11 @@ export interface ToolRuntimeContext {
   preview?: PreviewHost | null
   subAgent?: SubAgentToolContext
   subAgentMetadata?: { parentToolCallId: string; subAgentId: string; subAgentRunId: string }
+  /**
+   * 并行子运行的写入认领：写类与命令工具执行前认领静态可识别的目标文件，返回拒绝原因。
+   * 只有可写子运行带这个回调，主运行与只读子运行没有。
+   */
+  claimWrite?: (targets: Array<{ path: string; absolutePath: string }>) => string | null
   customSubAgents?: import('./subagent/subagent-types').SubAgentConfig[]
   subAgentEnabled?: boolean
   /** 本项目探测到的验证命令；重复执行它们要豁免死循环守卫。 */
@@ -95,7 +101,7 @@ export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 
     const chatShellNote = context.shellToolName === 'powershell'
       ? '\npowershell 工具是 Windows PowerShell 5.1：不支持 && 与 ||，顺序执行用 ;。'
       : ''
-    return `\n\n当前可用工具：read、grep、find、ls、${context.shellToolName}。文件与命令操作受权限规则约束，必要时会请求用户批准。edit、write、patch 在本模式不提供，需要新建或改写文件时请提示用户切到 Agent 模式，不要声称自己没有工具。${chatShellNote}`
+    return `\n\n当前可用工具：read、grep、find、ls、question、${context.shellToolName}。文件与命令操作受权限规则约束，必要时会请求用户批准。edit、write、patch 在本模式不提供，需要新建或改写文件时请提示用户切到 Agent 模式，不要声称自己没有工具。${chatShellNote}`
   }
   // 计划模式下写工具会被系统直接拒绝，提前说明，避免模型反复重试同一个写调用。
   if (context.planMode) return `\n\n当前处于计划模式：只有 read、grep、find、ls、question、todowrite 与 git status / git diff / git log / git show 可用。edit、write、patch 以及其他 ${context.shellToolName} 命令会被系统直接拒绝，不要尝试。请阅读代码后输出分步实施计划（步骤、涉及文件、验证方式），等用户确认并退出计划模式再执行。`
@@ -112,9 +118,9 @@ export function toolAvailabilityNote(context: Pick<ToolRuntimeContext, 'mode' | 
   const verifyNote = verificationPrompt(context.verificationCommands ?? [])
   // 不写这段的话模型只会用 `&` 把服务甩到后台，既拿不到日志也停不掉，随后就得让用户自己去起服务。
   const backgroundNote = `\n启动开发服务器、watch 这类不会自己退出的进程，用 shell_background 而不是 ${context.shellToolName}：${context.shellToolName} 会一直等到进程退出，整轮就卡在那里。命令里不要再加 &、start 或 nohup。启动后用 shell_background_output 确认它真的起来了，不再需要时用 shell_background_stop 停掉。后台进程会一直活到本会话结束。`
+  // 不说明存放位置的话，样稿会散落在项目各处（.tmp-xxx/ 之类），还会混进用户的 Git 改动。
   const previewNote = `\n做网页样稿、演示页或需要让用户看效果时，写好 HTML 后调用 ${PREVIEW_TOOL_NAME}：一次性样稿放在 .fastagent/previews/<名称>/index.html，属于项目本身的页面照常写在项目里；需要 dev server 时先用 shell_background 启动、用 shell_background_output 确认端口，再以 url 调用 ${PREVIEW_TOOL_NAME}。它会在用户的预览面板打开页面，并把控制台错误、失败请求和截图返回给你；改完页面后再调用一次复查。`
   return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、shell_background（后台启动长期运行的命令）、shell_background_output、shell_background_stop、${PREVIEW_TOOL_NAME}（预览网页）、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${backgroundNote}${previewNote}${sandboxNote}${verifyNote}`
-  return `\n\n当前可用工具：read、grep、find、ls、edit、write、${context.shellToolName}、shell_background（后台启动长期运行的命令）、shell_background_output、shell_background_stop、question（向用户提问）、todowrite（维护待办）、patch（通过补丁新建、修改或删除文件）。文件与命令操作受权限规则约束，必要时会请求用户批准。${shellNote}${backgroundNote}${sandboxNote}${verifyNote}`
 }
 
 /** 会话级放行按模式匹配而不是原串相等，否则换个参数就要重新批一次。 */
@@ -321,6 +327,8 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
     pi.registerTool(createPatchTool())
     // 工具只在运行时创建时注册一次，之后整个会话复用：signal / 执行桥 / 自定义 Sub-agent 列表
     // 一律按轮从 ref 现取，否则第二轮起用的是首轮闭包（事件写错回合、停止按钮失效）。
+    // 闸门随运行时创建、跨轮复用；只有能委派子代理的主运行需要，子运行里没有 subagent 工具。
+    const workspaceGate = initial.subAgent ? new WorkspaceGate() : null
     if (initial.subAgent) pi.registerTool(createSubAgentTool({
       resolveSignal: () => runtimeContext(source).signal,
       resolveCustomAgents: () => runtimeContext(source).customSubAgents ?? [],
@@ -329,7 +337,8 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
         if (!bridge) throw new Error('Sub-agent 未启用')
         return bridge.execute(task, signal, parentToolCallId)
       },
-      emit: (event) => runtimeContext(source).emit(event)
+      emit: (event) => runtimeContext(source).emit(event),
+      gate: workspaceGate ?? undefined
     }))
 
     // shell 工具由这里注册而不是走 pi 内置：注册时注入自定义执行后端，
@@ -382,7 +391,10 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
         doomLoopRunId = context.runId
       }
       const toolName = event.toolName
-      const toolSource = toolName.startsWith('cli__') ? 'cli' as const : SHELL_TOOLS.has(toolName) ? 'command' as const : toolName === 'skill' ? 'skill' as const : toolName === 'agent' ? 'agent' as const : toolName.startsWith('mcp__') ? 'mcp' as const : 'builtin' as const
+      // 外部工具风险表里既有 MCP 工具也有 dsh 插件工具；MCP 一律带 mcp__ 前缀，表里其余的就是插件工具。
+      // 插件工具名没有前缀，只按前缀判断会让它们落到「未知工具」，被兜底规则一律拒绝。
+      const isPluginTool = !toolName.startsWith('mcp__') && context.mcpToolRisk.has(toolName)
+      const toolSource = toolName.startsWith('cli__') ? 'cli' as const : SHELL_TOOLS.has(toolName) ? 'command' as const : toolName === 'skill' ? 'skill' as const : toolName === 'agent' ? 'agent' as const : toolName.startsWith('mcp__') ? 'mcp' as const : isPluginTool ? 'plugin' as const : 'builtin' as const
       const input = event.input as Record<string, unknown>
       startedAt.set(event.toolCallId, Date.now())
 
@@ -421,8 +433,9 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
         subject = String(input.path ?? input.url ?? '')
       }
 
-      if (toolName.startsWith('mcp__')) {
-        // MCP 工具不触碰本地文件，按服务器注解映射到 mcp_read / mcp_write 权限入口。
+      if (toolName.startsWith('mcp__') || isPluginTool) {
+        // MCP 工具不触碰本地文件，按服务器注解映射到 mcp_read / mcp_write 权限入口；
+        // dsh 插件工具没有可信的风险声明，登记时一律是 write，走同一个 mcp_write 入口（计划模式也据此拒绝）。
         const risk = context.mcpToolRisk.get(toolName) ?? 'write'
         toolKey = risk === 'read' ? 'mcp_read' : 'mcp_write'
         subject = summarizeInput(toolName, input)
@@ -455,6 +468,12 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       // 计划模式最后落闸：写入类调用无条件拒绝，用户规则与会话级放行都不能绕过。
       const planDenied = context.planMode && planModeAction(toolKey, subject) === 'deny'
       if (planDenied) action = 'deny'
+      // 并行子代理按文件认领写入目标：别的子代理已经改过的文件不能再写，否则后写的会用自己读到的旧内容覆盖对方。
+      // 放在审批之前：注定被拒的写入不该先弹一次审批。
+      const claimDenied = !planDenied && action !== 'deny' && context.claimWrite && (WRITE_TOOLS.has(toolName) || SHELL_TOOLS.has(toolName))
+        ? context.claimWrite(writeTargets(toolName, input, context.cwd))
+        : null
+      if (claimDenied) action = 'deny'
 
       let decision: ApprovalDecision | 'allow' | 'deny' = action === 'allow' ? 'allow' : 'deny'
       // 先落库：审批中 waiting_permission，拒绝 denied，其余 running
@@ -543,7 +562,9 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
       })
 
       if (denied) {
-        const reason = planDenied
+        const reason = claimDenied
+          ? claimDenied
+          : planDenied
           ? `计划模式禁止写入操作（${toolName}）。请先输出实施计划，由用户确认并退出计划模式后再执行。`
           : decision === 'deny'
             ? `权限规则禁止执行（${toolKey}）`
@@ -568,7 +589,17 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
           durationMs
         })
         // terminate 提示模型当前批次结束后停止；计划模式要让它拿着拒绝理由继续把计划写完。
-        return { block: true, reason, terminate: !planDenied }
+        // 认领冲突同样不终止：子代理要拿着拒绝理由继续完成其余文件并写交接。
+        return { block: true, reason, terminate: !planDenied && !claimDenied }
+      }
+
+      // 主 Agent 的写类与命令工具登记到闸门：可写子代理要等它们做完才进场。只登记不等待，
+      // Pi 并行模式先跑完整批 tool_call 钩子才执行，钩子里等锁会让同批写操作互相等死。
+      // Pi 在钩子之后发现已取消会直接返回、不再触发 tool_result，所以取消时也要释放。
+      if (workspaceGate && (WRITE_TOOLS.has(toolName) || SHELL_TOOLS.has(toolName))) {
+        const toolCallId = event.toolCallId
+        workspaceGate.markMainWrite(toolCallId)
+        context.signal.addEventListener('abort', () => workspaceGate.releaseMainWrite(toolCallId), { once: true })
       }
 
       // 批准之后、真正写盘之前抓基线：写完再抓就永远拿不到「改之前长什么样」，
@@ -589,6 +620,7 @@ export function createToolRuntimeExtension(source: ToolRuntimeContext | ToolRunt
     const onToolResult: ExtensionHandler<ToolResultEvent, { content?: (TextContent | ImageContent)[] }> = async (event) => {
       const context = contextByCall.get(event.toolCallId) ?? runtimeContext(source)
       contextByCall.delete(event.toolCallId)
+      workspaceGate?.releaseMainWrite(event.toolCallId)
       const started = startedAt.get(event.toolCallId) ?? Date.now()
       const durationMs = Date.now() - started
       startedAt.delete(event.toolCallId)

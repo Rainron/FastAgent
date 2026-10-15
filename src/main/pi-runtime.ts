@@ -26,16 +26,20 @@ import type { SandboxSession } from './agent/sandbox/sandbox-types'
 import { BACKGROUND_SHELL_TOOL_NAMES } from './agent/tools/background-shell'
 import { PREVIEW_TOOL_NAME, type PreviewHost } from './agent/tools/preview'
 import { createMcpBridgeExtension } from './mcp-bridge'
+import { createDshBridgeExtension, type DshHostLike, type DshToolBinding } from './dsh-bridge'
 import { createStreamTextRepair } from './stream-text-repair'
 import { createInlineThinkStream, createThinkTagSplitter, type ThinkPart, type ThinkStreamEvent } from './think-tags'
 import { stripThinkBlocks } from '../shared/think-blocks'
 import type { SubAgentToolContext } from './agent/tools/subagent'
 import { suggestReadOnlyDecomposition } from './agent/subagent/subagent-decomposer'
-import { createModelUsageCollector } from './model-usage'
+import { createModelUsageCollector, normalizeModelUsage } from './model-usage'
 import { resolveThinkingLevel } from '../shared/thinking-level'
 import { DEFAULT_CONTEXT_WINDOW, resolveContextWindow } from '../shared/model-context-windows'
+import { modelBaseUrl, modelProtocolAdapter, resolveModelProtocol } from '../shared/model-protocols'
+import { canonicalModelProfile, resolveImageInputMode, supportsModelInput } from '../shared/model-capabilities'
 import { INITIAL_CONVERGENCE_STATE, convergenceStalledDetail, trackCompactionConvergence, type ConvergenceState } from './agent/compaction-convergence'
 import { cjkKeepRecentScale, scaleKeepRecentTokens } from './agent/compaction-units'
+import { createTrailingThrottle } from './agent/context-progress'
 
 const DEFAULT_MAX_TOKENS = 8_192
 
@@ -44,35 +48,32 @@ function credentialContextWindow(credentials: Pick<ModelCredentials, 'context_wi
   return resolveContextWindow(credentials.context_window, credentials.model_name)
 }
 
-function protocolForCredentials(credentials: Pick<ModelCredentials, 'provider' | 'protocol'>): NonNullable<ModelCredentials['protocol']> {
-  // 旧缓存没有 protocol，只能识别历史协议值；新提供商名称不能再被当作协议。
-  if (credentials.protocol) return credentials.protocol
-  return credentials.provider === 'anthropic' || credentials.provider === 'openai-responses' || credentials.provider === 'openai'
-    ? credentials.provider
-    : 'openai'
-}
-
-function apiForProtocol(protocol: NonNullable<ModelCredentials['protocol']>) {
-  if (protocol === 'anthropic') return 'anthropic-messages'
-  if (protocol === 'openai-responses') return 'openai-responses'
-  return 'openai-completions'
+function protocolForCredentials(credentials: Pick<ModelCredentials, 'provider' | 'protocol'>) {
+  return resolveModelProtocol(credentials.protocol, credentials.provider)
 }
 
 function modelId(provider: string, credentials: ModelCredentials) {
   return `desktop-${provider}-${credentials.id}`
 }
 
-function modelDefinition(provider: string, credentials: ModelCredentials) {
-  const protocol = protocolForCredentials(credentials)
-  const baseUrl = credentials.base_url || (protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1')
+function modelDefinition(credentials: ModelCredentials) {
+  const profile = canonicalModelProfile({
+    provider: credentials.provider,
+    modelId: credentials.model_name,
+    protocol: protocolForCredentials(credentials),
+    capabilities: credentials.capabilities,
+    model_kind: credentials.model_kind,
+    supports_thinking: credentials.supports_thinking
+  })
+  const adapter = modelProtocolAdapter(profile.protocol)
   return {
     id: credentials.model_name,
     name: credentials.name,
-    api: apiForProtocol(protocol),
-    baseUrl,
-    reasoning: Boolean(credentials.supports_thinking),
+    api: adapter.piApi,
+    baseUrl: modelBaseUrl(profile.protocol, credentials.provider, credentials.base_url),
+    reasoning: Boolean(credentials.supports_thinking || profile.capabilities.thinking),
     thinkingLevelMap: credentials.thinking_level_map,
-    input: ['text', ...(provider === 'multimodal' ? ['image'] : [])] as ('text' | 'image')[],
+    input: profile.capabilities.input.filter((value): value is 'text' | 'image' => value === 'text' || value === 'image'),
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: credentialContextWindow(credentials),
     maxTokens: credentials.max_tokens || DEFAULT_MAX_TOKENS,
@@ -226,19 +227,23 @@ export interface RuntimeRunOptions {
   skillPaths?: string[]
   /** 本地 MCP Server 发现并桥接进来的工具 */
   mcpBindings?: McpToolBinding[]
+  /** 已启用的 dsh 插件在宿主里注册的工具；与 MCP 同样两种模式都桥接 */
+  dshBindings?: DshToolBinding[]
+  dshHost?: DshHostLike
   /** 本轮用到了哪些能力；调用方按轮去重后落库，供概览页「最近使用」 */
   onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void
   /** Agent 命令执行的沙箱上下文；null 表示以当前用户身份执行 */
   sandbox?: { manager: SandboxManager | null; session: SandboxSession | null } | null
   /** FastAgent 显式读取的全局与项目指令，避免依赖 Pi 的磁盘自动发现。 */
   agentContextPrompt?: string
-  /** 主 Agent 委派只读 Sub-agent 的执行桥；子运行不再注入该字段，防止递归。 */
+  /** 主 Agent 委派 Sub-agent 的执行桥；子运行不再注入该字段，防止递归。 */
   subAgentExecution?: SubAgentToolContext & { parentToolCallId?: string; subAgentId?: string; subAgentRunId?: string }
   subAgentMetadata?: { parentToolCallId: string; subAgentId: string; subAgentRunId: string }
+  /** 并行可写子运行的写入认领，见 ToolRuntimeContext.claimWrite。 */
+  claimWrite?: ToolRuntimeContext['claimWrite']
   customSubAgents?: import('./agent/subagent/subagent-types').SubAgentConfig[]
-  /** 收窄内置工具白名单：Sub-agent 子运行据此限成只读，避免子 Agent 覆盖主 Agent 待办等状态。 */
+  /** 收窄内置工具白名单：Sub-agent 子运行据此按角色授权收窄，避免子 Agent 覆盖主 Agent 待办等状态。 */
   toolAllowlist?: string[]
-  /** 桌面控制运行时；为空或设置里关闭时 computer_* 工具既不注册也不进白名单 */
   /** 页面预览能力；为空时 preview_show 返回「不可用」。 */
   preview?: PreviewHost | null
   /** 工作区探测到的验证命令；进系统提示并豁免死循环守卫。 */
@@ -246,10 +251,11 @@ export interface RuntimeRunOptions {
 }
 
 export function toolNamesForMode(mode: ConversationMode, shellToolName: 'bash' | 'powershell'): string[] {
+  // question 两个模式都给：澄清问题一律走弹窗选择，chat 里靠正文提问同样要被替换掉。
   // chat 拿全套只读工具加 shell：没有 shell 连 cp、git log 这类查看类命令都跑不了。
   // 写入类（edit/write/patch）仍只给 agent——两个模式的差别就落在这里，破坏性改动必须显式切模式。
   return mode === 'chat'
-    ? ['read', 'grep', 'find', 'ls', shellToolName]
+    ? ['read', 'grep', 'find', 'ls', 'question', shellToolName]
     // 后台命令只给 agent：起服务、看日志、停进程都是执行类操作，chat 模式不提供。
     // 预览同样只给 agent：chat 写不了页面，也起不了 dev server。
     : ['read', 'grep', 'find', 'ls', 'edit', 'write', 'question', 'todowrite', 'patch', shellToolName, 'subagent', ...BACKGROUND_SHELL_TOOL_NAMES, PREVIEW_TOOL_NAME]
@@ -318,14 +324,25 @@ async function textAttachmentContext(attachments: Attachment[]) {
   return result.textContext
 }
 
+
+function validateAttachmentSupport(attachments: Attachment[], model: Pick<Model<Api>, 'input'>) {
+  const unsupported = attachments.filter((item) => item.localPath && !item.type.startsWith('image/') && !isTextAttachment(item))
+  if (unsupported.length) throw new Error(`暂不支持以下附件类型：${unsupported.map((item) => item.name).join('、')}`)
+  const hasImage = attachments.some((item) => item.localPath && item.type.startsWith('image/'))
+  const mode = resolveImageInputMode({ hasImage, supportsNativeImage: model.input.includes('image'), hasFallback: false })
+  if (mode === 'reject') throw new Error('当前模型不支持图片输入，请切换到支持视觉能力的模型')
+  return mode
+}
+
 /**
  * 把连接里声明的多模态能力对齐到 pi 的模型定义。
  * 只做并集：账号连接的模型定义来自 pi 自带目录，那里已知的视觉能力不能被本地标记降级；
  * 反过来目录不认识的模型（自建网关、新发布的模型）只能靠用户勾选，否则 pi 会在发请求前
  * 把图片块替换成「image omitted」占位文本，模型只会回答自己没收到图片。
  */
-export function withDeclaredVision<T extends Api>(model: Model<T>, credentials: Pick<ModelCredentials, 'model_kind'>): Model<T> {
-  if (credentials.model_kind !== 'multimodal' || model.input.includes('image')) return model
+export function withDeclaredVision<T extends Api>(model: Model<T>, credentials: Pick<ModelCredentials, 'model_kind' | 'capabilities'>): Model<T> {
+  const profile = canonicalModelProfile({ provider: model.provider, modelId: model.id, protocol: 'openai', capabilities: credentials.capabilities, model_kind: credentials.model_kind, piInput: model.input })
+  if (!supportsModelInput(profile, 'image') || model.input.includes('image')) return model
   return { ...model, input: [...model.input, 'image'] }
 }
 
@@ -335,11 +352,11 @@ export async function createModelRuntime(credentials: ModelCredentials) {
   const runtime = await ModelRuntime.create({ refreshOnCreate: false, allowModelNetwork: false })
   runtime.registerProvider(providerId, {
     name: credentials.name,
-    api: apiForProtocol(protocol),
+    api: modelProtocolAdapter(protocol).piApi,
     apiKey: credentials.api_key ?? '',
-    baseUrl: credentials.base_url || (protocol === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'),
+    baseUrl: modelBaseUrl(protocol, credentials.provider, credentials.base_url),
     headers: credentials.headers,
-    models: [modelDefinition(credentials.model_kind || 'chat', credentials)]
+    models: [modelDefinition(credentials)]
   })
   const model = runtime.getModel(providerId, credentials.model_name)
   if (!model) throw new Error('无法创建所选模型')
@@ -536,7 +553,7 @@ export async function compactSessionFile(options: {
 }
 
 /** 摘要生成与 agent 运行共用的隔离配置：只加载内联 tool-runtime 扩展，不读 pi CLI 的全局扩展/skills/prompts。 */
-export function createDesktopResourceLoader(options: { cwd: string; agentDir: string; settingsManager: SettingsManager; mode?: ConversationMode; toolRuntime?: ToolRuntimeContext | ToolRuntimeContextRef; skillPaths?: string[]; mcpBindings?: McpToolBinding[]; agentContextPrompt?: string; onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void }) {
+export function createDesktopResourceLoader(options: { cwd: string; agentDir: string; settingsManager: SettingsManager; mode?: ConversationMode; toolRuntime?: ToolRuntimeContext | ToolRuntimeContextRef; skillPaths?: string[]; mcpBindings?: McpToolBinding[]; dshBindings?: DshToolBinding[]; dshHost?: DshHostLike; agentContextPrompt?: string; onAbilityUsed?: (type: 'skill' | 'mcp', id: string) => void }) {
   const currentToolRuntime = options.toolRuntime && 'current' in options.toolRuntime ? options.toolRuntime.current : options.toolRuntime
   const mode = options.mode ?? currentToolRuntime?.mode ?? 'chat'
   const agentMode = mode === 'agent'
@@ -560,10 +577,11 @@ export function createDesktopResourceLoader(options: { cwd: string; agentDir: st
     // skill 两种模式都要加载：描述进系统提示，正文由模型用 read 按需拉取。
     additionalSkillPaths: options.skillPaths?.length ? options.skillPaths : undefined,
     // chat 也挂 tool-runtime（read/mcp 的权限拦截在扩展里），MCP 桥接随绑定存在而挂。
-    extensionFactories: options.toolRuntime || options.mcpBindings?.length
+    extensionFactories: options.toolRuntime || options.mcpBindings?.length || (options.dshBindings?.length && options.dshHost)
       ? [
           ...(options.toolRuntime ? [{ name: 'fastagent-tool-runtime', factory: createToolRuntimeExtension(options.toolRuntime) }] : []),
-          ...(options.mcpBindings?.length ? [{ name: 'fastagent-mcp-bridge', factory: createMcpBridgeExtension(options.mcpBindings, options.onAbilityUsed) }] : [])
+          ...(options.mcpBindings?.length ? [{ name: 'fastagent-mcp-bridge', factory: createMcpBridgeExtension(options.mcpBindings, options.onAbilityUsed) }] : []),
+          ...(options.dshBindings?.length && options.dshHost ? [{ name: 'fastagent-dsh-bridge', factory: createDshBridgeExtension(options.dshBindings, options.dshHost) }] : [])
         ]
       : []
   })
@@ -588,11 +606,18 @@ function toolRuntimeContext(options: RuntimeRunOptions): ToolRuntimeContext {
     signal: options.signal,
     requestApproval: options.requestApproval,
     requestQuestion: options.requestQuestion,
-    mcpToolRisk: new Map((options.mcpBindings ?? []).map((binding) => [binding.name, binding.risk])),
+    // dsh 插件工具是第三方任意代码，没有可信的风险声明，一律按 write 登记：
+    // 与 MCP 写工具共用 mcp_write 权限入口（用户可在权限设置里收紧），计划模式据此拒绝。
+    // 漏进这张表等于权限引擎认不出它们，会被未知工具的兜底规则一律拒绝。
+    mcpToolRisk: new Map<string, 'read' | 'write'>([
+      ...(options.mcpBindings ?? []).map((binding) => [binding.name, binding.risk] as const),
+      ...(options.dshBindings ?? []).map((binding) => [binding.name, 'write'] as const)
+    ]),
     sandbox: options.sandbox ?? null,
     preview: options.preview ?? null,
     subAgent: options.subAgentExecution,
     subAgentMetadata: options.subAgentMetadata,
+    claimWrite: options.claimWrite,
     customSubAgents: options.customSubAgents,
     verificationCommands: options.verificationCommands,
     skillManifestPaths: options.skillPaths,
@@ -634,7 +659,7 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
   // shell 定义仍由 tool-runtime 注入沙箱后端，但也必须进入 Pi 最终启用白名单。
   const tools = resolveEnabledTools(options.mode, options.shellToolName, {
     subAgentEnabled: Boolean(options.subAgentExecution),
-    mcpToolNames: (options.mcpBindings ?? []).map((binding) => binding.name),
+    mcpToolNames: [...(options.mcpBindings ?? []).map((binding) => binding.name), ...(options.dshBindings ?? []).map((binding) => binding.name)],
     toolAllowlist: options.toolAllowlist
   })
 
@@ -673,6 +698,9 @@ export async function createPiSessionRuntime(options: RuntimeRunOptions): Promis
     // MCP 两种模式都桥接：index.ts 侧两模式都会连接并传入绑定，这里不能按模式截断，
     // 否则 chat 模式模型拿不到搜索等 MCP 工具。
     mcpBindings: options.mcpBindings,
+    // dsh 插件工具同理两种模式都桥接：启用与否已经在插件页决定过了。
+    dshBindings: options.dshBindings,
+    dshHost: options.dshHost,
     agentContextPrompt: options.agentContextPrompt,
     onAbilityUsed: options.onAbilityUsed,
     toolRuntime: toolRuntimeRef ?? undefined
@@ -781,6 +809,7 @@ export interface DirectChatTurn {
 export interface DirectChatOptions {
   prompt: string
   credentials: ModelCredentials
+  attachments: Attachment[]
   createModelRuntime?: (credentials: ModelCredentials) => Promise<{ runtime: ModelRuntime; model: Model<Api> }>
   thinkingLevel: ThinkingLevel
   /** 历史回合（不含当前 prompt），按时间正序 */
@@ -806,19 +835,25 @@ export async function runDirectChat(options: DirectChatOptions): Promise<DirectC
   const { runtime, model } = await (options.createModelRuntime ?? createModelRuntime)(options.credentials)
   const protocol = protocolForCredentials(options.credentials)
   const providerId = modelId(options.credentials.provider, options.credentials)
+  const imageAttachments = options.attachments.filter((item) => item.localPath && item.type.startsWith('image/'))
+  const imageMode = validateAttachmentSupport(options.attachments, model)
+  const attachmentContext = await textAttachmentContext(options.attachments)
+  const currentText = attachmentContext ? `${options.prompt}${attachmentContext}` : options.prompt
+  const currentImages = imageMode === 'native' ? await Promise.all(imageParts(imageAttachments)) : []
+  const currentContent = currentImages.length ? [{ type: 'text' as const, text: currentText }, ...currentImages] : currentText
   const messages: Message[] = options.history.map((turn) => turn.role === 'user'
     ? { role: 'user', content: turn.text, timestamp: 0 }
     : {
         role: 'assistant',
         content: [{ type: 'text', text: turn.text }],
-        api: apiForProtocol(protocol) as Api,
+        api: modelProtocolAdapter(protocol).piApi as Api,
         provider: providerId,
         model: options.credentials.model_name,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         stopReason: 'stop',
         timestamp: 0
       })
-  messages.push({ role: 'user', content: options.prompt, timestamp: Date.now() })
+  messages.push({ role: 'user', content: currentContent, timestamp: Date.now() })
   // auto 解析到凭证默认档；不支持思考的模型强制 off，与运行时路径保持一致。
   const reasoning = resolveThinkingLevel(options.thinkingLevel, options.credentials)
   const stream = runtime.streamSimple(model, { messages }, { reasoning: reasoning === 'off' ? undefined : reasoning, signal: options.signal })
@@ -1027,17 +1062,43 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions,
     const window = credentialContextWindow(options.credentials)
     return settings.reserveTokens === undefined ? 0 : window - settings.reserveTokens
   })()
-  const collectUsage = createModelUsageCollector({
+  const usageContext = {
     conversationId: options.conversationId, turnId: options.turnId, runId: options.runId,
     modelId: options.credentials.id, provider: options.credentials.provider, modelName: options.credentials.model_name,
-    baseUrl: options.credentials.base_url || (protocolForCredentials(options.credentials) === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'),
+    baseUrl: modelBaseUrl(protocolForCredentials(options.credentials), options.credentials.provider, options.credentials.base_url),
     subAgent: Boolean(options.subAgentMetadata)
-  }, (usageRecord) => options.onEvent({ type: 'usageUpdated', usageRecord }))
+  }
+  const collectUsage = createModelUsageCollector(usageContext, (usageRecord) => options.onEvent({ type: 'usageUpdated', usageRecord }))
+  // 流式过程中按节流把「已占用上下文 + 本次已输出」推给界面，用量环不必等到整轮结束才动。
+  let liveRequest = 0
+  let liveRequestId = `${options.runId}:live:0`
+  const contextReporter = createTrailingThrottle(250, ({ message }: { message?: unknown }) => {
+    const measurement = measureRuntimeContext(session, options.credentials)
+    const usageRecord = message ? normalizeModelUsage(message, usageContext, liveRequestId) : null
+    const liveOutput = usageRecord?.outputTokens ?? 0
+    options.onEvent({
+      type: 'contextProgress',
+      contextProgress: {
+        ...measurement,
+        estimatedTokens: measurement.estimatedTokens + liveOutput,
+        messageTokens: measurement.messageTokens + liveOutput
+      },
+      usageRecord: usageRecord ?? undefined
+    })
+  })
+  const reportContextProgress = (message?: unknown) => {
+    contextReporter.push({ message })
+  }
   // 上一次看到的插队队列：queue_update 只报当前待投递的，投递本身没有单独事件。
   let pendingSteering: string[] = []
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     // 取消也可能已经计费，必须先保存已返回的 usage，再执行中断分支。
-    if (event.type === 'message_end') collectUsage(event.message)
+    if (event.type === 'message_end') {
+      reportContextProgress(event.message)
+      contextReporter.flush()
+      // 最终汇总必须晚于瞬态快照到达，让它覆盖临时 requestId 并结束“更新中”状态。
+      collectUsage(event.message)
+    }
     ensureAborted()
     if (event.type === 'queue_update') {
       for (const text of deliveredSteerMessages(pendingSteering, event.steering)) {
@@ -1085,6 +1146,12 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions,
     if (event.type === 'message_update') {
       // 已取消后不再向 UI 推增量，避免停止后流式内容继续出现
       if (options.signal.aborted) return
+      if (event.assistantMessageEvent.type === 'start') liveRequestId = `${options.runId}:live:${++liveRequest}`
+      let partial: unknown
+      if ('partial' in event.assistantMessageEvent) partial = event.assistantMessageEvent.partial
+      else if (event.assistantMessageEvent.type === 'done') partial = event.assistantMessageEvent.message
+      else if (event.assistantMessageEvent.type === 'error') partial = event.assistantMessageEvent.error
+      reportContextProgress(partial)
       const mapping = mapAssistantStreamEvent(event.assistantMessageEvent, thinkingActive, (text) => textRepair.push(text))
       thinkingActive = mapping.thinkingActive
       for (const mapped of mapping.events) {
@@ -1188,6 +1255,8 @@ async function consumeSession(session: AgentSession, options: RuntimeRunOptions,
       return
     }
   } finally {
+    contextReporter.flush()
+    contextReporter.dispose()
     options.signal.removeEventListener('abort', ensureAborted)
     unsubscribe()
     // 停用是「本轮」的事：settingsManager 随运行时跨轮复用，不还原会让这条会话此后永不自动压缩。

@@ -1,4 +1,6 @@
 import { memo, useMemo, useState } from 'react'
+import { useHeightAnimation } from '../../use-height-animation'
+import { alignStartIfAbove } from '../../scroll-anchor'
 import { ChevronDown, Copy } from 'lucide-react'
 import type { TerminalBlock as TerminalBlockData } from '../blocks'
 import { useResponseActions } from '../response-context'
@@ -13,19 +15,21 @@ function formatDuration(durationMs: number | null): string | null {
 function TerminalBlockView({ block }: { block: TerminalBlockData }) {
   const actions = useResponseActions()
   const [expanded, setExpanded] = useState(false)
+  // 展开 / 收起是原地换内容，高度从旧值补间到新值，不再一下跳变
+  const height = useHeightAnimation<HTMLDivElement>()
   const lines = useMemo(() => block.output.split('\n'), [block.output])
   const collapsible = lines.length > COLLAPSE_LINES
   const visible = collapsible && !expanded ? lines.slice(0, COLLAPSE_LINES) : lines
   const duration = formatDuration(block.durationMs)
 
   return (
-    <div className="terminal-block">
+    <div className="terminal-block" ref={height.ref}>
       <div className="terminal-block-head">
         <span className="terminal-command"><i>$</i>{block.command}</span>
         <button type="button" className="code-block-action" onClick={() => actions.copyText(block.command)} aria-label="复制命令" title="复制命令"><Copy size={13} /></button>
       </div>
       {block.output && <pre className="terminal-output">{visible.join('\n')}</pre>}
-      {collapsible && <button type="button" className="block-expand" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+      {collapsible && <button type="button" className="block-expand" onClick={() => { if (expanded) alignStartIfAbove(height.ref.current); height.capture(); setExpanded((value) => !value) }} aria-expanded={expanded}>
         <ChevronDown size={13} />{expanded ? '收起输出' : `展开剩余 ${lines.length - COLLAPSE_LINES} 行`}
       </button>}
       <div className="terminal-footer">

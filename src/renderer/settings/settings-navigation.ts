@@ -5,7 +5,7 @@ export const settingsCategories: Array<{ key: SettingsCategory; label: string; d
   { key: 'permissions', label: 'Agent 与权限', desc: '为 Agent 设定清晰的行动边界，在效率与安全之间找到适合你的工作方式。', eyebrow: 'AGENT CONTROL' },
   { key: 'models', label: '模型服务', desc: '连接你信任的模型服务，选择默认模型，并为不同任务调整参数。', eyebrow: 'MODEL WORKSPACE' },
   { key: 'memory', label: '记忆', desc: '让 FastAgent 记住你的偏好、项目事实和已确认的决策；你始终可以查看、编辑或清除。', eyebrow: 'LONG-TERM CONTEXT' },
-  { key: 'knowledge', label: '项目知识库', desc: '把架构约定、发布流程和领域背景集中在这里，让 Agent 在相关任务中自动获得正确上下文。', eyebrow: 'PROJECT SOURCE OF TRUTH' },
+  { key: 'knowledge', label: '项目知识库', desc: '存放按需检索的项目参考资料：架构说明、接口文档、流程手册。提问相关时自动注入，不占用每一轮的上下文。', eyebrow: 'PROJECT SOURCE OF TRUTH' },
   { key: 'prompts', label: '提示词', desc: '为不同工作模式补充你的工作方式。固定系统提示词始终保留，这里的内容会追加在其后。', eyebrow: 'BEHAVIOR LAYER' },
   { key: 'general', label: '常规', desc: '启动、后台与基础行为偏好。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },
   { key: 'appearance', label: '外观', desc: '主题、强调色与界面密度。', eyebrow: 'WORKSPACE PREFERENCES', group: 'workspace' },

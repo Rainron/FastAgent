@@ -5,8 +5,7 @@ import { buildFaDirectoryContext, mergeAgentContextFiles, readAgentContextFiles 
 import { buildTurnContextSources } from '../agent/context-sources'
 import { createExecutionState, reduceExecutionState, syncExecutionSteps } from '../agent/execution-state'
 import { renderKbPrompt, withMemoryPrompt } from '../agent/memory/memory-prompt'
-import { buildMemoryQueryPlan, isEmptyQueryPlan } from '../agent/memory/memory-query'
-import { extractMemories, recallMemories } from '../agent/memory/memory-service'
+import { extractMemories, recallKnowledge, recallMemories } from '../agent/memory/memory-service'
 import { classifyRunError } from '../agent/run-error'
 import { stopBackgroundShells } from '../agent/tools/background-shell'
 import { projectRunState, resolveTurnWrite } from '../agent/run-state'
@@ -15,8 +14,8 @@ import { sandboxBlockedEvent, sandboxDegradedEvent } from '../agent/sandbox/sand
 import { buildSandboxPolicy } from '../agent/sandbox/sandbox-policy'
 import type { SandboxSession } from '../agent/sandbox/sandbox-types'
 import { resolveBashPath, resolveShellToolName } from '../agent/sandbox/shell-resolver'
-import { normalizeCustomSubAgents, resolveSubAgentConfig } from '../agent/subagent/subagent-config'
-import { forwardSubAgentEvent, isSubAgentTerminalEvent } from '../agent/subagent/subagent-events'
+import { expandSubAgentTools, normalizeCustomSubAgents, resolveSubAgentConfig, subAgentCanWrite } from '../agent/subagent/subagent-config'
+import { forwardSubAgentEvent, isSubAgentPassthroughEvent, isSubAgentTerminalEvent } from '../agent/subagent/subagent-events'
 import { parseSubAgentHandoff, truncateSubAgentOutput } from '../agent/subagent/subagent-handoff'
 import type { ScheduledSubAgentTask } from '../agent/subagent/subagent-scheduler'
 import type { SubAgentResult } from '../agent/subagent/subagent-types'
@@ -106,7 +105,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     if (thinkingText && projection.terminal) fullEvent.thinkingText = thinkingText
     if (thinkingSegments.length && projection.terminal) fullEvent.thinkingSegments = [...thinkingSegments]
     // 插队队列快照只服务界面上的「插队中」标记，落库没有价值：投递结果由 user_steer 记录。
-    if (event.type === 'steer_update') {
+    if (event.type === 'steer_update' || event.type === 'contextProgress') {
       eventBatcher.emit(fullEvent)
       return
     }
@@ -242,13 +241,10 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     // 项目知识库检索：与记忆同层注入（拼在本轮输入前），查询计划复用记忆的同一套分词。
     let kbPrompt = ''
     let kbEntries: KbEntry[] = []
-    if (memoryProjectId) {
+    if (memoryProjectId && ctx.settings.knowledge.enabled) {
       try {
-        const kbPlan = buildMemoryQueryPlan(prompt)
-        if (!isEmptyQueryPlan(kbPlan)) {
-          kbEntries = ctx.store.searchKbEntries(namespace, memoryProjectId, kbPlan, 3)
-          kbPrompt = renderKbPrompt(kbEntries)
-        }
+        kbEntries = recallKnowledge(ctx.store, { namespace, projectId: memoryProjectId, text: prompt, limit: ctx.settings.knowledge.maxRecall })
+        kbPrompt = renderKbPrompt(kbEntries)
       } catch (error) { console.warn('[kb] 知识库检索失败:', error) }
     }
     let shellContext = ''
@@ -285,6 +281,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
       shellToolName,
       abilities: allowedAbilities.map((ability) => ({ type: ability.type, id: ability.id, enabled: ability.enabled, filePath: 'filePath' in ability ? ability.filePath : undefined })),
       mcpConfigs,
+      // 插件启停会改变工具集；不进签名的话缓存运行时会一直停在旧工具集上。
+      dshTools: ctx.dshService.bindings().map((binding) => binding.name),
       abilityPolicy: ctx.settings.agentAbilityPolicy,
       subAgentEnabled: ctx.settings.subAgentEnabled,
       // 自定义角色进的是 subagent 工具描述（即系统提示），改了必须重建运行时，
@@ -302,9 +300,19 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     // 子运行的 signal 在「用户停止」和「子任务超时」两种情况下都会 abort，
     // 只有父运行的 signal 能区分：与 subagent-scheduler 判定超时的口径保持一致。
     const abortedTaskStatus = () => signal.aborted ? 'cancelled' as const : 'timeout' as const
+    // 子运行要复用父运行已经建好的 MCP 连接与沙箱会话，但那两样是在下面的运行时缓存工厂里
+    // 才拿到的。executeSubAgent 只会在 pi.run() 期间被调用，那时缓存早已就绪，所以这里留个
+    // 由缓存解析后回填的引用，而不是各自再建一套（重连 MCP、再开一个沙箱账户）。
+    let parentRuntime: CachedConversationRuntime | null = null
     const executeSubAgent = async (task: ScheduledSubAgentTask, childSignal: AbortSignal, parentToolCallId: string): Promise<SubAgentResult> => {
       const config = resolveSubAgentConfig(task.agentId, normalizeCustomSubAgents(ctx.settings.subAgents))
       if (!config) throw new Error(`未知 Sub-agent：${task.agentId}`)
+      // 可写角色必须离开计划模式，否则 edit / write / patch / shell 会在权限引擎之前被硬拒绝。
+      // 判据只看已授予的工具，与 subagent-config 的归一口径同源。
+      const canWrite = subAgentCanWrite(config)
+      // 子运行的权限档位跟随父运行：用户为这次运行放开过的授权（含 /pass），
+      // 子 Agent 再问一遍只是重复打扰；只读角色仍按 'ask' 走，行为不变。
+      const childPermission = canWrite ? ctx.runPermissionOverrides.get(runId) ?? permission : 'ask'
       const childRunId = randomUUID()
       let output = ''
       let forwarded = 0
@@ -322,19 +330,32 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         // 角色指令走 modePrompt：buildModeRuntimePrompt 会把它渲染成独立的「用户补充提示词」
         // 段落，拼进 prompt 会让角色设定和具体任务糊成一段，指令边界消失。
         prompt: task.task,
-        mode: 'agent', modePrompt: config.systemPrompt, planMode: true, credentials, createModelRuntime: ctx.createModelRuntimeForCredentials, thinkingLevel: config.thinkingLevel,
-        autoCompaction: false, permission: 'ask', attachments: [], workspaceRoot: conversationRoot,
+        mode: 'agent', modePrompt: config.systemPrompt, planMode: !canWrite, credentials, createModelRuntime: ctx.createModelRuntimeForCredentials, thinkingLevel: config.thinkingLevel,
+        autoCompaction: false, permission: childPermission, attachments: [], workspaceRoot: conversationRoot,
         signal: childController.signal, contextSummary: null, sessionFile: null, agentDir: ctx.appPaths.agentDir,
         namespace, conversationId, turnId, runId: childRunId, store: ctx.store, shellToolName, bashPath,
-        resolveRuleSet: () => ctx.buildRuleSet(namespace, 'ask', false), sessionOverrides: new Map(), requestApproval: bridge.requestApproval,
-        requestQuestion: bridge.requestQuestion, mcpBindings: [], sandbox: null,
+        resolveRuleSet: () => ctx.buildRuleSet(namespace, canWrite ? ctx.runPermissionOverrides.get(runId) ?? permission : 'ask', false),
+        resolveFullAccess: () => canWrite && ctx.isFullAccessPermission(namespace, ctx.runPermissionOverrides.get(runId) ?? permission),
+        // 会话级「总是允许」是用户对整个会话做的决定，子运行另起一张空表等于让他再批一遍同样的操作。
+        sessionOverrides: parentRuntime?.sessionOverrides ?? new Map(),
+        requestApproval: bridge.requestApproval,
+        requestQuestion: bridge.requestQuestion,
+        // MCP 连接与沙箱会话都复用父运行的：子任务自己再连一次既慢又会多开一个沙箱账户。
+        mcpBindings: config.allowMcp ? parentRuntime?.mcpBindings ?? [] : [],
+        sandbox: canWrite && parentRuntime?.sandboxSession ? { manager: ctx.sandboxManager, session: parentRuntime.sandboxSession } : null,
+        // 可写角色会跑测试与类型检查，重复执行验证命令要豁免死循环守卫。
+        verificationCommands: canWrite ? verificationCommandsFor(conversationRoot) : undefined,
         subAgentExecution: undefined,
+        // 可写子代理并行执行，写入冲突靠父运行闸门按文件认领；只读角色不带。
+        claimWrite: canWrite ? task.claimWrite : undefined,
         subAgentMetadata: { parentToolCallId, subAgentId: config.id, subAgentRunId: childRunId },
         customSubAgents: [],
-        // 子 Agent 只读：planMode 只挡写文件与 shell，挡不住 todowrite —— 子运行与主运行共用
+        // 工具白名单按角色配置收窄：planMode 挡不住 todowrite —— 子运行与主运行共用
         // namespace/conversationId，不收窄工具就能覆盖主 Agent 的待办。
-        toolAllowlist: config.tools,
+        toolAllowlist: expandSubAgentTools(config.tools, shellToolName),
         onEvent: (event) => {
+          // 子运行的用量不经父运行转发，直接落库：本轮用量与成本统计要把子代理算进去。
+          if (event.type === 'usageUpdated' && event.usageRecord) ctx.store.recordModelUsage(namespace, event.usageRecord)
           if (event.type === 'token' && event.text) output += event.text
           if (event.type === 'completed' && event.text) output = event.text
           if (event.type === 'tool_started') {
@@ -347,7 +368,7 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           // 逐 token 转发会让每个增量都触发一次整轮 activity 落库与 IPC，主进程直接被顶死。
           const next = forwardSubAgentEvent(event, forwardContext, forwarded)
           if (!next) return
-          if (!isSubAgentTerminalEvent(event.type)) forwarded += 1
+          if (!isSubAgentTerminalEvent(event.type) && !isSubAgentPassthroughEvent(event.type)) forwarded += 1
           emit(next)
         }
       }
@@ -440,6 +461,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
           agentContextPrompt,
           skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
           mcpBindings,
+          dshBindings: ctx.dshService.bindings(),
+          dshHost: ctx.dshService.host,
           // MCP / Skill 桥接扩展随运行时跨轮复用；通过显式 setter 绑定当前回合，
           // 不能捕获模块级全局 callback，否则并发会话会串写使用记录。
           onAbilityUsed: (type, id) => currentAbilityUsageSink?.(type, id),
@@ -496,6 +519,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
     runtimeLease = ctx.conversationRuntimeCache.retain(cacheKey)
     if (!runtimeLease) throw new Error('会话运行时租约创建失败')
     cachedRuntimeForRun = cached.value
+    // 委派要复用这套 MCP / 沙箱 / 会话授权；缓存命中与新建两条路径都要回填。
+    parentRuntime = cached.value
     cached.value.setAbilityUsageSink(onAbilityUsed)
     emit({ type: 'run_phase', phase: 'initializing', cacheHit: cached.cacheHit, detail: cached.cacheHit ? '已复用会话运行时' : '会话运行时已就绪', status: 'completed' })
     // 运行时创建（MCP 连接、沙箱、扩展加载）耗时期间用户可能已点停止：
@@ -523,6 +548,8 @@ export async function runLocalRun(ctx: RunContext, runId: string, turnId: string
         agentContextPrompt,
         skillPaths: allowedAbilities.filter((ability): ability is SkillAbility => ability.type === 'skill').map((ability) => ability.filePath),
         mcpBindings: cached.value.mcpBindings,
+        dshBindings: ctx.dshService.bindings(),
+        dshHost: ctx.dshService.host,
         onAbilityUsed,
         onSessionFile: (path) => ctx.store.setConversationSessionFile(namespace, conversationId, path),
         // 记下本轮开始时 session 的位置：重跑这一轮要把上下文退回到这里。写失败不影响本轮，只是重跑时退回兜底路径。

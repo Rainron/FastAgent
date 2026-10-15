@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { MOTION_DURATIONS } from '../../motion'
 
-/** 带动作的提示要留够点击时间，2.4 秒不足以让人看完再点。 */
-const PLAIN_NOTICE_MS = 2400
+/** 普通提示只短暂展示；带动作的提示要留够点击时间。 */
+const PLAIN_NOTICE_MS = 2000
 const ACTIONABLE_NOTICE_MS = 5000
 
 export interface NoticeAction {

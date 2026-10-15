@@ -15,6 +15,8 @@ export interface InspectorMapInput {
   fallbackContext: ContextHealthData
   /** 模型缓存面板的数据；取不到时面板显示「尚无请求用量」。 */
   usage?: ModelUsageSummary
+  /** 当前回合仍可能返回 usage 时保留 pending，避免详情面板提前显示完成。 */
+  usagePending?: boolean
   /** 会话没有自己的策略行、或声明跟随全局时，面板要展示的就是这份全局设置。 */
   settings: Pick<AppSettings, 'autoSummary' | 'contextStrategy' | 'triggerRatio' | 'keepRecentTurns' | 'forceCompaction'> | null
 }
@@ -24,7 +26,7 @@ export interface InspectorMapInput {
  * 这一段口径（回合序号换算、事件统计、回落规则）单独可测。
  */
 export function buildInspectorData(input: InspectorMapInput): ConversationInspectorData {
-  const { detail, history, latestToolCalls, model, permissionLabel, fallbackContext, settings, usage } = input
+  const { detail, history, latestToolCalls, model, permissionLabel, fallbackContext, settings, usage, usagePending } = input
   // 面板展示的必须是「实际生效的那一份」：策略行存在但声明跟随全局时，生效的是全局设置。
   const effectivePolicy = settings
     ? resolveEffectivePolicy(settings, detail.contextPolicy, detail.id)
@@ -48,8 +50,8 @@ export function buildInspectorData(input: InspectorMapInput): ConversationInspec
       maxTokens: model?.max_tokens ?? null
     },
     context: detail.context
-      ? { ...detail.context, latestCompactionAt: detail.compactionHistory[0]?.createdAt || null, usage: usage ?? undefined, usagePending: false }
-      : { ...fallbackContext, usage: usage ?? fallbackContext.usage },
+      ? { ...detail.context, latestCompactionAt: detail.compactionHistory[0]?.createdAt || null, usage: usage ?? undefined, usagePending: usagePending ?? false }
+      : { ...fallbackContext, usage: usage ?? fallbackContext.usage, usagePending: usagePending ?? fallbackContext.usagePending },
     summary: detail.summary ? { text: detail.summary.summaryText, version: detail.summary.version, createdAt: detail.summary.createdAt } : null,
     history: detail.compactionHistory.map((item) => ({
       id: item.id,

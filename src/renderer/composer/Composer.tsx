@@ -24,7 +24,7 @@ import { MOTION_DURATIONS, motionEnabled } from '../motion'
 import { ComposerOverflow, ModelSelector, PermissionSelector, ReasoningSelector } from './ComposerSelectors'
 import { FullAccessDialog } from './FullAccessDialog'
 import { ResumeMenu } from './ResumeMenu'
-import { lineBoundary } from './composer-shortcuts'
+import { clearComposerDraft, isStopConversationShortcut, lineBoundary } from './composer-shortcuts'
 import { DEFAULT_ATTACHMENT_POLICY, normalizeAttachmentPolicy, attachmentValidationError, type AttachmentPolicy } from '../../shared/attachment-policy'
 
 function SquareIcon() { return <span className="square-icon" aria-hidden="true" /> }
@@ -123,6 +123,19 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       area.focus()
       area.setSelectionRange(snapshot.caret, snapshot.caret)
     })
+  }
+
+  /** 清理尚未发送的草稿；队列由父层维护，不能从这里一并修改。 */
+  function clearDraft() {
+    if (!text && attachments.length === 0) return
+    const cleared = clearComposerDraft(text, attachments)
+    setEditorText(cleared.text)
+    setAttachments(cleared.attachments)
+    setRemovingAttachmentIds([])
+    promptHistoryRef.current.cancel()
+    setMention(null)
+    setMentionMatches([])
+    requestAnimationFrame(() => textareaRef.current?.focus())
   }
 
   async function openExternalEditor() {
@@ -552,6 +565,14 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       return
     }
     // Esc 退出历史浏览并恢复暂存草稿。
+    if (isStopConversationShortcut({ key: event.key, ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey, metaKey: event.metaKey, isComposing: event.nativeEvent.isComposing }) && runId) {
+      // 其它浮层先消费 Escape（例如上下文浮层只关闭自己），不能被输入框停止命令抢走。
+      const overlayOpen = document.querySelector('[role="dialog"], [role="menu"], .artifact-panel, .popover-card')
+      if (overlayOpen) return
+      event.preventDefault()
+      onCancel()
+      return
+    }
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
       const history = promptHistoryRef.current
       const restored = history.isBrowsing() ? history.cancel() : null
@@ -640,7 +661,6 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
         {queue.map((item, index) => <div className={`queue-item${removingQueueIds.includes(item.id) ? ' removing' : ''}`} key={item.id}>
           <span className="queue-index">{item.kind === 'steer' ? '插队' : '排队'} {index + 1}</span>
           <span className="queue-text" title={item.text}>{item.text}{item.attachments.length > 0 ? `（${item.attachments.length} 个附件）` : ''}</span>
-          {/* 插队项已经交给主进程，撤不回来：投递时机由引擎决定，这里只能等它送达。 */}
           {item.kind === 'steer'
             ? <span className="queue-hint" title="已交给当前任务，下一步开始前生效">等待送达</span>
             : <button onClick={() => requestRemoveQueued(item.id)} aria-label="撤销排队" title="撤销排队"><X size={12} /></button>}
@@ -664,6 +684,8 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     {mention?.trigger === '/' && slashCandidates.length > 0
       ? <SkillMentionMenu matches={slashCandidates} activeIndex={mentionIndex} onHover={setMentionIndex} onSelect={chooseSkill} />
       : mentionMatches.length > 0 && <FileMentionMenu matches={mentionMatches} activeIndex={mentionIndex} onHover={setMentionIndex} onSelect={(match) => match.isDirectory ? enterDirectory(match) : chooseMention(match)} />}
+    {/* rows=1：空着时按一行起步，写多少长多少（长高由上面的 layout effect 量出来）。
+        给 2 行会让占位文字下面永远空着一整行。 */}
     <textarea
       ref={textareaRef}
       value={text}
@@ -683,9 +705,9 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       onKeyDown={handleComposerKeyDown}
       onPaste={handleComposerPaste}
       disabled={compactingManually}
-      placeholder={compacting ? (compaction?.auto ? '正在自动压缩上下文，压完继续这一轮…' : '正在压缩上下文，暂时无法发送；可切换其它会话') : runId ? '生成中，发送将加入排队...' : planMode ? '计划模式：描述要规划的任务...' : mode === 'agent' ? '描述任务目标与期望结果...' : '输入你的问题或想法...'}
+      placeholder={compacting ? (compaction?.auto ? '正在自动压缩上下文，压完继续这一轮…' : '正在压缩上下文，暂时无法发送；可切换其它会话') : runId ? '生成中，发送将插入当前这一轮...' : planMode ? '计划模式：描述要规划的任务...' : mode === 'agent' ? '描述任务目标与期望结果...' : '输入你的问题或想法...'}
       aria-label="消息输入"
-      rows={2}
+      rows={1}
     />
     <div className="composer-toolbar">
       <button className="toolbar-icon" onClick={() => fileInputRef.current?.click()} aria-label="添加附件" title="添加附件"><Paperclip size={16} /></button>
@@ -701,8 +723,9 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
       <ModelSelector model={model} models={models} selectedModelId={selectedModelId} favoriteModelIds={favoriteModelIds} recentModelIds={recentModelIds} open={pickerOpen} onOpenChange={setPickerOpen} onSelectModel={onSelectModel} onToggleFavorite={onToggleFavorite} onManageModels={onManageModels} />
       {levels.length > 0 && !overflowed && <ReasoningSelector levels={levels} value={thinkingLevel} onChange={onThinkingLevelChange} density={density} model={model} />}
       {overflowed && <ComposerOverflow permission={permission} permissionProfiles={permissionProfiles} onPermissionChange={choosePermission} levels={levels} thinkingLevel={thinkingLevel} onThinkingLevelChange={onThinkingLevelChange} model={model} />}
+      {(text.length > 0 || attachments.length > 0) && <button className="toolbar-icon composer-clear" onClick={clearDraft} aria-label="清除输入" title="清除输入"><X size={16} /></button>}
       {runId ? <>
-        {Boolean(text.trim()) && <button className="send-button queue" disabled={compacting} onClick={() => void submit()} aria-label="加入排队" title="加入排队"><ListEnd size={16} /></button>}
+        {Boolean(text.trim()) && <button className="send-button queue" disabled={compacting} onClick={() => void submit()} aria-label="插入当前任务" title="插入当前任务：下一步开始前生效"><ListEnd size={16} /></button>}
         {paused
           ? <button className="send-button" onClick={onResume} aria-label="继续执行" title="继续执行"><Play size={15} /></button>
           : <button className="send-button pause" onClick={onPause} disabled={compactingManually} aria-label="暂停" title="暂停：当前这一步跑完后停在下一次工具调用前"><Pause size={15} /></button>}
@@ -711,7 +734,7 @@ export const Composer = React.memo(function Composer({ mode, planMode, onToggleP
     </div>
   </div>
   <div className="composer-hints">
-    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件{onRunShellCommand ? <> · <kbd>!</kbd> 执行命令</> : null} · <kbd>Tab</kbd> 进目录</span>
+    <span><kbd>Enter</kbd> 发送 · <kbd>Shift</kbd>+<kbd>Enter</kbd> 换行 · <kbd>Esc</kbd> 停止 · <kbd>/</kbd> 技能 · <kbd>@</kbd> 文件{onRunShellCommand ? <> · <kbd>!</kbd> 执行命令</> : null} · <kbd>Tab</kbd> 进目录</span>
     <span><kbd>Ctrl</kbd>+<kbd>G</kbd> 编辑器 · 拖入文件即可附加</span>
   </div>
   {fullPrompt && <FullAccessDialog profile={findProfile(permissionProfiles, fullPrompt)} onRespond={closeFullPrompt} />}

@@ -237,6 +237,10 @@ export function createPatchTool(): ToolDefinition {
     promptGuidelines: [
       'Use patch to create, modify, or delete files with unified diffs when the change spans multiple hunks or files; for single-file single-hunk changes prefer edit.'
     ],
+    // pi 的 edit / write 靠 withFileMutationQueue 按文件排队，patch 不在那条队列上：同一批里
+    // edit 与 patch 落在同一个文件时，edit 的「读 → 写」之间会让出事件循环，patch 的同步写恰好
+    // 挤进这个缝隙，随后 edit 按旧内容写回，patch 的改动无声消失。声明串行即可堵死这个缝隙。
+    executionMode: 'sequential',
     parameters: Type.Object({
       patch: Type.String({ description: 'unified diff 文本' })
     }),

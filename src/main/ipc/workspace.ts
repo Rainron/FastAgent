@@ -1,7 +1,8 @@
 import { isExternalHttpUrl } from '../../renderer/ai-response/sanitize-url'
-import type { PageQuery, WorkspaceSnapshot } from '../../shared/types'
+import type { InitProjectResult, PageQuery, WorkspaceSnapshot } from '../../shared/types'
 import { readAgentContextFiles, resolveAgentContextPaths } from '../agent-context'
-import { AGENT_INIT_FILE_NAME, buildAgentInitTemplate, detectExistingAgentInitFile } from '../agent-init'
+import { AGENT_INIT_FILE_NAME, buildAgentInitPrompt } from '../agent-init'
+import { collectProjectSurvey } from '../agent/project-survey'
 import { createDraft, draftFilePath, isDraftPath, launchConfiguredEditor, readDraft, removeDraft } from '../external-editor'
 import { hideQuickWindow, setQuickWindowPinned } from '../quick-window'
 import { deleteWorkspaceEntry, listWorkspaceDirectory, moveWorkspaceEntry, type WorkspaceMoveResult, readAttachmentImage, readAttachmentText, readWorkspaceFile, readWorkspaceImage, resolveWorkspaceDirectory, resolveWorkspaceFile, searchWorkspaceFiles, workspaceFileExists } from '../workspace-files'
@@ -9,7 +10,7 @@ import { openTerminalAt } from '../open-terminal'
 import { shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import type { IpcRegistrar, MainContext } from '../app-context'
 
@@ -18,17 +19,18 @@ export function registerWorkspaceIpc(handle: IpcRegistrar, ctx: MainContext) {
   handle('workspace:pick-root', async () => ctx.pickWorkspaceRoot())
   // 传 null / 空串表示离开工作区：不清掉的话新建的快速对话仍然能 @ 到上一个项目的文件。
   handle('workspace:set-root', (_event, path: string | null) => ctx.setWorkspaceRoot(path))
-  handle('workspace:init-project', (_event, options: { force?: boolean } = {}) => {
+  // /init 只做勘察与出题：AGENTS.md 由 Agent 核实后自己 write，主进程写静态模板等于交一份占位符。
+  handle('workspace:init-project', (): InitProjectResult => {
     if (!ctx.workspaceRoot) {
       return { status: 'error', path: '', message: '请先打开一个项目工作区再执行 /init' }
     }
-    const existing = detectExistingAgentInitFile(readdirSync(ctx.workspaceRoot))
-    if (existing && !options.force) {
-      return { status: 'exists', path: join(ctx.workspaceRoot, existing) }
+    const survey = collectProjectSurvey(ctx.workspaceRoot)
+    return {
+      status: 'ready',
+      path: join(ctx.workspaceRoot, survey.existingAgentFile ?? AGENT_INIT_FILE_NAME),
+      prompt: buildAgentInitPrompt(survey),
+      existing: survey.existingAgentFile
     }
-    const target = join(ctx.workspaceRoot, AGENT_INIT_FILE_NAME)
-    writeFileSync(target, buildAgentInitTemplate(basename(ctx.workspaceRoot)), 'utf8')
-    return { status: 'created', path: target }
   })
   handle('projects:list', () => ctx.store.listProjects(ctx.requireNamespace()))
   handle('projects:list-page', (_event, query: PageQuery = {}) => ctx.store.listProjectsPage(ctx.requireNamespace(), query, Boolean(query.includeArchived)))

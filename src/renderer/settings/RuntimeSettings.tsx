@@ -20,9 +20,12 @@ function ToolRow({ tool }: { tool: RuntimeToolInfo }) {
   const Icon = STATUS_ICON[tool.status]
   return <div className={`doctor-row ${STATUS_TONE[tool.status]}`}>
     <Icon size={14} className="doctor-row-icon" />
-    <span className="doctor-row-label">{runtimeToolLabel(tool.id)}</span>
-    <span className="doctor-row-detail" title={tool.path ?? undefined}>{runtimeToolDetail(tool)}</span>
-    <span className="doctor-row-hint">{RUNTIME_SOURCE_LABEL[tool.source]} · {RUNTIME_STATUS_LABEL[tool.status]}</span>
+    <div className="doctor-row-copy">
+      <span className="doctor-row-label">{runtimeToolLabel(tool.id)}</span>
+      <span className="doctor-row-detail" title={tool.path ?? undefined}>{runtimeToolDetail(tool)}</span>
+      <span className="doctor-row-hint">{RUNTIME_SOURCE_LABEL[tool.source]}</span>
+    </div>
+    <span className="doctor-row-status">{RUNTIME_STATUS_LABEL[tool.status]}</span>
   </div>
 }
 
@@ -61,18 +64,24 @@ export function RuntimeSettings({ onNotice }: { onNotice: (notice: string) => vo
         <h2 id="settings-runtime">开发环境</h2>
         <p>FastAgent 随包提供的工具链，版本固定，安装在数据目录下。Agent 优先使用这里的工具，取不到时才回退到系统 PATH；系统 PATH 本身不会被修改。</p>
       </div>
-      <button className="secondary" onClick={() => load(false, 'detect')} disabled={running}>
-        {busy === 'detect' ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
-        {busy === 'detect' ? '检测中…' : '重新检测'}
-      </button>
+      <div className="model-settings-actions">
+        <button className="small-control" onClick={() => load(false, 'detect')} disabled={running}>
+          {busy === 'detect' ? <LoaderCircle size={13} className="spin" /> : <RefreshCw size={13} />}
+          {busy === 'detect' ? '检测中…' : '重新检测'}
+        </button>
+      </div>
     </div>
 
-    {report && <div className={`doctor-overall ${runtimeNeedsRepair(report) ? 'error' : 'ok'}`}>{runtimeOverallLabel(report)}</div>}
+    {report && <div className={`doctor-overall ${runtimeNeedsRepair(report) ? 'error' : 'ok'}`}>
+      <span className="doctor-overall-dot" />
+      <strong>{runtimeOverallLabel(report)}</strong>
+      <small>共 {report.tools.length} 个工具</small>
+    </div>}
 
-    {!report && running && <p>正在检测…</p>}
+    {!report && running && <div className="doctor-loading"><LoaderCircle size={14} className="spin" />正在检测…</div>}
 
     {report && report.tools.length > 0 && <div className="doctor-group">
-      {report.tools.map((tool) => <ToolRow tool={tool} key={tool.id} />)}
+      <div className="doctor-list">{report.tools.map((tool) => <ToolRow tool={tool} key={tool.id} />)}</div>
     </div>}
 
     {report && <div className="settings-row">

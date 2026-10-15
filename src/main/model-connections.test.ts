@@ -255,3 +255,70 @@ describe('连接模型发现', () => {
     await service.cancelLogin(state.sessionId)
   })
 })
+
+describe('模型服务导入导出', () => {
+  const API_KEY = 'sk-export-secret'
+  function archiveStore(overrides: Partial<Record<string, unknown>> = {}) {
+    return {
+      list: () => [
+        { id: 'a', providerId: 'deepseek', name: 'DeepSeek', authMode: 'api-key', baseUrl: 'https://api.deepseek.com/v1', protocol: 'openai', hasCredentials: true, models: [] },
+        { id: 'b', providerId: 'openai', name: 'OpenAI 账号', authMode: 'oauth', baseUrl: 'https://api.openai.com/v1', protocol: 'openai', hasCredentials: true, models: [] }
+      ],
+      apiKeySecrets: vi.fn((id: string) => id === 'a' ? { apiKey: API_KEY } : {}),
+      connectionModels: () => [{ modelId: 'deepseek-chat', name: 'DeepSeek Chat' }, { modelId: 'deepseek-reasoner', name: 'DeepSeek Reasoner' }],
+      metadata: () => ({ providerId: 'deepseek', authMode: 'api-key' }),
+      ...overrides
+    } as unknown as ModelConnectionStore
+  }
+
+  it('默认档不解密任何密钥，账号连接也不带凭据', () => {
+    const store = archiveStore()
+    const service = new ModelConnectionService(store)
+    const text = service.exportConnections({ ids: ['a', 'b'], secrets: 'omit' })
+    expect(text).not.toContain(API_KEY)
+    expect(store.apiKeySecrets).not.toHaveBeenCalled()
+    expect(JSON.parse(text).connections).toHaveLength(2)
+  })
+
+  it('加密档带出 API Key，账号连接标记为不含密钥', () => {
+    const service = new ModelConnectionService(archiveStore())
+    const text = service.exportConnections({ ids: ['a', 'b'], secrets: 'encrypted', passphrase: 'pass' })
+    expect(text).not.toContain(API_KEY)
+    const archive = service.previewArchive(text, 'pass')
+    expect(archive.connections.map((entry) => entry.hasSecrets)).toEqual([true, false])
+  })
+
+  it('导入按勾选落地，同名连接另存为副本', () => {
+    const save = vi.fn(() => ({ id: 'new' }))
+    const onChanged = vi.fn()
+    const service = new ModelConnectionService(archiveStore({ save }), { onChanged })
+    const text = service.exportConnections({ ids: ['a', 'b'], secrets: 'plain' })
+    expect(service.importConnections(text, { indexes: [0] })).toBe(1)
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ providerId: 'deepseek', name: 'DeepSeek (2)', apiKey: API_KEY }))
+    expect(onChanged).toHaveBeenCalledOnce()
+  })
+
+  it('没有勾选任何连接时拒绝导出', () => {
+    expect(() => new ModelConnectionService(archiveStore()).exportConnections({ ids: [], secrets: 'omit' })).toThrow('请至少勾选一个模型服务')
+  })
+
+  it('账号连接没有可回显的 API Key', () => {
+    const service = new ModelConnectionService(archiveStore({ metadata: () => ({ providerId: 'openai', authMode: 'oauth' }) }))
+    expect(() => service.revealApiKey('b')).toThrow('账号连接没有可查看的 API Key')
+  })
+
+  it('只导出勾选的连接内模型', () => {
+    const service = new ModelConnectionService(archiveStore())
+    const text = service.exportConnections({ ids: ['a'], modelIds: { a: ['deepseek-reasoner'] }, secrets: 'omit' })
+    expect(service.previewArchive(text).connections[0].models.map((model) => model.modelId)).toEqual(['deepseek-reasoner'])
+  })
+
+  it('导入时只落地勾选的模型', () => {
+    const save = vi.fn(() => ({ id: 'new' }))
+    const service = new ModelConnectionService(archiveStore({ save }))
+    const text = service.exportConnections({ ids: ['a'], secrets: 'omit' })
+    service.importConnections(text, { indexes: [0], modelIds: { 0: ['deepseek-chat'] } })
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ models: [expect.objectContaining({ modelId: 'deepseek-chat' })] }))
+  })
+})
+

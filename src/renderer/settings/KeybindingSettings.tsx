@@ -9,7 +9,7 @@ import { bindingFromKeyboardEvent, bindingFromMouseEvent, bindingLabel, DEFAULT_
  */
 
 const globalActions: Array<{ action: GlobalShortcutAction; label: string; description: string }> = [
-  { action: 'showMainWindow', label: '显示主窗口', description: '从任意应用跳回 FastAgent 主窗口。' },
+  { action: 'toggleMainWindow', label: '显示 / 收起主窗口', description: '同一个键来回切：窗口在前台时收进托盘，其余情况跳回主窗口；后台任务继续运行。' },
   { action: 'quickChat', label: '唤起快速对话', description: '弹出轻量对话窗，与连按两次 Ctrl 互相独立。' }
 ]
 
@@ -18,7 +18,6 @@ const inAppActions: Array<{ action: InAppShortcutAction; label: string; descript
   { action: 'newConversation', label: '新建会话', description: '开启一条新对话，并把光标落到输入框。' },
   { action: 'toggleTheme', label: '切换深浅主题', description: '在深色、浅色与跟随系统之间轮换。' },
   { action: 'openSettings', label: '打开设置', description: '跳到设置页。' },
-  { action: 'hideToTray', label: '关闭主窗口到托盘', description: '隐藏主窗口只留系统托盘图标，等同点窗口的关闭按钮；后台任务继续运行。' },
   { action: 'reloadWindow', label: '重载界面', description: '只刷新窗口，登录状态与本地数据不受影响。' },
   { action: 'restartApp', label: '重启应用', description: '中断正在运行的任务并重启，触发后会再确认一次。' },
   { action: 'quitApp', label: '彻底退出应用', description: '绕开「关闭到托盘」直接退出，触发后会再确认一次。' }

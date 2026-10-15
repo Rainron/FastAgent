@@ -6,10 +6,10 @@
  * 避免把普通点击变成系统级触发。逻辑拆成纯函数便于单测，副作用注入依赖。
  */
 
-import type { GlobalShortcutAction, ShortcutSettings } from '../shared/types'
+import type { GlobalShortcutAction, ShortcutBinding, ShortcutSettings } from '../shared/types'
 
 export interface GlobalShortcutHandlers {
-  showMainWindow: () => void
+  toggleMainWindow: () => void
   quickChat: () => void
 }
 
@@ -20,8 +20,29 @@ export interface GlobalShortcutRegistrar {
 }
 
 const ACTION_HANDLERS: Record<GlobalShortcutAction, keyof GlobalShortcutHandlers> = {
-  showMainWindow: 'showMainWindow',
+  toggleMainWindow: 'toggleMainWindow',
   quickChat: 'quickChat'
+}
+
+/**
+ * 旧版把「显示主窗口」（全局）和「关闭主窗口到托盘」（应用内）分成两个动作，现在合成一个
+ * toggleMainWindow。迁移优先取旧的全局绑定：它本来就是系统级的，窗口隐藏时也能按；
+ * 应用内的 hideToTray 只在窗口有焦点时才有效，降级为备选。两个旧键迁移后一律清掉。
+ */
+export function migrateShortcutSettings(shortcuts: ShortcutSettings | undefined): ShortcutSettings | undefined {
+  if (!shortcuts) return shortcuts
+  const global = { ...shortcuts.global } as Record<string, ShortcutBinding | null | undefined>
+  const inApp = { ...shortcuts.inApp } as Record<string, ShortcutBinding | null | undefined>
+  const legacyShow = global.showMainWindow
+  const legacyHide = inApp.hideToTray
+  if (legacyShow === undefined && legacyHide === undefined) return shortcuts
+  if (global.toggleMainWindow === undefined) {
+    const inherited = legacyShow !== undefined ? legacyShow : legacyHide
+    if (inherited !== undefined) global.toggleMainWindow = inherited
+  }
+  delete global.showMainWindow
+  delete inApp.hideToTray
+  return { global, inApp } as ShortcutSettings
 }
 
 /** 提取某组绑定里的键盘绑定；鼠标绑定不归 globalShortcut 管 */
